@@ -7,6 +7,7 @@ import boto3
 import email
 import email.utils
 import openai
+import re
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email import message_from_string
@@ -33,7 +34,7 @@ class EmailProcessor:
 
     @staticmethod
     def parse_sns_event(event):
-        """Extracts sender email, subject, and decoded email body from SNS event."""
+        """Extracts sender email, subject, recipients (To & CC), and decoded email body from SNS event."""
         try:
             sns_message = json.loads(event["Records"][0]["Sns"]["Message"])
             sender_email = sns_message["mail"]["source"]
@@ -42,7 +43,13 @@ class EmailProcessor:
             message_id = sns_message["mail"]["messageId"]
             date_received = sns_message["mail"]["commonHeaders"]["date"]
 
-            # Extract base64-encoded email body
+            # Extract "To" and "CC" recipients
+            to_recipients = sns_message["mail"]["commonHeaders"].get("to", [])
+            cc_recipients = sns_message["mail"]["commonHeaders"].get("cc", [])
+
+            logger.info(f"Email received sender_email {sender_email}, to_recipients: {to_recipients}, cc_recipients: {cc_recipients}, recipient_email: {recipient_email}")
+
+            # Extract and clean email content
             encoded_content = sns_message.get("content", "")
             email_body = (
                 EmailProcessor.decode_email_content(encoded_content)
@@ -59,6 +66,8 @@ class EmailProcessor:
                 "body": email_body,
                 "message_id": message_id,
                 "date_received": date_received,
+                "to_recipients": to_recipients,
+                "cc_recipients": cc_recipients,
             }
 
         except Exception as e:
@@ -97,11 +106,11 @@ class OpenAIResponder:
 
     SYSTEM_PROMPT = (
         "You are an AI assistant designed to read user emails, understand their intent, and provide natural, friendly, "
-        "and conversational responses. Your task is to identify the main question(s) in the email and craft a response "
+        "and conversational responses. Your task is to identify the main question in the email and craft a response "
         "that feels warm, engaging, and helpful—just like a thoughtful human assistant would. Avoid robotic or overly "
         "formal phrasing. Instead of explicitly stating ‘Extracted Question’ or ‘Comprehensive Answer,’ naturally "
-        "acknowledge the user’s inquiry and respond in a way that feels conversational and friendly. If the email lacks "
-        "a clear question, infer the intent and offer a relevant response. Keep responses concise and structured."
+        "acknowledge the user’s inquiry *without repeating the question*, and respond in a way that feels conversational and friendly. "
+        "If the email lacks a clear question, ask for clarifications. Keep responses concise and structured."
     )
 
     @staticmethod
@@ -120,38 +129,125 @@ class OpenAIResponder:
         except Exception as e:
             logger.error(f"Error generating OpenAI response: {str(e)}")
             return "I'm sorry, but I couldn't generate a response at this time."
+        
 
+    SYSTEM_PROMPT_FOR_INTENTION_CHECK = (
+        "You are an intelligent email assistant. Your task is to determine whether an email message "
+        "requires an AI-generated response. Consider if the email contains an explicit question directed "
+        "towards AI, asks for AI’s help, or seeks factual, data-driven, or automation-related assistance. It can be that AI has already answered the question then there is no need to respond. "
+        "If the email does not contain a clear question requiring AI's input, does not ask for AI’s help, "
+        "or is just part of a human-to-human conversation, then AI should NOT respond."
+        "Return only `true` if AI should respond, or `false` if AI should not respond. No explanations needed."
+    )    
+
+    @staticmethod
+    def should_ai_respond(email_body, recipient, to_recipients, cc_recipients):
+        """
+        Determines if AI should respond:
+        1. Always respond if the only recipient in 'To' is a geniml.com email.
+        2. Otherwise, check if AI is mentioned and a question is asked.
+        3. Avoid responding if the last email in the thread was AI's response.
+        """
+        ai_keywords = ["ai", "bot", "geniml", "@ai", "assistant"]
+
+        # Ensure all email addresses are lowercase for comparison
+        to_recipients = [email.lower() for email in to_recipients]
+        cc_recipients = [email.lower() for email in cc_recipients]
+        recipient = recipient.lower()
+
+        # Condition 1: If the only recipient in "To" is a geniml.com email, always respond
+        is_only_geniml_recipient = (
+            len(to_recipients) == 1 and recipient.endswith("@geniml.com")
+        )
+        if is_only_geniml_recipient:
+            logger.info(f"Only geniml.com recipient found. AI will respond.")
+            return True
+
+        """
+        Determines if AI should respond using OpenAI classification.
+        """
+        try:
+            client = openai.OpenAI()
+            response = client.chat.completions.create(
+                model=OPENAI_MODEL,
+                messages=[
+                    {"role": "system", "content": OpenAIResponder.SYSTEM_PROMPT_FOR_INTENTION_CHECK},
+                    {"role": "user", "content": f"{email_body}"}
+                ],
+                temperature=0  # Keep it deterministic
+            )
+            
+            decision = response.choices[0].message.content.strip().lower()
+            logger.info(f"AI decision: {decision}")
+            return decision == "true"  # Only return True if OpenAI explicitly says "true"
+
+        except Exception as e:
+            logger.error(f"Error checking AI response necessity: {str(e)}")
+            return False  # Fail-safe: Do not respond if OpenAI check fails
 
 class EmailReplySender:
     """Handles formatting and sending replies via AWS SES."""
 
     @staticmethod
+    def filter_valid_recipients(recipients):
+        """Filters out SES system-generated emails from recipient list."""
+        invalid_domains = ["amazonses.com", "amazonaws.com", "geniml.com"]  # Avoid system-generated emails
+        return [email for email in recipients if not any(domain in email for domain in invalid_domains)]
+    
+    @staticmethod
+    def get_geniml_email(recipients):
+        """Finds the first geniml.com email in recipients; defaults to hello@geniml.com if not found."""
+        for email in recipients:
+            if email.endswith("@geniml.com"):
+                return email
+        return "hello@geniml.com"
+
+    @staticmethod
     def send_reply(email_data, reply_content):
-        """Sends a reply email using AWS SES, preserving email threading."""
+        """Sends a reply email using AWS SES, ensuring TO includes the original sender, and TO/CC lists are preserved."""
         try:
             formatted_reply = EmailReplySender.format_reply(email_data, reply_content)
+
+            # Get AI's reply-from email (must be @geniml.com)
+            from_ai_address = EmailReplySender.get_geniml_email(email_data["to_recipients"] + email_data["cc_recipients"])
+
+            # Filter out invalid recipients
+            to_recipients = EmailReplySender.filter_valid_recipients(email_data["to_recipients"])
+            cc_recipients = EmailReplySender.filter_valid_recipients(email_data["cc_recipients"])
+
+            # Ensure the original sender is always in TO
+            if email_data["sender"] not in to_recipients:
+                to_recipients.append(email_data["sender"])
 
             # Construct email with threading metadata
             msg = MIMEMultipart()
             msg["Subject"] = f"Re: {email_data['subject']}"
-            msg["From"] = email_data["recipient"]  # The original recipient becomes the sender
-            msg["To"] = email_data["sender"]  # Reply to the original sender
-            msg["Reply-To"] = email_data["recipient"]
+            msg["From"] = from_ai_address  # AI replies from geniml.com email
+            msg["To"] = ", ".join(to_recipients)
+            msg["Cc"] = ", ".join(cc_recipients)
+            msg["Reply-To"] = from_ai_address  # Ensures future replies go to AI
             msg["In-Reply-To"] = email_data["message_id"]
             msg["References"] = email_data["message_id"]
             msg["Date"] = email.utils.formatdate(localtime=True)
-            msg["Message-ID"] = email.utils.make_msgid(domain=email_data["recipient"].split("@")[-1])
+            msg["Message-ID"] = email.utils.make_msgid(domain=from_ai_address.split("@")[-1])
 
-            # Attach formatted reply
-            msg.attach(MIMEText(formatted_reply, "plain"))
+            # **Attach the reply content properly**
+            msg.attach(MIMEText(formatted_reply, "plain", "utf-8"))
 
-            # Send via AWS SES
+            # Ensure there is at least one recipient
+            all_recipients = list(set(to_recipients + cc_recipients))
+            if not all_recipients:
+                logger.error("No valid recipients found. Aborting email send.")
+                return None
+
+            # Send email using SES
             response = ses_client.send_raw_email(
-                Source=email_data["recipient"],
-                Destinations=[email_data["sender"]],
+                Source=from_ai_address,
+                Destinations=to_recipients + cc_recipients,
                 RawMessage={"Data": msg.as_string()},
             )
 
+            logger.info(f"From: {from_ai_address}, To: {to_recipients}, CC: {cc_recipients}")
             logger.info(f"Reply sent successfully! Message ID: {response['MessageId']}")
             return response["MessageId"]
 
@@ -167,10 +263,11 @@ class EmailReplySender:
             f"---\n"
             f"From: {email_data['sender']}\n"
             f"Sent: {email_data['date_received']}\n"
-            f"To: {email_data["recipient"]} wrote:\n"
-            f"Subject: {email_data['subject']} wrote:\n\n"
+            f"To: {email_data["recipient"]} :\n"
+            f"Subject: {email_data['subject']} :\n\n"
             f"{email_data['body']}\n"
         )
+
 
 def lambda_handler(event, context):
     """AWS Lambda function handler."""
@@ -179,18 +276,26 @@ def lambda_handler(event, context):
         if not email_data:
             return {"statusCode": 400, "body": "Invalid email data."}
 
-        # Generate AI response
-        reply_content = OpenAIResponder.generate_response(email_data["subject"], email_data["body"])
+        # Decide if OpenAI should generate a response
+        if OpenAIResponder.should_ai_respond(
+            email_data["body"], email_data["recipient"], email_data["to_recipients"], email_data["cc_recipients"]
+        ):
+            reply_content = OpenAIResponder.generate_response(email_data["subject"], email_data["body"])
+        else:
+            logger.info("AI was not mentioned, skipping response generation.")
+            reply_content = None  # Do not generate a response
 
-        # Send reply via SES
-        message_id = EmailReplySender.send_reply(email_data, reply_content)
+        # If AI should reply, send the email
 
-        return (
-            {"statusCode": 200, "body": f"Reply sent! Message ID: {message_id}"}
-            if message_id
-            else {"statusCode": 500, "body": "Failed to send reply."}
-        )
+        logger.info(f"Reply content: {reply_content}")
+
+        if reply_content:
+            message_id = EmailReplySender.send_reply(email_data, reply_content)
+            return {"statusCode": 200, "body": f"Reply sent! Message ID: {message_id}"}
+        else:
+            return {"statusCode": 204, "body": "No AI response needed."} 
 
     except Exception as e:
         logger.error(f"Lambda execution error: {str(e)}")
         return {"statusCode": 500, "body": f"Error: {str(e)}"}
+    
