@@ -132,13 +132,21 @@ class OpenAIResponder:
         
 
     SYSTEM_PROMPT_FOR_INTENTION_CHECK = (
-        "You are an intelligent email assistant. Your task is to determine whether an email message "
-        "requires an AI-generated response. Consider if the email contains an explicit question directed "
-        "towards AI, asks for AI’s help, or seeks factual, data-driven, or automation-related assistance. It can be that AI has already answered the question then there is no need to respond. "
-        "If the email does not contain a clear question requiring AI's input, does not ask for AI’s help, "
-        "or is just part of a human-to-human conversation, then AI should NOT respond."
-        "Return only `true` if AI should respond, or `false` if AI should not respond. No explanations needed."
-    )    
+        "You are an intelligent email assistant analyzing the latest email in a thread to determine if an AI-generated "
+        "response is necessary. Only evaluate content **until the first occurrence of common delimiters** such as `---`, `FROM`, `TO`, or `SUBJECT`, "
+        "which indicate the start of previous messages. Do not analyze the full thread.\n\n"
+        "Reply with ONLY `true` (if AI should respond) or `false` (if AI should NOT respond). No explanations.\n\n"
+        "**Respond `true` if the latest email:**\n"
+        "- Contains a clear, AI-answerable question.\n"
+        "- Explicitly requests AI’s help, advice, or factual input.\n"
+        "- Introduces a new topic or request that AI has not yet addressed.\n\n"
+        "**Respond `false` if the latest email:**\n"
+        "- Is part of a human-to-human conversation without requesting AI input.\n"
+        "- Replies to AI’s previous response without adding a new question or request.\n"
+        "- Mentions AI but does not ask for assistance.\n"
+        "- Is a confirmation, acknowledgment, or casual remark (e.g., 'Thanks!', 'Got it!').\n"
+        "- Is redundant, meaning AI has already answered a similar query in one of the last three messages."
+    )
 
     @staticmethod
     def should_ai_respond(email_body, recipient, to_recipients, cc_recipients):
