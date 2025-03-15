@@ -52,7 +52,6 @@ Temporary Items
 .idea/**/workspace.xml
 .idea/**/tasks.xml
 .idea/dictionaries
-template.yaml
 
 # Sensitive or high-churn files:
 .idea/**/dataSources/
@@ -113,6 +112,7 @@ fabric.properties
 ### Python ###
 # Byte-compiled / optimized / DLL files
 __pycache__/
+template.yaml
 *.py[cod]
 *$py.class
 
