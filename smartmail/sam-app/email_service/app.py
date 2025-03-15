@@ -227,9 +227,13 @@ class EmailReplySender:
             if email_data["sender"] not in to_recipients:
                 to_recipients.append(email_data["sender"])
 
+            subject = email_data["subject"]
+            if not subject.lower().startswith("re:"):
+                subject = f"Re: {subject}"    
+
             # Construct email with threading metadata
             msg = MIMEMultipart()
-            msg["Subject"] = f"Re: {email_data['subject']}"
+            msg["Subject"] = subject
             msg["From"] = from_ai_address  # AI replies from geniml.com email
             msg["To"] = ", ".join(to_recipients)
             msg["Cc"] = ", ".join(cc_recipients)
@@ -266,12 +270,14 @@ class EmailReplySender:
     @staticmethod
     def format_reply(email_data, reply_content):
         """Formats the reply email with original message context."""
+        cc_text = f"CC: {', '.join(email_data['cc_recipients'])}\n" if email_data["cc_recipients"] else ""
         return (
             f"{reply_content}\n\n"
             f"---\n"
             f"From: {email_data['sender']}\n"
             f"Sent: {email_data['date_received']}\n"
-            f"To: {email_data["recipient"]} :\n"
+            f"To: {email_data["to_recipients"]} :\n"
+            f"{cc_text}"
             f"Subject: {email_data['subject']} :\n\n"
             f"{email_data['body']}\n"
         )
