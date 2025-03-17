@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GeniML - AI in Your Inbox</title>
+  <style>
+    body {
+      font-family: "Inter", sans-serif;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      background-color: #f4f4f4;
+      text-align: center;
+      color: #333;
+    }
+
+    .container {
+      max-width: 600px;
+      background: white;
+      padding: 40px;
+      border-radius: 10px;
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+    }
+
+    h1 {
+      font-size: 32px;
+      font-weight: 700;
+      margin-bottom: 10px;
+    }
+
+    p {
+      font-size: 18px;
+      line-height: 1.5;
+      color: #555;
+    }
+
+    .cta {
+      margin-top: 20px;
+    }
+
+    input[type="email"] {
+      width: 80%;
+      padding: 12px;
+      margin: 10px 0;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+      font-size: 16px;
+    }
+
+    button {
+      padding: 12px 20px;
+      border: none;
+      background-color: #007BFF;
+      color: white;
+      font-size: 16px;
+      font-weight: bold;
+      border-radius: 5px;
+      cursor: pointer;
+      transition: background 0.3s ease;
+    }
+
+    button:hover {
+      background-color: #0056b3;
+    }
+
+    .privacy {
+      font-size: 12px;
+      margin-top: 10px;
+      color: #666;
+    }
+
+    .how-it-works {
+      margin-top: 30px;
+      padding: 20px;
+      background-color: #f8f8f8;
+      border-radius: 8px;
+      text-align: left;
+    }
+
+    .how-it-works h2 {
+      font-size: 24px;
+      font-weight: 600;
+      text-align: center;
+    }
+
+    .how-it-works ul {
+      list-style: none;
+      padding: 0;
+    }
+
+    .how-it-works li {
+      font-size: 16px;
+      margin: 10px 0;
+      display: flex;
+      align-items: center;
+    }
+
+    .how-it-works li span {
+      margin-right: 8px;
+      font-size: 18px;
+      color: #28a745;
+    }
+
+    .highlight {
+      font-weight: bold;
+      color: #007BFF;
+    }
+
+    footer {
+      margin-top: 20px;
+      font-size: 14px;
+      color: #777;
+      text-align: center;
+    }
+
+    footer a {
+      color: #007BFF;
+      text-decoration: none;
+    }
+
+    footer a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <h1>AI Conversations. Right in Your Inbox.</h1>
+    <p>No new apps. No extra logins. GeniML brings AI into your email, keeping your conversations organized and
+      accessible—right where they belong.</p>
+
+    <div class="cta">
+      <form id="emailForm">
+        <input type="email" id="email" name="email" placeholder="Enter your email" required>
+        <br>
+        <button type="submit">Join the Waitlist</button>
+      </form>
+      <p id="message"></p>
+      <p class="privacy">We respect your privacy. Your email will only be used provide you with access to GeniML
+        service.</p>
+    </div>
+
+    <div class="how-it-works">
+      <h2>How It Works</h2>
+      <ul>
+        <li><span>✅</span> <span class="highlight">Sign Up</span> – Enter your email and join the waitlist.</li>
+        <li><span>✅</span> <span class="highlight">Get Verified</span> – Once approved, you’ll receive a confirmation
+          email.</li>
+        <li><span>✅</span> <span class="highlight">Start Chatting</span> – Simply email your favorite AI agent at&nbsp;
+          <strong>**@geniml.com</strong>.
+        </li>
+        <li><span>✅</span> <span class="highlight">Get Smart Replies</span> – AI responds directly in your inbox.</li>
+      </ul>
+      <p>💡 <strong>Example:</strong> Need puppy advice? Just email <span class="highlight">vet@geniml.com</span> and
+        get expert tips!</p>
+    </div>
+  </div>
+
+  <footer>
+    Contact us at: <a href="mailto:support@geniml.com">support@geniml.com</a><br>
+    &copy; 2025 GeniML. All rights reserved.
+  </footer>
+
+  <script type="module">
+    import { registerUser } from "./api.js";
+
+    document.addEventListener("DOMContentLoaded", () => {
+      const form = document.getElementById("emailForm");
+      form.addEventListener("submit", handleSubmit);
+    });
+
+    async function handleSubmit(event) {
+      event.preventDefault();
+      const email = document.getElementById("email").value;
+
+      if (!email) {
+        document.getElementById("message").textContent = "Please enter a valid email.";
+        return;
+      }
+
+      const message = await registerUser(email);
+      document.getElementById("message").textContent = message;
+      document.getElementById("email").value = "";
+    }
+  </script>
+</body>
+
+</html>

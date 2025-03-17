@@ -9,4 +9,13 @@ manifest_hash = "2c6ee24b09816a6f14f95d1698b24ead"
 packagetype = "Zip"
 functions = ["HelloWorldFunction"]
 
+[function_build_definitions.b13b794e-d239-45ee-967a-0df134adb5a5]
+codeuri = "/Users/levonsh/Projects/smartmail/sam-app/email_registration"
+runtime = "nodejs22.x"
+architecture = "x86_64"
+handler = "index.handler"
+manifest_hash = ""
+packagetype = "Zip"
+functions = ["mailgptregistration"]
+
 [layer_build_definitions]
