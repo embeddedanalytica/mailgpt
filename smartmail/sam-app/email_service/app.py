@@ -11,12 +11,14 @@ import re
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email import message_from_string
+from botocore.exceptions import ClientError
 
 sys.path.append("vendor")
 
 # === CONFIGURATION ===
 AWS_REGION = "us-west-2"  # Change to your SES region
 OPENAI_MODEL = "gpt-4o-mini-2024-07-18"
+NO_RESPONSE_MODEL = "gpt-4o-mini-2024-07-18"
 
 # Initialize logging
 logger = logging.getLogger()
@@ -27,6 +29,24 @@ ses_client = boto3.client("ses", region_name=AWS_REGION)
 
 # Initialize OpenAI client
 openai.api_key = os.getenv("OPENAI_API_KEY")
+
+dynamodb = boto3.resource("dynamodb")
+USERS_TABLE = "users"  # Change this to your actual table name
+
+def is_registered(email_address):
+    """
+    Checks if the email exists in the DynamoDB 'users' table.
+    Returns True if found, None if not found, and False if there's an error.
+    """
+    try:
+        table = dynamodb.Table(USERS_TABLE)
+        response = table.get_item(Key={"email_address": email_address.lower()})
+        if "Item" in response:
+            return True  # User is registered
+        return None  # User is not registered
+    except ClientError as e:
+        logger.error(f"Error checking registration for {email_address}: {e}")
+        return False  # Fail-safe: Return False on error
 
 
 class EmailProcessor:
@@ -113,6 +133,12 @@ class OpenAIResponder:
         "If the email lacks a clear question, ask for clarifications. Keep responses concise and structured."
     )
 
+    NOT_REGISTERED_SYSTEM_PROMPT = (
+    "You must inform the user that they are not registered and cannot receive a response. "
+    "Be polite, acknowledge their email, and direct them to register at [https://www.geniml.com]. "
+    "Do not repeat the link more than once. End the response by inviting them to ask again after registration."
+)
+
     @staticmethod
     def generate_response(subject, body):
         """Generates an AI-crafted email response based on the original email content."""
@@ -129,6 +155,23 @@ class OpenAIResponder:
         except Exception as e:
             logger.error(f"Error generating OpenAI response: {str(e)}")
             return "I'm sorry, but I couldn't generate a response at this time."
+        
+    @staticmethod
+    def generate_invite_response(subject, body):
+        """Generates an AI-crafted email response inviting a user to register."""
+        try:
+            client = openai.OpenAI()
+            response = client.chat.completions.create(
+                model=NO_RESPONSE_MODEL,
+                messages=[
+                    {"role": "system", "content": OpenAIResponder.NOT_REGISTERED_SYSTEM_PROMPT},
+                    {"role": "user", "content": f"{subject}"},
+                ],
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            logger.error(f"Error generating OpenAI response: {str(e)}")
+            return "I'm sorry, but I couldn't generate a response at this time."    
         
 
     SYSTEM_PROMPT_FOR_INTENTION_CHECK = (
@@ -276,7 +319,7 @@ class EmailReplySender:
             f"---\n"
             f"From: {email_data['sender']}\n"
             f"Sent: {email_data['date_received']}\n"
-            f"To: {email_data["to_recipients"]} :\n"
+            f"To: {email_data['to_recipients']} :\n"
             f"{cc_text}"
             f"Subject: {email_data['subject']} :\n\n"
             f"{email_data['body']}\n"
@@ -290,14 +333,24 @@ def lambda_handler(event, context):
         if not email_data:
             return {"statusCode": 400, "body": "Invalid email data."}
 
-        # Decide if OpenAI should generate a response
-        if OpenAIResponder.should_ai_respond(
-            email_data["body"], email_data["recipient"], email_data["to_recipients"], email_data["cc_recipients"]
-        ):
-            reply_content = OpenAIResponder.generate_response(email_data["subject"], email_data["body"])
+        # Verify if the recipient (TO email) is registered in DynamoDB
+        recipient_email = email_data['sender']
+        registration_status = is_registered(recipient_email)
+        if registration_status is None:
+            logger.info(f"Recipient {recipient_email} is not registered. Generating follow-up email.")
+            reply_content = OpenAIResponder.generate_invite_response(email_data["subject"], email_data["body"])
+        elif registration_status is False:
+            logger.error(f"Error checking registration for {recipient_email}. Aborting request.")
+            return {"statusCode": 500, "body": "Internal error checking registration."}
         else:
-            logger.info("AI was not mentioned, skipping response generation.")
-            reply_content = None  # Do not generate a response
+            # Decide if OpenAI should generate a response
+            if OpenAIResponder.should_ai_respond(
+                email_data["body"], email_data["recipient"], email_data["to_recipients"], email_data["cc_recipients"]
+            ):
+                reply_content = OpenAIResponder.generate_response(email_data["subject"], email_data["body"])
+            else:
+                logger.info("AI was not mentioned, skipping response generation.")
+                reply_content = None  # Do not generate a response
 
         # If AI should reply, send the email
 
@@ -312,4 +365,3 @@ def lambda_handler(event, context):
     except Exception as e:
         logger.error(f"Lambda execution error: {str(e)}")
         return {"statusCode": 500, "body": f"Error: {str(e)}"}
-    
