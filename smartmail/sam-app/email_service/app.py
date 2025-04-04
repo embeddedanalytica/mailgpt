@@ -17,7 +17,9 @@ sys.path.append("vendor")
 
 # === CONFIGURATION ===
 AWS_REGION = "us-west-2"  # Change to your SES region
-OPENAI_MODEL = "gpt-4o-mini-2024-07-18"
+OPENAI_GENERIC_MODEL = "gpt-4o-mini-2024-07-18"
+OPENAI_CLASIFICATION_MODEL = "gpt-4o-mini-2024-07-18"
+OPENAI_REASONING_MODEL = "o3-mini-2025-01-31"
 NO_RESPONSE_MODEL = "gpt-4o-mini-2024-07-18"
 
 # Initialize logging
@@ -42,8 +44,10 @@ def is_registered(email_address):
         table = dynamodb.Table(USERS_TABLE)
         response = table.get_item(Key={"email_address": email_address.lower()})
         if "Item" in response:
+            logger.info(f"User {email_address} is registered.")
             return True  # User is registered
-        return None  # User is not registered
+        logger.info(f"User {email_address} is not registered. But who cares? Let's send the email anyway.")
+        return True  # User is not registered but we'll send the email anyway (change to None later to enforce registration)
     except ClientError as e:
         logger.error(f"Error checking registration for {email_address}: {e}")
         return False  # Fail-safe: Return False on error
@@ -125,17 +129,27 @@ class OpenAIResponder:
     """Handles generating AI responses using OpenAI."""
 
     SYSTEM_PROMPT = (
-        "You are an AI assistant designed to read user emails, understand their intent, and provide natural, friendly, "
-        "and conversational responses. Your task is to identify the main question in the email and craft a response "
-        "that feels warm, engaging, and helpful—just like a thoughtful human assistant would. Avoid robotic or overly "
-        "formal phrasing. Instead of explicitly stating ‘Extracted Question’ or ‘Comprehensive Answer,’ naturally "
-        "acknowledge the user’s inquiry *without repeating the question*, and respond in a way that feels conversational and friendly. "
-        "If the email lacks a clear question, ask for clarifications. Keep responses concise and structured."
+        "You are an AI assistant that writes natural, friendly, and conversational replies to user emails as part of an ongoing email thread. "
+        "The emails are shown in reverse-chronological order (latest message at the top). To understand the conversation correctly, "
+        "**you must read the messages from bottom to top** (oldest to newest). Your primary task is to identify the latest user question or intent "
+        "and craft a warm, concise, and helpful response that continues the conversation fluidly.\n\n"
+        "DO:\n"
+        "- Focus on the most recent message at the top while using the full context below to inform your reply.\n"
+        "- Match the tone of the sender: keep it casual for informal emails, and provide more structure and depth for serious or high-stakes inquiries.\n"
+        "- Acknowledge the user’s intent naturally—avoid repeating their message, and instead build on it to move the conversation forward.\n"
+        "- Keep responses short, clear, and engaging—like a thoughtful human assistant would.\n"
+        "- Ask for clarification if the user's message is vague or ambiguous.\n\n"
+        "DO NOT:\n"
+        "- Greet the user again (e.g., “Hi there,” “Hope you're well”)—this is a thread.\n"
+        "- Summarize previous messages or repeat earlier context unless asked explicitly.\n"
+        "- Use robotic, formal, or overly verbose language.\n"
+        "- Use phrases like “Extracted Question” or “Here is your response.”\n\n"
+        "Your tone should be warm and conversational. Focus on clarity, empathy, and being genuinely helpful while respecting the context of an ongoing thread."
     )
 
     NOT_REGISTERED_SYSTEM_PROMPT = (
     "You must inform the user that they are not registered and cannot receive a response. "
-    "Be polite, acknowledge their email, and direct them to register at [https://www.geniml.com]. "
+    "Be polite, acknowledge their email, and direct them to register at [https://geniml.com]. "
     "Do not repeat the link more than once. End the response by inviting them to ask again after registration."
 )
 
@@ -145,13 +159,16 @@ class OpenAIResponder:
         try:
             client = openai.OpenAI()
             response = client.chat.completions.create(
-                model=OPENAI_MODEL,
+                model=OPENAI_GENERIC_MODEL,
                 messages=[
                     {"role": "system", "content": OpenAIResponder.SYSTEM_PROMPT},
                     {"role": "user", "content": f"{subject}\n{body}"},
                 ],
             )
-            return response.choices[0].message.content
+            ai_reply = response.choices[0].message.content.strip()
+            disclaimer = "\n\nDisclaimer: This response is AI-generated and may contain errors. Please verify all information provided. For feedback, email feedback@geniml.com."
+            signature = "\n\nTruly yours,\nGeniML\nhttps://geniml.com"
+            return ai_reply + disclaimer + signature
         except Exception as e:
             logger.error(f"Error generating OpenAI response: {str(e)}")
             return "I'm sorry, but I couldn't generate a response at this time."
@@ -168,7 +185,7 @@ class OpenAIResponder:
                     {"role": "user", "content": f"{subject}"},
                 ],
             )
-            return response.choices[0].message.content
+            return response.choices[0].message.content.strip() + "\n\nTruly yours,\nGeniML\nhttps://geniml.com"
         except Exception as e:
             logger.error(f"Error generating OpenAI response: {str(e)}")
             return "I'm sorry, but I couldn't generate a response at this time."    
@@ -220,7 +237,7 @@ class OpenAIResponder:
         try:
             client = openai.OpenAI()
             response = client.chat.completions.create(
-                model=OPENAI_MODEL,
+                model=OPENAI_GENERIC_MODEL,
                 messages=[
                     {"role": "system", "content": OpenAIResponder.SYSTEM_PROMPT_FOR_INTENTION_CHECK},
                     {"role": "user", "content": f"{email_body}"}
