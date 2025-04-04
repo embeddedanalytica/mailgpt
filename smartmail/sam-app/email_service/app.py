@@ -33,7 +33,8 @@ ses_client = boto3.client("ses", region_name=AWS_REGION)
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
 dynamodb = boto3.resource("dynamodb")
-USERS_TABLE = "users"  # Change this to your actual table name
+USERS_TABLE = "users"
+RESPONSE_EVALUAION_TABLE = "response_evaluations"
 
 def is_registered(email_address):
     """
@@ -47,7 +48,7 @@ def is_registered(email_address):
             logger.info(f"User {email_address} is registered.")
             return True  # User is registered
         logger.info(f"User {email_address} is not registered. But who cares? Let's send the email anyway.")
-        return True  # User is not registered but we'll send the email anyway (change to None later to enforce registration)
+        return True  # User is not registered but we'll send the email anyway (TODO: change to "None" later to enforce registration)
     except ClientError as e:
         logger.error(f"Error checking registration for {email_address}: {e}")
         return False  # Fail-safe: Return False on error
@@ -276,6 +277,9 @@ class EmailReplySender:
         try:
             formatted_reply = EmailReplySender.format_reply(email_data, reply_content)
 
+            # Evaluate the AI-generated response
+            ResponseEvaluation.evaluate_response(email_data["body"], reply_content)
+
             # Get AI's reply-from email (must be @geniml.com)
             from_ai_address = EmailReplySender.get_geniml_email(email_data["to_recipients"] + email_data["cc_recipients"])
 
@@ -342,6 +346,76 @@ class EmailReplySender:
             f"{email_data['body']}\n"
         )
 
+
+        
+class ResponseEvaluation:
+    """Handles evaluation and storage of AI-generated email responses using the OPENAI_REASONING_MODEL."""
+
+    @staticmethod
+    def evaluate_response(original_email, ai_response):
+        """
+        Evaluates the AI-generated response given the original email using the OPENAI_REASONING_MODEL, and stores the evaluation in the 'response_evaluations' DynamoDB table.
+ 
+        Parameters:
+            original_email (str): The original email content.
+            ai_response (str): The AI-generated email response.
+ 
+        Returns:
+            str: The evaluation result from the LLM, or None if an error occurred.
+        """
+        import uuid
+        import time
+        try:
+            client = openai.OpenAI()
+            prompt = (
+                "You are a strict evaluator of email replies. Here is the email thread. *Rread it in reverse chronological order to understand the entire thread* :\n\n" +
+                original_email + "\n\n" +
+                "Here is the suggested reply from the agent:\n\n" +
+                ai_response + "\n\n" +
+                "Please do the following:\n"
+                "1. Assign a score from 1-5 for each of the following categories: Accuracy, Relevance, Clarity, Helpfulness, and Tone.\n"
+                "2. For each category, provide one or two sentences explaining why you gave that score.\n\n"
+                "Respond in JSON only, with the following structure:\n"
+                "{\n"
+                "  \"accuracy_score\": X,\n"
+                "  \"accuracy_justification\": \"...\",\n"
+                "  \"relevance_score\": X,\n"
+                "  \"relevance_justification\": \"...\",\n"
+                "  \"clarity_score\": X,\n"
+                "  \"clarity_justification\": \"...\",\n"
+                "  \"helpfulness_score\": X,\n"
+                "  \"helpfulness_justification\": \"...\",\n"
+                "  \"tone_score\": X,\n"
+                "  \"tone_justification\": \"...\"\n"
+                "}"
+            )
+            response = client.chat.completions.create(
+                model=OPENAI_REASONING_MODEL,
+                messages=[
+                    {"role": "system", "content": prompt},
+                ],
+            )
+            evaluation_result = response.choices[0].message.content.strip()
+
+            logger.info(f"Evaluation result: {evaluation_result}")
+            
+            # Store the evaluation in DynamoDB table 'response_evaluations'
+            table = dynamodb.Table(RESPONSE_EVALUAION_TABLE)
+            evaluation_id = str(uuid.uuid4())
+            timestamp = int(time.time())
+            table.put_item(
+                Item={
+                    "evaluation_id": evaluation_id,
+                    "original_email": original_email,
+                    "ai_response": ai_response,
+                    "evaluation": evaluation_result,
+                    "timestamp": timestamp
+                }
+            )
+            return evaluation_result
+        except Exception as e:
+            logger.error("Error evaluating AI response: " + str(e))
+            return None
 
 def lambda_handler(event, context):
     """AWS Lambda function handler."""
