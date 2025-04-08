@@ -16,10 +16,11 @@ from botocore.exceptions import ClientError
 sys.path.append("vendor")
 
 # === CONFIGURATION ===
-AWS_REGION = "us-west-2"  # Change to your SES region
+AWS_REGION = "us-west-2"
 OPENAI_GENERIC_MODEL = "gpt-4o-mini-2024-07-18"
 OPENAI_CLASIFICATION_MODEL = "gpt-4o-mini-2024-07-18"
-OPENAI_REASONING_MODEL = "o3-mini-2025-01-31"
+OPENAI_REASONING_MODEL = "gpt-4o-mini-2024-07-18"
+# OPENAI_REASONING_MODEL = "o3-mini-2025-01-31"
 NO_RESPONSE_MODEL = "gpt-4o-mini-2024-07-18"
 
 # Initialize logging
@@ -167,9 +168,9 @@ class OpenAIResponder:
                 ],
             )
             ai_reply = response.choices[0].message.content.strip()
-            disclaimer = "\n\nDisclaimer: This response is AI-generated and may contain errors. Please verify all information provided. For feedback, email feedback@geniml.com."
             signature = "\n\nTruly yours,\nGeniML\nhttps://geniml.com"
-            return ai_reply + disclaimer + signature
+            disclaimer = "\n\n###\nDisclaimer: This response is AI-generated and may contain errors. Please verify all information provided. For feedback, email mailto:feedback@geniml.com \n###"
+            return ai_reply + signature + disclaimer
         except Exception as e:
             logger.error(f"Error generating OpenAI response: {str(e)}")
             return "I'm sorry, but I couldn't generate a response at this time."
