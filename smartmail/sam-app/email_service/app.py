@@ -168,8 +168,18 @@ class OpenAIResponder:
                 ],
             )
             ai_reply = response.choices[0].message.content.strip()
-            signature = "\n\nTruly yours,\nGeniML\nhttps://geniml.com"
-            disclaimer = "\n\n###\nDisclaimer: This response is AI-generated and may contain errors. Please verify all information provided. For feedback, email mailto:feedback@geniml.com \n###"
+            signature = (
+                "<br><br>Truly yours,<br>"
+                "GeniML<br>"
+                '<a href="https://geniml.com">geniml.com</a>'
+            )
+            disclaimer = (
+                "<br><br><hr><small>"
+                "Disclaimer: This response is AI-generated and may contain errors. "
+                "Please verify all information provided. For feedback, email "
+                '<a href="mailto:feedback@geniml.com">feedback@geniml.com</a>.'
+                "</small><hr>"
+            )
             return ai_reply + signature + disclaimer
         except Exception as e:
             logger.error(f"Error generating OpenAI response: {str(e)}")
@@ -309,7 +319,7 @@ class EmailReplySender:
             msg["Message-ID"] = email.utils.make_msgid(domain=from_ai_address.split("@")[-1])
 
             # **Attach the reply content properly**
-            msg.attach(MIMEText(formatted_reply, "plain", "utf-8"))
+            msg.attach(MIMEText(formatted_reply, "html", "utf-8"))
 
             # Ensure there is at least one recipient
             all_recipients = list(set(to_recipients + cc_recipients))
@@ -337,14 +347,16 @@ class EmailReplySender:
         """Formats the reply email with original message context."""
         cc_text = f"CC: {', '.join(email_data['cc_recipients'])}\n" if email_data["cc_recipients"] else ""
         return (
-            f"{reply_content}\n\n"
-            f"---\n"
-            f"From: {email_data['sender']}\n"
-            f"Sent: {email_data['date_received']}\n"
-            f"To: {email_data['to_recipients']} :\n"
+            f"<html><body>"
+            f"{reply_content.replace('\n', '<br>')}<br>"
+            f"---<br>"
+            f"From: {email_data['sender']}<br>"
+            f"Sent: {email_data['date_received']}<br>"
+            f"To: {', '.join(email_data['to_recipients'])}<br>"
             f"{cc_text}"
-            f"Subject: {email_data['subject']} :\n\n"
-            f"{email_data['body']}\n"
+            f"Subject: {email_data['subject']}<br><br>"
+            f"{email_data['body'].replace('\n', '<br>')}"
+            f"</body></html>"
         )
 
 
