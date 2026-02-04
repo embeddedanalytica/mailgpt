@@ -3,15 +3,15 @@ import sys
 import json
 import logging
 import base64
-import boto3
+import boto3 # type: ignore
 import email
 import email.utils
-import openai
+import openai # type: ignore
 import re
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email import message_from_string
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError # type: ignore
 
 sys.path.append("vendor")
 

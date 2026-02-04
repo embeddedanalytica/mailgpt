@@ -1,130 +1,298 @@
-# sam-app
+# SmartMail - AI-Powered Email Response Service
 
-This project contains source code and supporting files for a serverless application that you can deploy with the SAM CLI. It includes the following files and folders.
+This project is a serverless email automation service that uses OpenAI to automatically respond to incoming emails. The application receives emails via AWS SES, processes them through SNS, generates AI-powered responses, and sends replies back via SES.
 
-- hello_world - Code for the application's Lambda function.
-- events - Invocation events that you can use to invoke the function.
-- tests - Unit tests for the application code. 
-- template.yaml - A template that defines the application's AWS resources.
+## Architecture
 
-The application uses several AWS resources, including Lambda functions and an API Gateway API. These resources are defined in the `template.yaml` file in this project. You can update the template to add AWS resources through the same deployment process that updates your application code.
+The application consists of two main Lambda functions:
 
-If you prefer to use an integrated development environment (IDE) to build and test your application, you can use the AWS Toolkit.  
-The AWS Toolkit is an open source plug-in for popular IDEs that uses the SAM CLI to build and deploy serverless applications on AWS. The AWS Toolkit also adds a simplified step-through debugging experience for Lambda function code. See the following links to get started.
+1. **EmailServiceFunction** (Python) - Processes incoming emails and generates AI responses
+   - Triggered by SNS notifications from SES
+   - Parses email content from SNS messages
+   - Checks user registration in DynamoDB
+   - Generates AI responses using OpenAI
+   - Sends replies via SES
+   - Evaluates response quality and stores evaluations
 
-* [CLion](https://docs.aws.amazon.com/toolkit-for-jetbrains/latest/userguide/welcome.html)
-* [GoLand](https://docs.aws.amazon.com/toolkit-for-jetbrains/latest/userguide/welcome.html)
-* [IntelliJ](https://docs.aws.amazon.com/toolkit-for-jetbrains/latest/userguide/welcome.html)
-* [WebStorm](https://docs.aws.amazon.com/toolkit-for-jetbrains/latest/userguide/welcome.html)
-* [Rider](https://docs.aws.amazon.com/toolkit-for-jetbrains/latest/userguide/welcome.html)
-* [PhpStorm](https://docs.aws.amazon.com/toolkit-for-jetbrains/latest/userguide/welcome.html)
-* [PyCharm](https://docs.aws.amazon.com/toolkit-for-jetbrains/latest/userguide/welcome.html)
-* [RubyMine](https://docs.aws.amazon.com/toolkit-for-jetbrains/latest/userguide/welcome.html)
-* [DataGrip](https://docs.aws.amazon.com/toolkit-for-jetbrains/latest/userguide/welcome.html)
-* [VS Code](https://docs.aws.amazon.com/toolkit-for-vscode/latest/userguide/welcome.html)
-* [Visual Studio](https://docs.aws.amazon.com/toolkit-for-visual-studio/latest/user-guide/welcome.html)
+2. **mailgptregistration** (Node.js) - Handles user registration via API Gateway
+   - Exposes REST API endpoint: `POST /register`
+   - Stores user emails in DynamoDB
+   - Sends welcome emails via SES
 
-## Deploy the sample application
+### Data Flow
 
-The Serverless Application Model Command Line Interface (SAM CLI) is an extension of the AWS CLI that adds functionality for building and testing Lambda applications. It uses Docker to run your functions in an Amazon Linux environment that matches Lambda. It can also emulate your application's build environment and API.
+```
+Incoming Email → AWS SES → SNS Topic → EmailServiceFunction → OpenAI API → SES Reply
+                                                              ↓
+                                                         DynamoDB (user check, evaluations)
+```
 
-To use the SAM CLI, you need the following tools.
+## Prerequisites
 
-* SAM CLI - [Install the SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-cli-install.html)
-* [Python 3 installed](https://www.python.org/downloads/)
-* Docker - [Install Docker community edition](https://hub.docker.com/search/?type=edition&offering=community)
+To use the SAM CLI, you need the following tools:
 
-To build and deploy your application for the first time, run the following in your shell:
+* **SAM CLI** - [Install the SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-cli-install.html)
+* **Python 3.13** - [Install Python 3.13](https://www.python.org/downloads/)
+* **Node.js 22.x** - [Install Node.js](https://nodejs.org/)
+* **Docker** - [Install Docker](https://hub.docker.com/search/?type=edition&offering=community) (required for `sam build --use-container`)
+* **AWS CLI** - [Install AWS CLI](https://aws.amazon.com/cli/)
+* **OpenAI API Key** - Get your API key from [OpenAI Platform](https://platform.openai.com/)
+
+## AWS Resources Required
+
+Before deploying, ensure you have:
+
+1. **AWS SES Configuration**:
+   - Verified email addresses/domains in SES
+   - SES Receipt Rule configured to:
+     - Store emails in S3 bucket (`smart-gpt-email`)
+     - Publish notifications to SNS topic (`smart_mail_sns`)
+   - SNS topic subscribed to `EmailServiceFunction`
+
+2. **DynamoDB Tables**:
+   - `users` table with partition key: `email_address` (String)
+   - `response_evaluations` table with partition key: `evaluation_id` (String)
+
+3. **S3 Bucket** (optional, for email storage):
+   - Bucket: `smart-gpt-email`
+   - Configured in SES Receipt Rule
+
+## Project Structure
+
+```
+sam-app/
+├── email_service/          # Python Lambda function for email processing
+│   ├── app.py              # Main Lambda handler
+│   ├── email_processor.py  # Email parsing from SNS
+│   ├── email_reply_sender.py # SES email sending
+│   ├── openai_responder.py # OpenAI API integration
+│   ├── response_evaluator.py # Response quality evaluation
+│   ├── requirements.txt    # Python dependencies
+│   └── vendor/             # Bundled dependencies (OpenAI, etc.)
+├── email_registration/     # Node.js Lambda function for user registration
+│   └── app.mjs             # Registration API handler
+├── template.yaml           # SAM/CloudFormation template
+└── samconfig.toml          # SAM deployment configuration
+```
+
+## Deployment
+
+### First Time Deployment
+
+1. **Configure your OpenAI API key** in `template.yaml` (line 25):
+   ```yaml
+   Environment:
+     Variables:
+       OPENAI_API_KEY: your-api-key-here
+   ```
+
+2. **Build the application**:
+   ```bash
+   cd sam-app
+   sam build --use-container
+   ```
+
+3. **Deploy with guided prompts**:
+   ```bash
+   sam deploy --guided
+   ```
+
+   The guided deployment will prompt you for:
+   - **Stack Name**: `sam-app` (or your preferred name)
+   - **AWS Region**: `us-west-2` (or your preferred region)
+   - **Confirm changes before deploy**: Yes/No
+   - **Allow SAM CLI IAM role creation**: Yes (required)
+   - **Save arguments to samconfig.toml**: Yes (recommended)
+
+### Subsequent Deployments
+
+After the first deployment, your configuration is saved in `samconfig.toml`. Simply run:
 
 ```bash
 sam build --use-container
-sam deploy --guided
+sam deploy
 ```
 
-The first command will build the source of your application. The second command will package and deploy your application to AWS, with a series of prompts:
-
-* **Stack Name**: The name of the stack to deploy to CloudFormation. This should be unique to your account and region, and a good starting point would be something matching your project name.
-* **AWS Region**: The AWS region you want to deploy your app to.
-* **Confirm changes before deploy**: If set to yes, any change sets will be shown to you before execution for manual review. If set to no, the AWS SAM CLI will automatically deploy application changes.
-* **Allow SAM CLI IAM role creation**: Many AWS SAM templates, including this example, create AWS IAM roles required for the AWS Lambda function(s) included to access AWS services. By default, these are scoped down to minimum required permissions. To deploy an AWS CloudFormation stack which creates or modifies IAM roles, the `CAPABILITY_IAM` value for `capabilities` must be provided. If permission isn't provided through this prompt, to deploy this example you must explicitly pass `--capabilities CAPABILITY_IAM` to the `sam deploy` command.
-* **Save arguments to samconfig.toml**: If set to yes, your choices will be saved to a configuration file inside the project, so that in the future you can just re-run `sam deploy` without parameters to deploy changes to your application.
-
-You can find your API Gateway Endpoint URL in the output values displayed after deployment.
-
-## Use the SAM CLI to build and test locally
-
-Build your application with the `sam build --use-container` command.
+### Deploy Specific Function Only
 
 ```bash
-sam-app$ sam build --use-container
+sam build EmailServiceFunction
+sam deploy
 ```
 
-The SAM CLI installs dependencies defined in `hello_world/requirements.txt`, creates a deployment package, and saves it in the `.aws-sam/build` folder.
+## Configuration
 
-Test a single function by invoking it directly with a test event. An event is a JSON document that represents the input that the function receives from the event source. Test events are included in the `events` folder in this project.
+### SNS Topic Subscription
 
-Run functions locally and invoke them with the `sam local invoke` command.
+After deployment, ensure your SNS topic is subscribed to the Lambda function:
 
 ```bash
-sam-app$ sam local invoke HelloWorldFunction --event events/event.json
+# Get the function ARN
+FUNCTION_ARN=$(aws cloudformation describe-stack-resources \
+  --stack-name sam-app \
+  --query 'StackResources[?LogicalResourceId==`EmailServiceFunction`].PhysicalResourceId' \
+  --output text)
+
+# Add permission for SNS
+aws lambda add-permission \
+  --function-name $FUNCTION_ARN \
+  --statement-id sns-invoke \
+  --action lambda:InvokeFunction \
+  --principal sns.amazonaws.com \
+  --source-arn arn:aws:sns:us-west-2:YOUR_ACCOUNT_ID:smart_mail_sns
+
+# Subscribe to SNS topic
+aws sns subscribe \
+  --topic-arn arn:aws:sns:us-west-2:YOUR_ACCOUNT_ID:smart_mail_sns \
+  --protocol lambda \
+  --notification-endpoint $FUNCTION_ARN
 ```
 
-The SAM CLI can also emulate your application's API. Use the `sam local start-api` to run the API locally on port 3000.
+### Environment Variables
+
+The `EmailServiceFunction` requires:
+- `OPENAI_API_KEY`: Your OpenAI API key (set in `template.yaml`)
+
+## Local Development and Testing
+
+### Build Locally
 
 ```bash
-sam-app$ sam local start-api
-sam-app$ curl http://localhost:3000/
+sam build --use-container
 ```
 
-The SAM CLI reads the application template to determine the API's routes and the functions that they invoke. The `Events` property on each function's definition includes the route and method for each path.
+### Test Email Service Function Locally
 
-```yaml
-      Events:
-        HelloWorld:
-          Type: Api
-          Properties:
-            Path: /hello
-            Method: get
-```
-
-## Add a resource to your application
-The application template uses AWS Serverless Application Model (AWS SAM) to define application resources. AWS SAM is an extension of AWS CloudFormation with a simpler syntax for configuring common serverless application resources such as functions, triggers, and APIs. For resources not included in [the SAM specification](https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md), you can use standard [AWS CloudFormation](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-template-resource-type-ref.html) resource types.
-
-## Fetch, tail, and filter Lambda function logs
-
-To simplify troubleshooting, SAM CLI has a command called `sam logs`. `sam logs` lets you fetch logs generated by your deployed Lambda function from the command line. In addition to printing the logs on the terminal, this command has several nifty features to help you quickly find the bug.
-
-`NOTE`: This command works for all AWS Lambda functions; not just the ones you deploy using SAM.
+Create a test event file `events/sns-email-event.json` with an SNS message structure, then:
 
 ```bash
-sam-app$ sam logs -n HelloWorldFunction --stack-name "sam-app" --tail
+sam local invoke EmailServiceFunction --event events/sns-email-event.json
 ```
 
-You can find more information and examples about filtering Lambda function logs in the [SAM CLI Documentation](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-cli-logging.html).
-
-## Tests
-
-Tests are defined in the `tests` folder in this project. Use PIP to install the test dependencies and run tests.
+### Test Registration API Locally
 
 ```bash
-sam-app$ pip install -r tests/requirements.txt --user
-# unit test
-sam-app$ python -m pytest tests/unit -v
-# integration test, requiring deploying the stack first.
-# Create the env variable AWS_SAM_STACK_NAME with the name of the stack we are testing
-sam-app$ AWS_SAM_STACK_NAME="sam-app" python -m pytest tests/integration -v
+sam local start-api
 ```
+
+Then test the registration endpoint:
+
+```bash
+curl -X POST http://localhost:3000/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@example.com"}'
+```
+
+### Run API Gateway Locally
+
+```bash
+sam local start-api
+```
+
+The API will be available at `http://localhost:3000/register`
+
+## Monitoring and Logs
+
+### View Logs for EmailServiceFunction
+
+```bash
+sam logs -n EmailServiceFunction --stack-name "sam-app" --tail
+```
+
+Or using AWS CLI:
+
+```bash
+aws logs tail "/aws/lambda/sam-app-EmailServiceFunction-<SUFFIX>" \
+  --region us-west-2 --follow
+```
+
+### View Logs for Registration Function
+
+```bash
+sam logs -n mailgptregistration --stack-name "sam-app" --tail
+```
+
+### Filter Logs
+
+```bash
+# Filter for errors only
+sam logs -n EmailServiceFunction --stack-name "sam-app" --filter "ERROR"
+
+# Filter for specific email
+sam logs -n EmailServiceFunction --stack-name "sam-app" --filter "user@example.com"
+```
+
+## How It Works
+
+### Email Processing Flow
+
+1. **Email Received**: SES receives an email and stores it in S3
+2. **SNS Notification**: SES publishes a notification to SNS topic
+3. **Lambda Triggered**: `EmailServiceFunction` is invoked by SNS
+4. **Email Parsing**: Function extracts email content from SNS message
+5. **User Check**: Verifies sender is registered in DynamoDB `users` table
+6. **AI Response Generation**: 
+   - Determines if AI should respond (checks if AI is mentioned or direct recipient)
+   - Generates response using OpenAI GPT models
+   - Evaluates response quality
+7. **Reply Sent**: Sends reply via SES with proper threading headers
+
+### Registration Flow
+
+1. **API Request**: User sends POST request to `/register` endpoint
+2. **Email Storage**: Email address stored in DynamoDB `users` table
+3. **Welcome Email**: Confirmation email sent via SES
+
+## Key Features
+
+- **Intelligent Response Detection**: Only responds when appropriate (AI mentioned, direct recipient, etc.)
+- **Email Threading**: Maintains proper email threading with `In-Reply-To` and `References` headers
+- **Response Evaluation**: Automatically evaluates AI-generated responses for quality
+- **User Registration**: Simple API-based user registration system
+- **Multi-recipient Support**: Handles TO and CC recipients correctly
+
+## Troubleshooting
+
+### Function Not Receiving Emails
+
+1. Check SNS topic subscription:
+   ```bash
+   aws sns list-subscriptions-by-topic \
+     --topic-arn arn:aws:sns:us-west-2:YOUR_ACCOUNT_ID:smart_mail_sns
+   ```
+
+2. Verify SES Receipt Rule is configured correctly
+3. Check Lambda function permissions for SNS
+
+### OpenAI API Errors
+
+- Check API key is correct in `template.yaml`
+- Verify OpenAI account has sufficient quota
+- Check logs for specific error messages (429 = quota exceeded)
+
+### DynamoDB Errors
+
+- Ensure `users` table exists with `email_address` as partition key
+- Verify IAM permissions allow DynamoDB access
+- Check table region matches Lambda region
 
 ## Cleanup
 
-To delete the sample application that you created, use the AWS CLI. Assuming you used your project name for the stack name, you can run the following:
+To delete the entire application stack:
 
 ```bash
 sam delete --stack-name "sam-app"
 ```
 
+**Note**: This will delete all Lambda functions, but will NOT delete:
+- DynamoDB tables (must be deleted manually)
+- S3 bucket (must be deleted manually)
+- SNS topics (must be deleted manually)
+- SES configuration (must be removed manually)
+
 ## Resources
 
-See the [AWS SAM developer guide](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/what-is-sam.html) for an introduction to SAM specification, the SAM CLI, and serverless application concepts.
-
-Next, you can use AWS Serverless Application Repository to deploy ready to use Apps that go beyond hello world samples and learn how authors developed their applications: [AWS Serverless Application Repository main page](https://aws.amazon.com/serverless/serverlessrepo/)
+- [AWS SAM Developer Guide](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/what-is-sam.html)
+- [AWS SES Documentation](https://docs.aws.amazon.com/ses/)
+- [OpenAI API Documentation](https://platform.openai.com/docs)
+- [SAM CLI Documentation](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-cli-install.html)

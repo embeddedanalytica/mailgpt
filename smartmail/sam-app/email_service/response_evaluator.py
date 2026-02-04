@@ -1,6 +1,6 @@
 import logging
-import openai
-import boto3
+import openai # type: ignore
+import boto3 # type: ignore
 import time
 import uuid
 import os

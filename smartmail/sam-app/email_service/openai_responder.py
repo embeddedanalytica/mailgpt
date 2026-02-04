@@ -1,4 +1,4 @@
-import openai
+import openai # type: ignore
 import logging
 import os
 

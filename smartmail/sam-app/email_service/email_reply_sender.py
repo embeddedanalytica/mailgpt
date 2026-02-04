@@ -2,7 +2,7 @@ import logging
 import email.utils
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-import boto3
+import boto3 # type: ignore
 from response_evaluator import ResponseEvaluation
 
 logger = logging.getLogger()
