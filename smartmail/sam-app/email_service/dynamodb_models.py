@@ -13,6 +13,7 @@ import time
 import logging
 import secrets
 import base64
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 from botocore.exceptions import ClientError
 import boto3
@@ -380,6 +381,205 @@ def get_verified_session(email: str) -> Optional[Dict[str, Any]]:
 # ============================================================================
 # RATE LIMITS
 # ============================================================================
+
+def _current_utc_buckets(now_epoch: Optional[int] = None) -> Dict[str, str]:
+    """
+    Returns current UTC hour/day buckets in string format.
+
+    - hour_bucket: YYYYMMDDHH
+    - day_bucket: YYYYMMDD
+    """
+    if now_epoch is None:
+        now_epoch = int(time.time())
+    now_utc = datetime.fromtimestamp(now_epoch, tz=timezone.utc)
+    return {
+        "hour_bucket": now_utc.strftime("%Y%m%d%H"),
+        "day_bucket": now_utc.strftime("%Y%m%d"),
+    }
+
+
+def claim_verified_quota_slot(
+    email: str,
+    hourly_limit: int,
+    daily_limit: int,
+    now_epoch: Optional[int] = None,
+    max_retries: int = 5,
+) -> Dict[str, Any]:
+    """
+    Atomically claims one verified-user quota slot across both hour and day.
+
+    This uses optimistic locking with conditional updates to stay race-safe:
+    when only one slot remains, concurrent requests will allow at most one.
+    """
+    if now_epoch is None:
+        now_epoch = int(time.time())
+
+    table = dynamodb.Table(RATE_LIMITS_TABLE)
+    buckets = _current_utc_buckets(now_epoch=now_epoch)
+    current_hour_bucket = buckets["hour_bucket"]
+    current_day_bucket = buckets["day_bucket"]
+
+    for _ in range(max_retries):
+        try:
+            response = table.get_item(
+                Key={"email": email.lower()},
+                ConsistentRead=True,
+            )
+            item = response.get("Item", {})
+
+            stored_hour_bucket = item.get("hour_bucket")
+            stored_day_bucket = item.get("day_bucket")
+            stored_hour_count = int(item.get("verified_requests_hour", 0))
+            stored_day_count = int(item.get("verified_requests_day", 0))
+
+            effective_hour_count = (
+                stored_hour_count if stored_hour_bucket == current_hour_bucket else 0
+            )
+            effective_day_count = (
+                stored_day_count if stored_day_bucket == current_day_bucket else 0
+            )
+
+            if effective_hour_count >= hourly_limit:
+                return {
+                    "allowed": False,
+                    "reason": "hourly_limit_exceeded",
+                    "hour_bucket": current_hour_bucket,
+                    "day_bucket": current_day_bucket,
+                    "hour_count": effective_hour_count,
+                    "day_count": effective_day_count,
+                }
+
+            if effective_day_count >= daily_limit:
+                return {
+                    "allowed": False,
+                    "reason": "daily_limit_exceeded",
+                    "hour_bucket": current_hour_bucket,
+                    "day_bucket": current_day_bucket,
+                    "hour_count": effective_hour_count,
+                    "day_count": effective_day_count,
+                }
+
+            new_hour_count = effective_hour_count + 1
+            new_day_count = effective_day_count + 1
+
+            expr_values = {
+                ":new_hour_bucket": current_hour_bucket,
+                ":new_day_bucket": current_day_bucket,
+                ":new_hour_count": new_hour_count,
+                ":new_day_count": new_day_count,
+                ":now": now_epoch,
+            }
+            condition_parts = []
+
+            for attr_name, prev_token in (
+                ("hour_bucket", ":prev_hour_bucket"),
+                ("day_bucket", ":prev_day_bucket"),
+                ("verified_requests_hour", ":prev_hour_count"),
+                ("verified_requests_day", ":prev_day_count"),
+            ):
+                if attr_name in item:
+                    condition_parts.append(f"{attr_name} = {prev_token}")
+                    expr_values[prev_token] = item[attr_name]
+                else:
+                    condition_parts.append(f"attribute_not_exists({attr_name})")
+
+            table.update_item(
+                Key={"email": email.lower()},
+                UpdateExpression="""
+                    SET hour_bucket = :new_hour_bucket,
+                        day_bucket = :new_day_bucket,
+                        verified_requests_hour = :new_hour_count,
+                        verified_requests_day = :new_day_count,
+                        last_verified_request_at = :now
+                """,
+                ConditionExpression=" AND ".join(condition_parts),
+                ExpressionAttributeValues=expr_values,
+            )
+
+            return {
+                "allowed": True,
+                "reason": "allowed",
+                "hour_bucket": current_hour_bucket,
+                "day_bucket": current_day_bucket,
+                "hour_count": new_hour_count,
+                "day_count": new_day_count,
+            }
+        except ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code", "")
+            if error_code == "ConditionalCheckFailedException":
+                continue
+            logger.error(f"Error claiming verified quota slot for {email}: {e}")
+            return {
+                "allowed": False,
+                "reason": "quota_check_error",
+                "hour_bucket": current_hour_bucket,
+                "day_bucket": current_day_bucket,
+                "hour_count": 0,
+                "day_count": 0,
+            }
+
+    return {
+        "allowed": False,
+        "reason": "quota_claim_conflict",
+        "hour_bucket": current_hour_bucket,
+        "day_bucket": current_day_bucket,
+        "hour_count": 0,
+        "day_count": 0,
+    }
+
+
+def atomically_set_verified_notice_cooldown_if_allowed(
+    email: str,
+    cooldown_until: int,
+    now: int,
+) -> Dict[str, Any]:
+    """
+    Atomically sets rate-limit notice cooldown if notice sending is allowed.
+
+    Returns:
+        {
+            "send_notice": bool,
+            "reason": str,
+            "cooldown_until": int,
+        }
+    """
+    try:
+        table = dynamodb.Table(RATE_LIMITS_TABLE)
+        table.update_item(
+            Key={"email": email.lower()},
+            UpdateExpression="""
+                SET verified_rate_limit_notice_cooldown_until = :cooldown_until,
+                    last_rate_limit_notice_sent_at = :now
+            """,
+            ConditionExpression="""
+                attribute_not_exists(verified_rate_limit_notice_cooldown_until) OR
+                verified_rate_limit_notice_cooldown_until <= :now
+            """,
+            ExpressionAttributeValues={
+                ":cooldown_until": cooldown_until,
+                ":now": now,
+            },
+        )
+        return {
+            "send_notice": True,
+            "reason": "notice_allowed",
+            "cooldown_until": cooldown_until,
+        }
+    except ClientError as e:
+        error_code = e.response.get("Error", {}).get("Code", "")
+        if error_code == "ConditionalCheckFailedException":
+            return {
+                "send_notice": False,
+                "reason": "notice_cooldown_active",
+                "cooldown_until": cooldown_until,
+            }
+        logger.error(f"Error setting verified notice cooldown for {email}: {e}")
+        return {
+            "send_notice": False,
+            "reason": "notice_storage_error",
+            "cooldown_until": cooldown_until,
+        }
+
 
 def get_rate_limit(email: str) -> Dict[str, Any]:
     """

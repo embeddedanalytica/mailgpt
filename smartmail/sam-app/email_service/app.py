@@ -12,8 +12,19 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email import message_from_string
 from botocore.exceptions import ClientError # type: ignore
+from typing import Optional, Dict
 
 sys.path.append("vendor")
+sys.path.append(".")
+
+# Import DynamoDB models
+from dynamodb_models import (
+    is_verified,
+    create_action_token,
+    claim_verified_quota_slot,
+    atomically_set_verified_notice_cooldown_if_allowed,
+)
+import time
 
 # === CONFIGURATION ===
 AWS_REGION = "us-west-2"
@@ -36,6 +47,12 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 dynamodb = boto3.resource("dynamodb")
 USERS_TABLE = "users"
 RESPONSE_EVALUAION_TABLE = "response_evaluations"
+VERIFIED_HOURLY_QUOTA = int(os.getenv("VERIFIED_HOURLY_QUOTA", "2"))
+VERIFIED_DAILY_QUOTA = int(os.getenv("VERIFIED_DAILY_QUOTA", "10"))
+SEND_RATE_LIMIT_NOTICE = os.getenv("SEND_RATE_LIMIT_NOTICE", "false").lower() == "true"
+RATE_LIMIT_NOTICE_COOLDOWN_MINUTES = int(
+    os.getenv("RATE_LIMIT_NOTICE_COOLDOWN_MINUTES", "60")
+)
 
 def is_registered(email_address):
     """
@@ -265,6 +282,245 @@ class OpenAIResponder:
             logger.error(f"Error checking AI response necessity: {str(e)}")
             return False  # Fail-safe: Do not respond if OpenAI check fails
 
+def atomically_set_cooldown_if_allowed(email: str, cooldown_until: int, now: int) -> bool:
+    """
+    Atomically sets cooldown only if it doesn't exist or is in the past.
+    This prevents race conditions where multiple requests try to send verification emails.
+    
+    Args:
+        email: Email address
+        cooldown_until: Epoch seconds when cooldown expires
+        now: Current epoch seconds
+    
+    Returns:
+        True if cooldown was successfully set (this request "won"), False if cooldown already active
+    """
+    try:
+        table_name = os.getenv("RATE_LIMITS_TABLE_NAME")
+        if not table_name:
+            logger.error("RATE_LIMITS_TABLE_NAME environment variable not set")
+            return False
+        
+        table = dynamodb.Table(table_name)
+        
+        # Atomic conditional update: only succeeds if cooldown doesn't exist or is expired
+        table.update_item(
+            Key={"email": email.lower()},
+            UpdateExpression="""
+                SET verify_email_cooldown_until = :cooldown_until,
+                    last_verify_token_sent_at = :now
+            """,
+            ConditionExpression="""
+                attribute_not_exists(verify_email_cooldown_until) OR 
+                verify_email_cooldown_until <= :now
+            """,
+            ExpressionAttributeValues={
+                ":cooldown_until": cooldown_until,
+                ":now": now
+            }
+        )
+        return True
+    except ClientError as e:
+        error_code = e.response.get("Error", {}).get("Code", "")
+        if error_code == "ConditionalCheckFailedException":
+            # Cooldown is active (another request set it first)
+            return False
+        else:
+            logger.error(f"Error setting cooldown for {email}: {e}")
+            return False
+
+
+def get_cooldown_until(email: str) -> Optional[int]:
+    """
+    Gets the cooldown_until value for an email.
+    
+    Args:
+        email: Email address
+    
+    Returns:
+        Cooldown until epoch seconds, or None if not set
+    """
+    try:
+        table_name = os.getenv("RATE_LIMITS_TABLE_NAME")
+        if not table_name:
+            return None
+        
+        table = dynamodb.Table(table_name)
+        response = table.get_item(Key={"email": email.lower()})
+        
+        if "Item" in response:
+            return response["Item"].get("verify_email_cooldown_until")
+        return None
+    except ClientError as e:
+        logger.error(f"Error getting cooldown for {email}: {e}")
+        return None
+
+
+class VerificationEmailSender:
+    """Handles sending verification emails."""
+
+    @staticmethod
+    def send_verification_email(email: str, token_id: str) -> bool:
+        """
+        Sends a verification email with the action link.
+        
+        Args:
+            email: Recipient email address
+            token_id: Token ID to include in the link
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            action_base_url = os.getenv("ACTION_BASE_URL", "")
+            if not action_base_url:
+                logger.error("ACTION_BASE_URL environment variable not set")
+                return False
+            
+            verification_link = f"{action_base_url}{token_id}"
+            
+            # Get the geniml.com email to send from
+            from_address = "hello@geniml.com"
+            
+            # Get TTL from environment for display
+            verify_ttl_minutes = int(os.getenv("VERIFY_TOKEN_TTL_MINUTES", "30"))
+            
+            subject = "Verify to access your coaching insights"
+            
+            body_text = f"""To protect your privacy and prevent abuse, we verify email addresses before sending coaching responses.
+
+Verify your email by clicking this link:
+
+{verification_link}
+
+Link expires in {verify_ttl_minutes} minutes.
+
+If you didn't request this, you can safely ignore this email.
+
+SmartMail Coach
+"""
+            
+            body_html = f"""<html>
+<body>
+<p>To protect your privacy and prevent abuse, we verify email addresses before sending coaching responses.</p>
+<p>Verify your email by clicking this link:</p>
+<p><a href="{verification_link}">{verification_link}</a></p>
+<p>Link expires in {verify_ttl_minutes} minutes.</p>
+<p>If you didn't request this, you can safely ignore this email.</p>
+<p>SmartMail Coach</p>
+</body>
+</html>"""
+            
+            # Send email using SES
+            response = ses_client.send_email(
+                Source=from_address,
+                Destination={"ToAddresses": [email]},
+                Message={
+                    "Subject": {"Data": subject, "Charset": "UTF-8"},
+                    "Body": {
+                        "Text": {"Data": body_text, "Charset": "UTF-8"},
+                        "Html": {"Data": body_html, "Charset": "UTF-8"}
+                    }
+                }
+            )
+            
+            logger.info(f"Verification email sent to {email}, Message ID: {response['MessageId']}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error sending verification email to {email}: {str(e)}")
+            return False
+
+
+class RateLimitNoticeSender:
+    """Handles sending throttled rate-limit notices to verified users."""
+
+    @staticmethod
+    def send_rate_limit_notice(email: str) -> bool:
+        try:
+            subject = "SmartMail usage limit reached"
+            body_text = (
+                "You've reached your SmartMail request limit for now.\n\n"
+                "Please try again later. Your limit resets automatically each hour/day.\n\n"
+                "SmartMail Coach"
+            )
+            body_html = """<html>
+<body>
+<p>You've reached your SmartMail request limit for now.</p>
+<p>Please try again later. Your limit resets automatically each hour/day.</p>
+<p>SmartMail Coach</p>
+</body>
+</html>"""
+            response = ses_client.send_email(
+                Source="hello@geniml.com",
+                Destination={"ToAddresses": [email]},
+                Message={
+                    "Subject": {"Data": subject, "Charset": "UTF-8"},
+                    "Body": {
+                        "Text": {"Data": body_text, "Charset": "UTF-8"},
+                        "Html": {"Data": body_html, "Charset": "UTF-8"},
+                    },
+                },
+            )
+            logger.info(
+                f"Rate-limit notice sent to {email}, Message ID: {response['MessageId']}"
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Error sending rate-limit notice to {email}: {str(e)}")
+            return False
+
+
+def maybe_send_rate_limit_notice(
+    email: str,
+    block_reason: str,
+    aws_request_id: Optional[str] = None,
+) -> Dict[str, str]:
+    """
+    Sends a throttled rate-limit notice when enabled.
+
+    Returns a small outcome object for structured logging.
+    """
+    if not SEND_RATE_LIMIT_NOTICE:
+        return {"status": "notice_disabled"}
+
+    now = int(time.time())
+    cooldown_until = now + (RATE_LIMIT_NOTICE_COOLDOWN_MINUTES * 60)
+    notice_claim = atomically_set_verified_notice_cooldown_if_allowed(
+        email=email,
+        cooldown_until=cooldown_until,
+        now=now,
+    )
+
+    if not notice_claim.get("send_notice", False):
+        log_parts = [
+            f"from_email={email}",
+            "verified=true",
+            "result=rate_limit_notice_suppressed",
+            f"reason={notice_claim.get('reason')}",
+            f"block_reason={block_reason}",
+        ]
+        if aws_request_id:
+            log_parts.append(f"aws_request_id={aws_request_id}")
+        logger.info(", ".join(log_parts))
+        return {"status": "suppressed", "reason": str(notice_claim.get("reason"))}
+
+    notice_sent = RateLimitNoticeSender.send_rate_limit_notice(email)
+    log_parts = [
+        f"from_email={email}",
+        "verified=true",
+        "result=rate_limit_notice_attempted",
+        f"notice_sent={str(notice_sent).lower()}",
+        f"block_reason={block_reason}",
+        f"cooldown_until={notice_claim.get('cooldown_until')}",
+    ]
+    if aws_request_id:
+        log_parts.append(f"aws_request_id={aws_request_id}")
+    logger.info(", ".join(log_parts))
+
+    return {"status": "sent" if notice_sent else "send_failed"}
+
+
 class EmailReplySender:
     """Handles formatting and sending replies via AWS SES."""
 
@@ -437,34 +693,136 @@ def lambda_handler(event, context):
         if not email_data:
             return {"statusCode": 400, "body": "Invalid email data."}
 
-        # Verify if the recipient (TO email) is registered in DynamoDB
-        recipient_email = email_data['sender']
-        registration_status = is_registered(recipient_email)
-        if registration_status is None:
-            logger.info(f"Recipient {recipient_email} is not registered. Generating follow-up email.")
-            reply_content = OpenAIResponder.generate_invite_response(email_data["subject"], email_data["body"])
-        elif registration_status is False:
-            logger.error(f"Error checking registration for {recipient_email}. Aborting request.")
-            return {"statusCode": 500, "body": "Internal error checking registration."}
-        else:
-            # Decide if OpenAI should generate a response
-            if OpenAIResponder.should_ai_respond(
-                email_data["body"], email_data["recipient"], email_data["to_recipients"], email_data["cc_recipients"]
-            ):
-                reply_content = OpenAIResponder.generate_response(email_data["subject"], email_data["body"])
+        # Extract sender email
+        from_email = email_data['sender']
+        
+        # Get AWS request ID for logging
+        aws_request_id = None
+        if context and hasattr(context, "aws_request_id"):
+            aws_request_id = context.aws_request_id
+        
+        # Check verification status
+        verified = is_verified(from_email)
+        
+        if not verified:
+            # Not verified - apply cooldown guard
+            now = int(time.time())
+            
+            # Get cooldown configuration
+            cooldown_minutes = int(os.getenv("VERIFY_EMAIL_COOLDOWN_MINUTES", "30"))
+            cooldown_seconds = cooldown_minutes * 60
+            cooldown_until = now + cooldown_seconds
+            
+            # Check existing cooldown
+            existing_cooldown_until = get_cooldown_until(from_email)
+            
+            if existing_cooldown_until and existing_cooldown_until > now:
+                # Cooldown is active - drop silently
+                result = "unverified_dropped_cooldown"
+                log_parts = [
+                    f"from_email={from_email}",
+                    "verified=false",
+                    f"result={result}",
+                    f"cooldown_until={existing_cooldown_until}"
+                ]
+                if aws_request_id:
+                    log_parts.append(f"aws_request_id={aws_request_id}")
+                logger.info(", ".join(log_parts))
+                return {"statusCode": 200, "body": "Dropped (cooldown active)"}
+            
+            # Try to atomically set cooldown (race-safe)
+            cooldown_set = atomically_set_cooldown_if_allowed(from_email, cooldown_until, now)
+            
+            if not cooldown_set:
+                # Lost race condition - another request set cooldown first
+                result = "cooldown_race_lost"
+                log_parts = [
+                    f"from_email={from_email}",
+                    "verified=false",
+                    f"result={result}"
+                ]
+                if aws_request_id:
+                    log_parts.append(f"aws_request_id={aws_request_id}")
+                logger.info(", ".join(log_parts))
+                return {"statusCode": 200, "body": "Dropped (race condition)"}
+            
+            # Cooldown set successfully - this request "won", proceed to send verification email
+            verify_ttl_minutes = int(os.getenv("VERIFY_TOKEN_TTL_MINUTES", "30"))
+            verify_ttl_seconds = verify_ttl_minutes * 60
+            
+            # Create verification token
+            token_id = create_action_token(
+                email=from_email,
+                action_type="VERIFY_SESSION",
+                expires_in_seconds=verify_ttl_seconds,
+                source="email_inbound"
+            )
+            
+            if token_id:
+                # Send verification email
+                email_sent = VerificationEmailSender.send_verification_email(from_email, token_id)
+                if email_sent:
+                    result = "verification_email_sent"
+                    log_parts = [
+                        f"from_email={from_email}",
+                        "verified=false",
+                        f"result={result}",
+                        f"cooldown_until={cooldown_until}"
+                    ]
+                    if aws_request_id:
+                        log_parts.append(f"aws_request_id={aws_request_id}")
+                    logger.info(", ".join(log_parts))
+                    return {"statusCode": 200, "body": "Verification email sent."}
+                else:
+                    logger.error(f"Failed to send verification email to {from_email}")
+                    return {"statusCode": 500, "body": "Failed to send verification email."}
             else:
-                logger.info("AI was not mentioned, skipping response generation.")
-                reply_content = None  # Do not generate a response
+                logger.error(f"Failed to create verification token for {from_email}")
+                return {"statusCode": 500, "body": "Failed to create verification token."}
+        
+        # User is verified - proceed with response
+        logger.info(f"User {from_email} is verified. Proceeding with response.")
 
-        # If AI should reply, send the email
+        # Enforce per-sender verified quotas before any LLM-capable path.
+        quota_result = claim_verified_quota_slot(
+            email=from_email,
+            hourly_limit=VERIFIED_HOURLY_QUOTA,
+            daily_limit=VERIFIED_DAILY_QUOTA,
+        )
+        if not quota_result.get("allowed", False):
+            result = "verified_quota_blocked"
+            block_reason = str(quota_result.get("reason"))
+            fail_closed = block_reason in {"quota_check_error", "quota_claim_conflict"}
+            log_parts = [
+                f"from_email={from_email}",
+                "verified=true",
+                f"result={result}",
+                f"reason={block_reason}",
+                f"fail_closed={str(fail_closed).lower()}",
+                f"hour_bucket={quota_result.get('hour_bucket')}",
+                f"day_bucket={quota_result.get('day_bucket')}",
+                f"hour_count={quota_result.get('hour_count')}",
+                f"day_count={quota_result.get('day_count')}",
+            ]
+            if aws_request_id:
+                log_parts.append(f"aws_request_id={aws_request_id}")
+            logger.info(", ".join(log_parts))
 
-        logger.info(f"Reply content: {reply_content}")
-
-        if reply_content:
-            message_id = EmailReplySender.send_reply(email_data, reply_content)
-            return {"statusCode": 200, "body": f"Reply sent! Message ID: {message_id}"}
-        else:
-            return {"statusCode": 204, "body": "No AI response needed."} 
+            maybe_send_rate_limit_notice(
+                email=from_email,
+                block_reason=block_reason,
+                aws_request_id=aws_request_id,
+            )
+            return {"statusCode": 200, "body": "Dropped (verified quota exceeded)"}
+        
+        # For now, return a placeholder response
+        # TODO: Replace with actual LLM response later
+        placeholder_response = "✅ You're verified. Tell me your goal and weekly time budget."
+        
+        # Send placeholder response
+        email_data["body"] = placeholder_response
+        message_id = EmailReplySender.send_reply(email_data, placeholder_response)
+        return {"statusCode": 200, "body": f"Reply sent! Message ID: {message_id}"} 
 
     except Exception as e:
         logger.error(f"Lambda execution error: {str(e)}")
