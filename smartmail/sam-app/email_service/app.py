@@ -12,7 +12,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email import message_from_string
 from botocore.exceptions import ClientError # type: ignore
-from typing import Optional, Dict
+from typing import Optional, Dict, Any, List
 
 sys.path.append("vendor")
 sys.path.append(".")
@@ -23,6 +23,8 @@ from dynamodb_models import (
     create_action_token,
     claim_verified_quota_slot,
     atomically_set_verified_notice_cooldown_if_allowed,
+    get_coach_profile,
+    merge_coach_profile_fields,
 )
 import time
 
@@ -54,10 +56,248 @@ RATE_LIMIT_NOTICE_COOLDOWN_MINUTES = int(
     os.getenv("RATE_LIMIT_NOTICE_COOLDOWN_MINUTES", "60")
 )
 
+
+def _contains_unknown_marker(text: str) -> bool:
+    lowered = text.lower()
+    return any(
+        marker in lowered
+        for marker in ("unknown", "not sure", "skip", "n/a", "na", "prefer not")
+    )
+
+
+class GoalExtractor:
+    """Pluggable goal extraction strategy."""
+
+    def extract_goal(self, email_body: str) -> Optional[str]:
+        raise NotImplementedError()
+
+
+class RegexGoalExtractor(GoalExtractor):
+    """Default goal extraction using deterministic regex patterns."""
+
+    def extract_goal(self, email_body: str) -> Optional[str]:
+        return _extract_goal_with_regex(email_body)
+
+
+_goal_extractor: GoalExtractor = RegexGoalExtractor()
+
+
+def set_goal_extractor(extractor: GoalExtractor) -> None:
+    """
+    Overrides the default goal extractor strategy.
+
+    This is intended for future LLM-based extraction replacement and tests.
+    """
+    global _goal_extractor
+    _goal_extractor = extractor
+
+
+def extract_goal_from_email(email_body: str) -> Optional[str]:
+    return _goal_extractor.extract_goal(email_body)
+
+
+class WeeklyTimeExtractor:
+    """Pluggable weekly time extraction strategy."""
+
+    def extract_weekly_minutes(self, email_body: str) -> Optional[int]:
+        raise NotImplementedError()
+
+
+class RegexWeeklyTimeExtractor(WeeklyTimeExtractor):
+    """Default weekly time extraction using deterministic regex patterns."""
+
+    def extract_weekly_minutes(self, email_body: str) -> Optional[int]:
+        return _extract_weekly_minutes_with_regex(email_body)
+
+
+_weekly_time_extractor: WeeklyTimeExtractor = RegexWeeklyTimeExtractor()
+
+
+def set_weekly_time_extractor(extractor: WeeklyTimeExtractor) -> None:
+    global _weekly_time_extractor
+    _weekly_time_extractor = extractor
+
+
+def extract_weekly_minutes_from_email(email_body: str) -> Optional[int]:
+    return _weekly_time_extractor.extract_weekly_minutes(email_body)
+
+
+class SportsExtractor:
+    """Pluggable sports extraction strategy."""
+
+    def extract_sports(self, email_body: str) -> List[str]:
+        raise NotImplementedError()
+
+
+class KeywordSportsExtractor(SportsExtractor):
+    """Default sports extraction using keyword normalization."""
+
+    def extract_sports(self, email_body: str) -> List[str]:
+        return _extract_sports_with_keywords(email_body)
+
+
+_sports_extractor: SportsExtractor = KeywordSportsExtractor()
+
+
+def set_sports_extractor(extractor: SportsExtractor) -> None:
+    global _sports_extractor
+    _sports_extractor = extractor
+
+
+def extract_sports_from_email(email_body: str) -> List[str]:
+    return _sports_extractor.extract_sports(email_body)
+
+
+def _extract_goal_with_regex(text: str) -> Optional[str]:
+    goal_patterns = [
+        r"\bgoal\s*[:\-]\s*([^\n\r]+)",
+        r"\bmy goal is\s+([^\n\r]+)",
+        r"\bi want to\s+([^\n\r]+)",
+        r"\bi(?:'| a)?m training for\s+([^\n\r]+)",
+    ]
+    for pattern in goal_patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            goal = match.group(1).strip(" .,!?:;")
+            if goal:
+                return goal
+    return None
+
+
+def _extract_weekly_minutes_with_regex(text: str) -> Optional[int]:
+    combined_match = re.search(
+        r"(\d{1,3})\s*h(?:ours?)?\s*(\d{1,3})?\s*m(?:in(?:utes?)?)?",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if combined_match:
+        hours = int(combined_match.group(1))
+        minutes = int(combined_match.group(2) or 0)
+        return (hours * 60) + minutes
+
+    hour_match = re.search(r"(\d{1,3})\s*h(?:ours?)?\b", text, flags=re.IGNORECASE)
+    if hour_match:
+        return int(hour_match.group(1)) * 60
+
+    minute_match = re.search(
+        r"(\d{1,4})\s*m(?:in(?:utes?)?)?\b", text, flags=re.IGNORECASE
+    )
+    if minute_match:
+        return int(minute_match.group(1))
+
+    weekly_numeric = re.search(
+        r"\b(?:weekly|per week)\D{0,20}(\d{2,4})\b", text, flags=re.IGNORECASE
+    )
+    if weekly_numeric:
+        return int(weekly_numeric.group(1))
+
+    return None
+
+
+def _extract_sports_with_keywords(text: str) -> List[str]:
+    known = {
+        "running": "running",
+        "run": "running",
+        "jogging": "running",
+        "cycling": "cycling",
+        "bike": "cycling",
+        "biking": "cycling",
+        "swimming": "swimming",
+        "swim": "swimming",
+        "triathlon": "triathlon",
+        "strength": "strength",
+        "weightlifting": "strength",
+        "gym": "strength",
+        "yoga": "yoga",
+        "hiking": "hiking",
+    }
+    detected: List[str] = []
+
+    explicit_line = re.search(r"\bsports?\s*[:\-]\s*([^\n\r]+)", text, flags=re.IGNORECASE)
+    if explicit_line:
+        parts = re.split(r"[,/]| and ", explicit_line.group(1), flags=re.IGNORECASE)
+        for part in parts:
+            token = part.strip().lower()
+            if token in known:
+                canonical = known[token]
+                if canonical not in detected:
+                    detected.append(canonical)
+
+    lowered = text.lower()
+    for keyword, canonical in known.items():
+        if re.search(rf"\b{re.escape(keyword)}\b", lowered):
+            if canonical not in detected:
+                detected.append(canonical)
+    return detected
+
+
+def parse_profile_updates_from_email(body: str) -> Dict[str, Any]:
+    updates: Dict[str, Any] = {}
+    goal_value = extract_goal_from_email(body)
+    if goal_value:
+        updates["goal"] = goal_value
+    elif _contains_unknown_marker(body) and re.search(r"\bgoal\b", body, re.IGNORECASE):
+        updates["goal_unknown"] = True
+
+    weekly_minutes = extract_weekly_minutes_from_email(body)
+    if weekly_minutes is not None:
+        updates["weekly_time_budget_minutes"] = weekly_minutes
+    elif _contains_unknown_marker(body) and re.search(
+        r"\b(week|weekly|hours?|minutes?|time)\b", body, re.IGNORECASE
+    ):
+        updates["weekly_time_budget_unknown"] = True
+
+    sports = extract_sports_from_email(body)
+    if sports:
+        updates["sports"] = sports
+    elif _contains_unknown_marker(body) and re.search(r"\bsports?\b", body, re.IGNORECASE):
+        updates["sports_unknown"] = True
+
+    return updates
+
+
+def get_missing_required_profile_fields(profile: Optional[Dict[str, Any]]) -> List[str]:
+    profile = profile or {}
+    missing: List[str] = []
+
+    goal = str(profile.get("goal", "")).strip()
+    if not goal and not bool(profile.get("goal_unknown")):
+        missing.append("goal")
+
+    weekly_minutes = profile.get("weekly_time_budget_minutes")
+    valid_weekly_minutes = isinstance(weekly_minutes, int) and weekly_minutes > 0
+    if not valid_weekly_minutes and not bool(profile.get("weekly_time_budget_unknown")):
+        missing.append("weekly_time_budget_minutes")
+
+    sports = profile.get("sports")
+    valid_sports = isinstance(sports, list) and len(sports) > 0
+    if not valid_sports and not bool(profile.get("sports_unknown")):
+        missing.append("sports")
+
+    return missing
+
+
+def build_profile_collection_reply(missing_fields: List[str]) -> str:
+    prompts = []
+    if "goal" in missing_fields:
+        prompts.append("- Your training goal (e.g., 10k PR, first marathon, improve fitness)")
+    if "weekly_time_budget_minutes" in missing_fields:
+        prompts.append("- Your weekly time budget (minutes or hours per week)")
+    if "sports" in missing_fields:
+        prompts.append("- Sports you want coaching for (e.g., running, cycling)")
+
+    joined_prompts = "\n".join(prompts)
+    return (
+        "Thanks - before I can coach effectively, I need a bit more context.\n\n"
+        "Please reply with:\n"
+        f"{joined_prompts}\n\n"
+        "If any item is unknown right now, you can say \"unknown\" for that item."
+    )
+
 def is_registered(email_address):
     """
     Checks if the email exists in the DynamoDB 'users' table.
-    Returns True if found, None if not found, and False if there's an error.
+    Returns True if found, False if not found or on error.
     """
     try:
         table = dynamodb.Table(USERS_TABLE)
@@ -65,8 +305,8 @@ def is_registered(email_address):
         if "Item" in response:
             logger.info(f"User {email_address} is registered.")
             return True  # User is registered
-        logger.info(f"User {email_address} is not registered. But who cares? Let's send the email anyway.")
-        return True  # User is not registered but we'll send the email anyway (TODO: change to "None" later to enforce registration)
+        logger.info(f"User {email_address} is not registered.")
+        return False
     except ClientError as e:
         logger.error(f"Error checking registration for {email_address}: {e}")
         return False  # Fail-safe: Return False on error
@@ -686,6 +926,199 @@ class ResponseEvaluation:
             logger.error("Error evaluating AI response: " + str(e))
             return None
 
+
+def _aws_request_id_from_context(context: Any) -> Optional[str]:
+    if context and hasattr(context, "aws_request_id"):
+        return context.aws_request_id
+    return None
+
+
+def _log_inbound_outcome(
+    from_email: str,
+    verified: bool,
+    result: str,
+    aws_request_id: Optional[str] = None,
+    **metadata: Any,
+) -> None:
+    log_parts = [
+        f"from_email={from_email}",
+        f"verified={str(verified).lower()}",
+        f"result={result}",
+    ]
+    for key, value in metadata.items():
+        if value is None:
+            continue
+        log_parts.append(f"{key}={value}")
+    if aws_request_id:
+        log_parts.append(f"aws_request_id={aws_request_id}")
+    logger.info(", ".join(log_parts))
+
+
+def _handle_unverified_sender(from_email: str, aws_request_id: Optional[str]) -> Dict[str, Any]:
+    now = int(time.time())
+    cooldown_minutes = int(os.getenv("VERIFY_EMAIL_COOLDOWN_MINUTES", "30"))
+    cooldown_seconds = cooldown_minutes * 60
+    cooldown_until = now + cooldown_seconds
+
+    existing_cooldown_until = get_cooldown_until(from_email)
+    if existing_cooldown_until and existing_cooldown_until > now:
+        _log_inbound_outcome(
+            from_email=from_email,
+            verified=False,
+            result="unverified_dropped_cooldown",
+            aws_request_id=aws_request_id,
+            cooldown_until=existing_cooldown_until,
+        )
+        return {"statusCode": 200, "body": "Dropped (cooldown active)"}
+
+    cooldown_set = atomically_set_cooldown_if_allowed(from_email, cooldown_until, now)
+    if not cooldown_set:
+        _log_inbound_outcome(
+            from_email=from_email,
+            verified=False,
+            result="cooldown_race_lost",
+            aws_request_id=aws_request_id,
+        )
+        return {"statusCode": 200, "body": "Dropped (race condition)"}
+
+    verify_ttl_minutes = int(os.getenv("VERIFY_TOKEN_TTL_MINUTES", "30"))
+    verify_ttl_seconds = verify_ttl_minutes * 60
+    token_id = create_action_token(
+        email=from_email,
+        action_type="VERIFY_SESSION",
+        expires_in_seconds=verify_ttl_seconds,
+        source="email_inbound",
+    )
+    if not token_id:
+        logger.error(f"Failed to create verification token for {from_email}")
+        return {"statusCode": 500, "body": "Failed to create verification token."}
+
+    email_sent = VerificationEmailSender.send_verification_email(from_email, token_id)
+    if not email_sent:
+        logger.error(f"Failed to send verification email to {from_email}")
+        return {"statusCode": 500, "body": "Failed to send verification email."}
+
+    _log_inbound_outcome(
+        from_email=from_email,
+        verified=False,
+        result="verification_email_sent",
+        aws_request_id=aws_request_id,
+        cooldown_until=cooldown_until,
+    )
+    return {"statusCode": 200, "body": "Verification email sent."}
+
+
+def _check_verified_quota_or_block(from_email: str, aws_request_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    quota_result = claim_verified_quota_slot(
+        email=from_email,
+        hourly_limit=VERIFIED_HOURLY_QUOTA,
+        daily_limit=VERIFIED_DAILY_QUOTA,
+    )
+    if quota_result.get("allowed", False):
+        return None
+
+    block_reason = str(quota_result.get("reason"))
+    fail_closed = block_reason in {"quota_check_error", "quota_claim_conflict"}
+    _log_inbound_outcome(
+        from_email=from_email,
+        verified=True,
+        result="verified_quota_blocked",
+        aws_request_id=aws_request_id,
+        reason=block_reason,
+        fail_closed=str(fail_closed).lower(),
+        hour_bucket=quota_result.get("hour_bucket"),
+        day_bucket=quota_result.get("day_bucket"),
+        hour_count=quota_result.get("hour_count"),
+        day_count=quota_result.get("day_count"),
+    )
+    maybe_send_rate_limit_notice(
+        email=from_email,
+        block_reason=block_reason,
+        aws_request_id=aws_request_id,
+    )
+    return {"statusCode": 200, "body": "Dropped (verified quota exceeded)"}
+
+
+def _handle_unregistered_verified_sender(
+    email_data: Dict[str, Any],
+    aws_request_id: Optional[str],
+) -> Dict[str, Any]:
+    from_email = email_data["sender"]
+    _log_inbound_outcome(
+        from_email=from_email,
+        verified=True,
+        result="verified_unregistered_blocked",
+        aws_request_id=aws_request_id,
+    )
+    registration_prompt = (
+        "Please register your SmartMail account first to continue. "
+        "Visit https://geniml.com and complete registration, then email me again."
+    )
+    message_id = EmailReplySender.send_reply(email_data, registration_prompt)
+    return {"statusCode": 200, "body": f"Registration required. Message ID: {message_id}"}
+
+
+def _build_profile_gated_reply(
+    from_email: str,
+    inbound_body: str,
+    aws_request_id: Optional[str],
+) -> str:
+    profile_before = get_coach_profile(from_email) or {}
+    missing_before = get_missing_required_profile_fields(profile_before)
+
+    parsed_updates = parse_profile_updates_from_email(inbound_body)
+    if parsed_updates:
+        update_ok = merge_coach_profile_fields(from_email, parsed_updates)
+        _log_inbound_outcome(
+            from_email=from_email,
+            verified=True,
+            result="profile_updated",
+            aws_request_id=aws_request_id,
+            fields="|".join(sorted(parsed_updates.keys())),
+        )
+        if not update_ok:
+            logger.error(
+                "from_email=%s, verified=true, result=profile_update_failed%s",
+                from_email,
+                f", aws_request_id={aws_request_id}" if aws_request_id else "",
+            )
+
+    profile_after = get_coach_profile(from_email) or profile_before
+    missing_after = get_missing_required_profile_fields(profile_after)
+
+    if missing_after:
+        _log_inbound_outcome(
+            from_email=from_email,
+            verified=True,
+            result="profile_missing_context",
+            aws_request_id=aws_request_id,
+            missing_fields="|".join(missing_after),
+            missing_count=len(missing_after),
+        )
+        profile_response = build_profile_collection_reply(missing_after)
+    else:
+        _log_inbound_outcome(
+            from_email=from_email,
+            verified=True,
+            result="profile_ready_for_coaching",
+            aws_request_id=aws_request_id,
+        )
+        profile_response = (
+            "✅ You're ready for coaching. Share your latest training question "
+            "or session details and I'll help you plan next steps."
+        )
+
+    _log_inbound_outcome(
+        from_email=from_email,
+        verified=True,
+        result="profile_gate_evaluated",
+        aws_request_id=aws_request_id,
+        missing_before=len(missing_before),
+        missing_after=len(missing_after),
+    )
+    return profile_response
+
+
 def lambda_handler(event, context):
     """AWS Lambda function handler."""
     try:
@@ -693,135 +1126,29 @@ def lambda_handler(event, context):
         if not email_data:
             return {"statusCode": 400, "body": "Invalid email data."}
 
-        # Extract sender email
-        from_email = email_data['sender']
-        
-        # Get AWS request ID for logging
-        aws_request_id = None
-        if context and hasattr(context, "aws_request_id"):
-            aws_request_id = context.aws_request_id
-        
-        # Check verification status
-        verified = is_verified(from_email)
-        
-        if not verified:
-            # Not verified - apply cooldown guard
-            now = int(time.time())
-            
-            # Get cooldown configuration
-            cooldown_minutes = int(os.getenv("VERIFY_EMAIL_COOLDOWN_MINUTES", "30"))
-            cooldown_seconds = cooldown_minutes * 60
-            cooldown_until = now + cooldown_seconds
-            
-            # Check existing cooldown
-            existing_cooldown_until = get_cooldown_until(from_email)
-            
-            if existing_cooldown_until and existing_cooldown_until > now:
-                # Cooldown is active - drop silently
-                result = "unverified_dropped_cooldown"
-                log_parts = [
-                    f"from_email={from_email}",
-                    "verified=false",
-                    f"result={result}",
-                    f"cooldown_until={existing_cooldown_until}"
-                ]
-                if aws_request_id:
-                    log_parts.append(f"aws_request_id={aws_request_id}")
-                logger.info(", ".join(log_parts))
-                return {"statusCode": 200, "body": "Dropped (cooldown active)"}
-            
-            # Try to atomically set cooldown (race-safe)
-            cooldown_set = atomically_set_cooldown_if_allowed(from_email, cooldown_until, now)
-            
-            if not cooldown_set:
-                # Lost race condition - another request set cooldown first
-                result = "cooldown_race_lost"
-                log_parts = [
-                    f"from_email={from_email}",
-                    "verified=false",
-                    f"result={result}"
-                ]
-                if aws_request_id:
-                    log_parts.append(f"aws_request_id={aws_request_id}")
-                logger.info(", ".join(log_parts))
-                return {"statusCode": 200, "body": "Dropped (race condition)"}
-            
-            # Cooldown set successfully - this request "won", proceed to send verification email
-            verify_ttl_minutes = int(os.getenv("VERIFY_TOKEN_TTL_MINUTES", "30"))
-            verify_ttl_seconds = verify_ttl_minutes * 60
-            
-            # Create verification token
-            token_id = create_action_token(
-                email=from_email,
-                action_type="VERIFY_SESSION",
-                expires_in_seconds=verify_ttl_seconds,
-                source="email_inbound"
-            )
-            
-            if token_id:
-                # Send verification email
-                email_sent = VerificationEmailSender.send_verification_email(from_email, token_id)
-                if email_sent:
-                    result = "verification_email_sent"
-                    log_parts = [
-                        f"from_email={from_email}",
-                        "verified=false",
-                        f"result={result}",
-                        f"cooldown_until={cooldown_until}"
-                    ]
-                    if aws_request_id:
-                        log_parts.append(f"aws_request_id={aws_request_id}")
-                    logger.info(", ".join(log_parts))
-                    return {"statusCode": 200, "body": "Verification email sent."}
-                else:
-                    logger.error(f"Failed to send verification email to {from_email}")
-                    return {"statusCode": 500, "body": "Failed to send verification email."}
-            else:
-                logger.error(f"Failed to create verification token for {from_email}")
-                return {"statusCode": 500, "body": "Failed to create verification token."}
-        
-        # User is verified - proceed with response
+        from_email = email_data["sender"]
+        aws_request_id = _aws_request_id_from_context(context)
+
+        if not is_verified(from_email):
+            return _handle_unverified_sender(from_email, aws_request_id)
+
         logger.info(f"User {from_email} is verified. Proceeding with response.")
 
-        # Enforce per-sender verified quotas before any LLM-capable path.
-        quota_result = claim_verified_quota_slot(
-            email=from_email,
-            hourly_limit=VERIFIED_HOURLY_QUOTA,
-            daily_limit=VERIFIED_DAILY_QUOTA,
-        )
-        if not quota_result.get("allowed", False):
-            result = "verified_quota_blocked"
-            block_reason = str(quota_result.get("reason"))
-            fail_closed = block_reason in {"quota_check_error", "quota_claim_conflict"}
-            log_parts = [
-                f"from_email={from_email}",
-                "verified=true",
-                f"result={result}",
-                f"reason={block_reason}",
-                f"fail_closed={str(fail_closed).lower()}",
-                f"hour_bucket={quota_result.get('hour_bucket')}",
-                f"day_bucket={quota_result.get('day_bucket')}",
-                f"hour_count={quota_result.get('hour_count')}",
-                f"day_count={quota_result.get('day_count')}",
-            ]
-            if aws_request_id:
-                log_parts.append(f"aws_request_id={aws_request_id}")
-            logger.info(", ".join(log_parts))
+        if not is_registered(from_email):
+            return _handle_unregistered_verified_sender(email_data, aws_request_id)
 
-            maybe_send_rate_limit_notice(
-                email=from_email,
-                block_reason=block_reason,
-                aws_request_id=aws_request_id,
-            )
-            return {"statusCode": 200, "body": "Dropped (verified quota exceeded)"}
-        
-        # For now, return a placeholder response
-        # TODO: Replace with actual LLM response later
-        placeholder_response = "✅ You're verified. Tell me your goal and weekly time budget."
-        
-        # Send placeholder response
-        email_data["body"] = placeholder_response
-        message_id = EmailReplySender.send_reply(email_data, placeholder_response)
+        quota_block_response = _check_verified_quota_or_block(from_email, aws_request_id)
+        if quota_block_response is not None:
+            return quota_block_response
+
+        profile_response = _build_profile_gated_reply(
+            from_email=from_email,
+            inbound_body=email_data.get("body", ""),
+            aws_request_id=aws_request_id,
+        )
+
+        # Send profile-gated response while preserving original inbound body for thread context.
+        message_id = EmailReplySender.send_reply(email_data, profile_response)
         return {"statusCode": 200, "body": f"Reply sent! Message ID: {message_id}"} 
 
     except Exception as e:

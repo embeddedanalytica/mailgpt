@@ -75,3 +75,10 @@ Update this only when we make a new decision (avoid noise).
 **Decision:** Once verified, implement per-user rate limiting before LLM calls (hour/day quotas).
 **Why:** Protect cost ceiling even for verified accounts or compromised inboxes.
 **Status:** Planned (Story H).
+
+---
+
+## D11 — Coaching Readiness Is Profile-State Driven
+**Decision:** "Ready for coaching" is determined by profile completeness, not message order.
+**Required fields:** `goal`, `weekly_time_budget_minutes`, `sports` (or explicit unknown/skip markers per field).
+**Why:** Keeps behavior deterministic and robust across any email sequence.

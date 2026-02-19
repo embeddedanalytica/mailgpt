@@ -129,8 +129,8 @@ This roadmap tracks work as discrete stories with acceptance criteria. Each stor
 **Goal:** Capture goal + weekly time budget + sport preferences via email and store in `coach_profiles`.
 
 ### Definition of Done
-- [ ] For verified users, prompt for missing profile fields.
-- [ ] Parse simple replies and persist to `coach_profiles`.
+- [x] For verified users, prompt for missing profile fields.
+- [x] Parse simple replies and persist to `coach_profiles`.
 - [ ] Use profile values to personalize responses.
 
 ---

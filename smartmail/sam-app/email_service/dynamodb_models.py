@@ -144,6 +144,68 @@ def create_default_coach_profile(email: str) -> bool:
     return True
 
 
+def merge_coach_profile_fields(email: str, updates: Dict[str, Any]) -> bool:
+    """
+    Merges parsed profile fields for one sender without overwriting with empty values.
+    """
+    allowed_fields = {
+        "goal",
+        "goal_unknown",
+        "weekly_time_budget_minutes",
+        "weekly_time_budget_unknown",
+        "sports",
+        "sports_unknown",
+    }
+    sanitized_updates: Dict[str, Any] = {}
+    for key, value in updates.items():
+        if key not in allowed_fields:
+            continue
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        if isinstance(value, list) and not value:
+            continue
+        sanitized_updates[key] = value
+
+    if not sanitized_updates:
+        return False
+
+    try:
+        table = dynamodb.Table(COACH_PROFILES_TABLE)
+        now = int(time.time())
+        expression_attribute_names = {
+            "#created_at": "created_at",
+            "#updated_at": "updated_at",
+        }
+        expression_attribute_values = {
+            ":created_at": now,
+            ":updated_at": now,
+        }
+        set_clauses = [
+            "#created_at = if_not_exists(#created_at, :created_at)",
+            "#updated_at = :updated_at",
+        ]
+
+        for field_name, field_value in sanitized_updates.items():
+            name_token = f"#f_{field_name}"
+            value_token = f":v_{field_name}"
+            expression_attribute_names[name_token] = field_name
+            expression_attribute_values[value_token] = field_value
+            set_clauses.append(f"{name_token} = {value_token}")
+
+        table.update_item(
+            Key={"email": email.lower()},
+            UpdateExpression="SET " + ", ".join(set_clauses),
+            ExpressionAttributeNames=expression_attribute_names,
+            ExpressionAttributeValues=expression_attribute_values,
+        )
+        return True
+    except ClientError as e:
+        logger.error(f"Error merging coach profile fields for {email}: {e}")
+        return False
+
+
 # ============================================================================
 # ACTION TOKENS
 # ============================================================================

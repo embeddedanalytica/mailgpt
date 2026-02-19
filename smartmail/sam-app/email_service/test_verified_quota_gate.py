@@ -356,6 +356,7 @@ class VerifiedPathGateTests(unittest.TestCase):
 
         with mock.patch.object(app.EmailProcessor, "parse_sns_event", return_value=email_data), \
             mock.patch.object(app, "is_verified", return_value=True), \
+            mock.patch.object(app, "is_registered", return_value=True), \
             mock.patch.object(
                 app,
                 "claim_verified_quota_slot",
@@ -375,6 +376,7 @@ class VerifiedPathGateTests(unittest.TestCase):
         with mock.patch.object(app, "SEND_RATE_LIMIT_NOTICE", True), \
             mock.patch.object(app.EmailProcessor, "parse_sns_event", return_value=email_data), \
             mock.patch.object(app, "is_verified", return_value=True), \
+            mock.patch.object(app, "is_registered", return_value=True), \
             mock.patch.object(
                 app,
                 "claim_verified_quota_slot",
@@ -399,6 +401,7 @@ class VerifiedPathGateTests(unittest.TestCase):
         with mock.patch.object(app, "SEND_RATE_LIMIT_NOTICE", True), \
             mock.patch.object(app.EmailProcessor, "parse_sns_event", return_value=email_data), \
             mock.patch.object(app, "is_verified", return_value=True), \
+            mock.patch.object(app, "is_registered", return_value=True), \
             mock.patch.object(
                 app,
                 "claim_verified_quota_slot",
@@ -421,6 +424,7 @@ class VerifiedPathGateTests(unittest.TestCase):
         with mock.patch.object(app, "SEND_RATE_LIMIT_NOTICE", True), \
             mock.patch.object(app.EmailProcessor, "parse_sns_event", return_value=email_data), \
             mock.patch.object(app, "is_verified", return_value=True), \
+            mock.patch.object(app, "is_registered", return_value=True), \
             mock.patch.object(
                 app,
                 "claim_verified_quota_slot",
@@ -452,6 +456,7 @@ class VerifiedPathGateTests(unittest.TestCase):
             with mock.patch.object(app, "SEND_RATE_LIMIT_NOTICE", True), \
                 mock.patch.object(app.EmailProcessor, "parse_sns_event", return_value=email_data), \
                 mock.patch.object(app, "is_verified", return_value=True), \
+                mock.patch.object(app, "is_registered", return_value=True), \
                 mock.patch.object(
                     app,
                     "claim_verified_quota_slot",
