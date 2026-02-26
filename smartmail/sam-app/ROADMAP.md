@@ -133,6 +133,9 @@ This roadmap tracks work as discrete stories with acceptance criteria. Each stor
 - [x] Parse simple replies and persist to `coach_profiles`.
 - [ ] Use profile values to personalize responses.
 
+### Next implementation story
+- [ ] **I-2: Profile-based personalization for coaching replies** (`STORY-I-2-profile-based-personalization.md`)
+
 ---
 
 # Phase 2 — Connectors MVP (Strava first)

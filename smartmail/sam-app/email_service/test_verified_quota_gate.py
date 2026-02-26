@@ -82,6 +82,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import app
 import dynamodb_models
+import rate_limits
 
 
 class _InMemoryRateLimitsTable:
@@ -351,18 +352,33 @@ class VerifiedPathGateTests(unittest.TestCase):
             "cc_recipients": [],
         }
 
+    def test_handler_success_calls_business_and_send_reply(self):
+        """E2E-style: verified, registered, under quota -> get_reply_for_inbound and send_reply called."""
+        email_data = self._verified_email_data()
+        with mock.patch.object(app.EmailProcessor, "parse_sns_event", return_value=email_data), \
+            mock.patch.object(app, "is_verified", return_value=True), \
+            mock.patch.object(app, "is_registered", return_value=True), \
+            mock.patch.object(app, "check_verified_quota_or_block", return_value=None), \
+            mock.patch.object(app, "get_reply_for_inbound", return_value="Reply body here") as get_reply_mock, \
+            mock.patch.object(app.EmailReplySender, "send_reply", return_value="msg-123") as send_reply_mock:
+            response = app.lambda_handler(event={"Records": []}, context=None)
+        self.assertEqual(response["statusCode"], 200)
+        self.assertIn("Reply sent!", response["body"])
+        get_reply_mock.assert_called_once()
+        send_reply_mock.assert_called_once_with(email_data, "Reply body here")
+
     def test_handler_blocks_verified_over_limit_before_reply(self):
         email_data = self._verified_email_data()
+        block_response = {"statusCode": 200, "body": "Dropped (verified quota exceeded)"}
 
         with mock.patch.object(app.EmailProcessor, "parse_sns_event", return_value=email_data), \
             mock.patch.object(app, "is_verified", return_value=True), \
             mock.patch.object(app, "is_registered", return_value=True), \
             mock.patch.object(
                 app,
-                "claim_verified_quota_slot",
-                return_value={"allowed": False, "reason": "hourly_limit_exceeded"},
+                "check_verified_quota_or_block",
+                return_value=block_response,
             ), \
-            mock.patch.object(app, "maybe_send_rate_limit_notice"), \
             mock.patch.object(app.EmailReplySender, "send_reply") as send_reply_mock:
             response = app.lambda_handler(event={"Records": []}, context=None)
 
@@ -373,21 +389,21 @@ class VerifiedPathGateTests(unittest.TestCase):
     def test_blocked_request_triggers_notice_first_time(self):
         email_data = self._verified_email_data()
 
-        with mock.patch.object(app, "SEND_RATE_LIMIT_NOTICE", True), \
+        with mock.patch.object(rate_limits, "SEND_RATE_LIMIT_NOTICE", True), \
             mock.patch.object(app.EmailProcessor, "parse_sns_event", return_value=email_data), \
             mock.patch.object(app, "is_verified", return_value=True), \
             mock.patch.object(app, "is_registered", return_value=True), \
             mock.patch.object(
-                app,
+                rate_limits,
                 "claim_verified_quota_slot",
                 return_value={"allowed": False, "reason": "hourly_limit_exceeded"},
             ), \
             mock.patch.object(
-                app,
+                rate_limits,
                 "atomically_set_verified_notice_cooldown_if_allowed",
                 return_value={"send_notice": True, "reason": "notice_allowed", "cooldown_until": 1234},
             ), \
-            mock.patch.object(app.RateLimitNoticeSender, "send_rate_limit_notice", return_value=True) as send_notice_mock, \
+            mock.patch.object(rate_limits.RateLimitNoticeSender, "send_rate_limit_notice", return_value=True) as send_notice_mock, \
             mock.patch.object(app.EmailReplySender, "send_reply") as send_reply_mock:
             response = app.lambda_handler(event={"Records": []}, context=None)
 
@@ -398,21 +414,21 @@ class VerifiedPathGateTests(unittest.TestCase):
     def test_subsequent_blocked_requests_within_cooldown_do_not_send_notice(self):
         email_data = self._verified_email_data()
 
-        with mock.patch.object(app, "SEND_RATE_LIMIT_NOTICE", True), \
+        with mock.patch.object(rate_limits, "SEND_RATE_LIMIT_NOTICE", True), \
             mock.patch.object(app.EmailProcessor, "parse_sns_event", return_value=email_data), \
             mock.patch.object(app, "is_verified", return_value=True), \
             mock.patch.object(app, "is_registered", return_value=True), \
             mock.patch.object(
-                app,
+                rate_limits,
                 "claim_verified_quota_slot",
                 return_value={"allowed": False, "reason": "daily_limit_exceeded"},
             ), \
             mock.patch.object(
-                app,
+                rate_limits,
                 "atomically_set_verified_notice_cooldown_if_allowed",
                 return_value={"send_notice": False, "reason": "notice_cooldown_active"},
             ), \
-            mock.patch.object(app.RateLimitNoticeSender, "send_rate_limit_notice") as send_notice_mock:
+            mock.patch.object(rate_limits.RateLimitNoticeSender, "send_rate_limit_notice") as send_notice_mock:
             response = app.lambda_handler(event={"Records": []}, context=None)
 
         self.assertEqual(response["statusCode"], 200)
@@ -421,22 +437,22 @@ class VerifiedPathGateTests(unittest.TestCase):
     def test_dynamo_error_fails_closed_and_attempts_notice_with_logging(self):
         email_data = self._verified_email_data()
 
-        with mock.patch.object(app, "SEND_RATE_LIMIT_NOTICE", True), \
+        with mock.patch.object(rate_limits, "SEND_RATE_LIMIT_NOTICE", True), \
             mock.patch.object(app.EmailProcessor, "parse_sns_event", return_value=email_data), \
             mock.patch.object(app, "is_verified", return_value=True), \
             mock.patch.object(app, "is_registered", return_value=True), \
             mock.patch.object(
-                app,
+                rate_limits,
                 "claim_verified_quota_slot",
                 return_value={"allowed": False, "reason": "quota_check_error"},
             ), \
             mock.patch.object(
-                app,
+                rate_limits,
                 "atomically_set_verified_notice_cooldown_if_allowed",
                 return_value={"send_notice": True, "reason": "notice_allowed", "cooldown_until": 999},
             ), \
-            mock.patch.object(app.RateLimitNoticeSender, "send_rate_limit_notice", return_value=True) as send_notice_mock, \
-            mock.patch.object(app.logger, "info") as info_log_mock, \
+            mock.patch.object(rate_limits.RateLimitNoticeSender, "send_rate_limit_notice", return_value=True) as send_notice_mock, \
+            mock.patch.object(rate_limits.logger, "info") as rate_limit_log_mock, \
             mock.patch.object(app.EmailReplySender, "send_reply") as send_reply_mock:
             response = app.lambda_handler(event={"Records": []}, context=None)
 
@@ -444,27 +460,22 @@ class VerifiedPathGateTests(unittest.TestCase):
         self.assertIn("Dropped", response["body"])
         send_reply_mock.assert_not_called()
         send_notice_mock.assert_called_once_with("verified@example.com")
-        logged_messages = " ".join(call.args[0] for call in info_log_mock.call_args_list)
-        self.assertIn("reason=quota_check_error", logged_messages)
+        logged_messages = " ".join(
+            call[0][0] if call[0] else ""
+            for call in rate_limit_log_mock.call_args_list
+        )
+        self.assertIn("quota_check_error", logged_messages)
 
     def test_concurrency_multiple_blocked_requests_only_one_notice_sent(self):
         results = []
         barrier = threading.Barrier(2)
 
         def _blocked_request():
-            email_data = self._verified_email_data()
-            with mock.patch.object(app, "SEND_RATE_LIMIT_NOTICE", True), \
-                mock.patch.object(app.EmailProcessor, "parse_sns_event", return_value=email_data), \
-                mock.patch.object(app, "is_verified", return_value=True), \
-                mock.patch.object(app, "is_registered", return_value=True), \
-                mock.patch.object(
-                    app,
-                    "claim_verified_quota_slot",
-                    return_value={"allowed": False, "reason": "hourly_limit_exceeded"},
-                ), \
-                mock.patch.object(app.RateLimitNoticeSender, "send_rate_limit_notice", return_value=True):
+            with mock.patch.object(rate_limits, "SEND_RATE_LIMIT_NOTICE", True):
                 barrier.wait()
-                results.append(app.maybe_send_rate_limit_notice("verified@example.com", "hourly_limit_exceeded"))
+                results.append(rate_limits.maybe_send_rate_limit_notice(
+                    "verified@example.com", "hourly_limit_exceeded"
+                ))
 
         in_memory = _InMemoryRateLimitsTable()
         with mock.patch.object(
@@ -472,7 +483,7 @@ class VerifiedPathGateTests(unittest.TestCase):
             "dynamodb",
             _InMemoryDynamoResource(in_memory),
         ), mock.patch.object(
-            app,
+            rate_limits,
             "atomically_set_verified_notice_cooldown_if_allowed",
             wraps=dynamodb_models.atomically_set_verified_notice_cooldown_if_allowed,
         ):

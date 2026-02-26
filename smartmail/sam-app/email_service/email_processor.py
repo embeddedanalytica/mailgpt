@@ -1,16 +1,21 @@
+"""
+Parsing of inbound emails from SNS: decode content, extract body, build email_data dict.
+No auth, no LLM—pure parsing.
+"""
 import json
 import base64
 import logging
 from email import message_from_string
 
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
+logger = logging.getLogger(__name__)
+
 
 class EmailProcessor:
-    """Handles parsing of received emails from SNS and preparing replies."""
+    """Handles parsing of received emails from SNS and preparing reply context."""
 
     @staticmethod
     def parse_sns_event(event):
+        """Extracts sender, subject, recipients (To & CC), and decoded email body from SNS event."""
         try:
             sns_message = json.loads(event["Records"][0]["Sns"]["Message"])
             sender_email = sns_message["mail"]["source"]
@@ -21,13 +26,18 @@ class EmailProcessor:
             to_recipients = sns_message["mail"]["commonHeaders"].get("to", [])
             cc_recipients = sns_message["mail"]["commonHeaders"].get("cc", [])
 
-            logger.info(f"Email from {sender_email} with subject '{subject}'")
+            logger.info(
+                "Email received sender_email %s, to_recipients: %s, cc_recipients: %s, recipient_email: %s",
+                sender_email, to_recipients, cc_recipients, recipient_email,
+            )
 
             encoded_content = sns_message.get("content", "")
             email_body = (
                 EmailProcessor.decode_email_content(encoded_content)
-                if encoded_content else "No content found."
+                if encoded_content
+                else "No content found."
             )
+            logger.info("Parsed email from %s with subject: %s", sender_email, subject)
 
             return {
                 "sender": sender_email,
@@ -39,26 +49,34 @@ class EmailProcessor:
                 "to_recipients": to_recipients,
                 "cc_recipients": cc_recipients,
             }
-
         except Exception as e:
-            logger.error(f"Error parsing SNS event: {e}")
+            logger.error("Error parsing SNS event: %s", e)
             return None
 
     @staticmethod
     def decode_email_content(encoded_content):
+        """Decodes base64 email content and extracts text/plain body."""
         decoded_bytes = base64.b64decode(encoded_content)
         decoded_content = decoded_bytes.decode("utf-8", errors="ignore")
         return EmailProcessor.extract_text_from_email(decoded_content)
 
     @staticmethod
     def extract_text_from_email(email_content):
+        """Extracts the plain text body from a multipart email."""
         email_msg = message_from_string(email_content)
         if email_msg.is_multipart():
             for part in email_msg.walk():
-                if part.get_content_type() == "text/plain" and "attachment" not in str(part.get("Content-Disposition")):
-                    return EmailProcessor.clean_email_body(part.get_payload(decode=True).decode("utf-8", errors="ignore"))
-        return EmailProcessor.clean_email_body(email_msg.get_payload(decode=True).decode("utf-8", errors="ignore"))
+                if part.get_content_type() == "text/plain" and "attachment" not in str(
+                    part.get("Content-Disposition")
+                ):
+                    return EmailProcessor.clean_email_body(
+                        part.get_payload(decode=True).decode("utf-8", errors="ignore")
+                    )
+        return EmailProcessor.clean_email_body(
+            email_msg.get_payload(decode=True).decode("utf-8", errors="ignore")
+        )
 
     @staticmethod
     def clean_email_body(body):
+        """Removes signatures and unnecessary text."""
         return body.strip().split("-- \n")[0]
