@@ -5,7 +5,14 @@ Business logic only; auth/verification/rate limits are handled by the handler.
 import logging
 from typing import Optional, Dict, Any, Callable
 
-from dynamodb_models import get_coach_profile, merge_coach_profile_fields
+from dynamodb_models import (
+    get_coach_profile,
+    merge_coach_profile_fields,
+    ensure_current_plan,
+    fetch_current_plan_summary,
+    create_action_token,
+)
+from config import ACTION_BASE_URL
 from profile import (
     parse_profile_updates_from_email,
     get_missing_required_profile_fields,
@@ -13,6 +20,21 @@ from profile import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _build_connect_strava_link(from_email: str) -> Optional[str]:
+    """Creates a CONNECT_STRAVA action link for coaching onboarding."""
+    if not ACTION_BASE_URL:
+        return None
+    token_id = create_action_token(
+        email=from_email,
+        action_type="CONNECT_STRAVA",
+        expires_in_seconds=24 * 60 * 60,
+        source="ready_for_coaching_reply",
+    )
+    if not token_id:
+        return None
+    return f"{ACTION_BASE_URL}{token_id}"
 
 
 def build_profile_gated_reply(
@@ -51,6 +73,8 @@ def build_profile_gated_reply(
 
     profile_after = get_coach_profile(from_email) or profile_before
     missing_after = get_missing_required_profile_fields(profile_after)
+    plan_goal = str(profile_after.get("goal", "")).strip() or None
+    ensure_current_plan(from_email, fallback_goal=plan_goal)
 
     if missing_after:
         log(
@@ -66,7 +90,19 @@ def build_profile_gated_reply(
         missing_before=len(missing_before),
         missing_after=len(missing_after),
     )
-    return (
+    reply = (
         "✅ You're ready for coaching. Share your latest training question "
         "or session details and I'll help you plan next steps."
     )
+    connect_link = _build_connect_strava_link(from_email)
+    if connect_link:
+        reply += (
+            "\n\nCONNECT STRAVA FOR MORE PERSONALIZED COACHING:\n"
+            f"{connect_link}\n"
+            "Benefit: synced workouts improve load and recovery guidance."
+        )
+
+    plan_summary = fetch_current_plan_summary(from_email)
+    if plan_summary:
+        reply += f"\n\n{plan_summary}"
+    return reply

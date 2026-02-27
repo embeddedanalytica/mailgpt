@@ -250,7 +250,16 @@ aws sns subscribe \
 **ActionLinkHandlerFunction** requires (automatically set by SAM):
 - `ACTION_TOKENS_TABLE_NAME`: Name of the action_tokens DynamoDB table
 - `VERIFIED_SESSIONS_TABLE_NAME`: Name of the verified_sessions DynamoDB table
+- `COACH_PROFILES_TABLE_NAME`: Name of the coach_profiles DynamoDB table
+- `ATHLETE_CONNECTIONS_TABLE_NAME`: Name of the athlete_connections DynamoDB table
+- `PROVIDER_TOKENS_TABLE_NAME`: Name of the provider_tokens DynamoDB table
 - `SESSION_TTL_DAYS`: Number of days for verified session TTL (default: "14")
+- `STRAVA_CLIENT_ID`: Strava application client ID
+- `STRAVA_CLIENT_SECRET`: Strava application client secret
+- `STRAVA_REDIRECT_URI`: OAuth callback URL (e.g., `https://geniml.com/oauth/strava/callback`)
+- `STRAVA_SCOPES`: Requested Strava scopes (default: `read,activity:read_all`)
+- `STRAVA_STATE_TTL_MINUTES`: OAuth state token TTL in minutes (default: "15")
+- `TOKENS_KMS_KEY_ID`: KMS key ID/ARN used to encrypt provider tokens before storage
 
 ## Local Development and Testing
 
@@ -424,7 +433,7 @@ sam logs -n ActionLinkHandlerFunction --stack-name "sam-app" --filter "result=ve
 **Action Types Supported:**
 - `VERIFY_SESSION` - Email verification (creates verified session, 14-day TTL)
 - `UNSUBSCRIBE` - Unsubscribe from emails (stub implementation, returns confirmation page)
-- `CONNECT_STRAVA` - Connect Strava account (not yet implemented, returns 400)
+- `CONNECT_STRAVA` - Redirects user to Strava OAuth and stores encrypted tokens on callback
 - `PAUSE_COACHING` - Pause coaching (not yet implemented, returns 400)
 
 **Rate Limiting & Cooldowns:**

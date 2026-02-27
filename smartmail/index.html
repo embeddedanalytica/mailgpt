@@ -4,190 +4,599 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>GeniML - AI in Your Inbox</title>
+  <title>GeniML | Train with Clarity</title>
+  <meta name="description"
+    content="Train with clarity and less overhead. Early access for self-coached athletes and coaches.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
+    rel="stylesheet">
   <style>
-    body {
-      font-family: "Inter", sans-serif;
-      margin: 0;
-      padding: 0;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      align-items: center;
-      height: 100vh;
-      background-color: #f4f4f4;
-      text-align: center;
-      color: #333;
+    :root {
+      --bg: #f4f6f5;
+      --bg-elevated: #fbfcfb;
+      --surface: rgba(255, 255, 255, 0.8);
+      --surface-strong: #ffffff;
+      --text: #15211e;
+      --text-muted: #4e615b;
+      --accent: #0f7661;
+      --accent-strong: #0b5e4d;
+      --accent-soft: #d6eee8;
+      --danger: #a73d3d;
+      --border: rgba(21, 33, 30, 0.12);
+      --shadow-soft: 0 14px 40px rgba(13, 36, 30, 0.08);
+      --shadow-card: 0 8px 24px rgba(13, 36, 30, 0.06);
+      --radius-lg: 22px;
+      --radius-md: 14px;
+      --radius-sm: 10px;
+      --space-1: 0.5rem;
+      --space-2: 0.75rem;
+      --space-3: 1rem;
+      --space-4: 1.5rem;
+      --space-5: 2rem;
+      --space-6: 3rem;
+      --space-7: 4rem;
+      --container: 1120px;
     }
 
-    .container {
-      max-width: 600px;
-      background: white;
-      padding: 40px;
-      border-radius: 10px;
-      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      min-height: 100vh;
+      font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
+      color: var(--text);
+      line-height: 1.55;
+      background:
+        radial-gradient(circle at 14% 16%, rgba(15, 118, 97, 0.16), transparent 30%),
+        radial-gradient(circle at 82% 12%, rgba(11, 94, 77, 0.12), transparent 34%),
+        linear-gradient(180deg, #f9fbfa 0%, var(--bg) 48%, #eff3f1 100%);
+    }
+
+    .shell {
+      width: min(var(--container), 92vw);
+      margin: 0 auto;
+      padding: var(--space-5) 0 var(--space-7);
+    }
+
+    h1,
+    h2,
+    h3 {
+      font-family: "Fraunces", Georgia, serif;
+      margin: 0;
+      letter-spacing: -0.02em;
+      line-height: 1.1;
+    }
+
+    .hero {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-soft);
+      padding: clamp(1.5rem, 2.6vw, 3rem);
+      backdrop-filter: blur(2px);
+      animation: reveal 560ms ease-out;
+    }
+
+    .eyebrow {
+      font-size: 0.8rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--accent);
+      font-weight: 700;
+      margin: 0 0 var(--space-3);
     }
 
     h1 {
-      font-size: 32px;
-      font-weight: 700;
-      margin-bottom: 10px;
+      font-size: clamp(2rem, 5vw, 3.4rem);
+      max-width: 16ch;
     }
 
-    p {
-      font-size: 18px;
-      line-height: 1.5;
-      color: #555;
+    .hero-copy {
+      margin: var(--space-3) 0 var(--space-4);
+      max-width: 70ch;
+      color: var(--text-muted);
+      font-size: clamp(1rem, 1.9vw, 1.15rem);
     }
 
-    .cta {
-      margin-top: 20px;
+    .door-ctas {
+      display: grid;
+      gap: var(--space-2);
+      margin: 0 0 var(--space-2);
     }
 
-    input[type="email"] {
-      width: 80%;
-      padding: 12px;
-      margin: 10px 0;
-      border: 1px solid #ccc;
-      border-radius: 5px;
-      font-size: 16px;
-    }
-
-    button {
-      padding: 12px 20px;
-      border: none;
-      background-color: #007BFF;
-      color: white;
-      font-size: 16px;
-      font-weight: bold;
-      border-radius: 5px;
-      cursor: pointer;
-      transition: background 0.3s ease;
-    }
-
-    button:hover {
-      background-color: #0056b3;
-    }
-
-    .privacy {
-      font-size: 12px;
-      margin-top: 10px;
-      color: #666;
-    }
-
-    .how-it-works {
-      margin-top: 30px;
-      padding: 20px;
-      background-color: #f8f8f8;
-      border-radius: 8px;
-      text-align: left;
-    }
-
-    .how-it-works h2 {
-      font-size: 24px;
-      font-weight: 600;
-      text-align: center;
-    }
-
-    .how-it-works ul {
-      list-style: none;
-      padding: 0;
-    }
-
-    .how-it-works li {
-      font-size: 16px;
-      margin: 10px 0;
-      display: flex;
+    .door-btn {
+      min-height: 48px;
+      display: inline-flex;
       align-items: center;
+      justify-content: center;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      text-decoration: none;
+      font-weight: 700;
+      font-size: 0.96rem;
+      transition: transform 180ms ease, background-color 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
     }
 
-    .how-it-works li span {
-      margin-right: 8px;
-      font-size: 18px;
-      color: #28a745;
+    .door-btn.primary {
+      background: var(--accent);
+      color: #fff;
+      border-color: transparent;
     }
 
-    .highlight {
-      font-weight: bold;
-      color: #007BFF;
+    .door-btn.secondary {
+      background: var(--surface-strong);
+      color: var(--text);
+    }
+
+    .door-btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 8px 16px rgba(11, 94, 77, 0.16);
+    }
+
+    .helper-line {
+      margin: 0;
+      color: var(--text-muted);
+      font-size: 0.88rem;
+    }
+
+    .audience-toggle {
+      margin-top: var(--space-3);
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-1);
+      background: rgba(255, 255, 255, 0.72);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 0.28rem;
+    }
+
+    .audience-toggle button {
+      border: 0;
+      background: transparent;
+      border-radius: 999px;
+      padding: 0.38rem 0.75rem;
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      cursor: pointer;
+    }
+
+    .audience-toggle button.active {
+      color: var(--text);
+      background: var(--accent-soft);
+    }
+
+    .section {
+      margin-top: var(--space-7);
+    }
+
+    .section h2 {
+      font-size: clamp(1.7rem, 3.8vw, 2.6rem);
+      margin-bottom: var(--space-2);
+    }
+
+    .section-intro {
+      margin: 0 0 var(--space-4);
+      color: var(--text-muted);
+      max-width: 62ch;
+    }
+
+    .panel {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      box-shadow: var(--shadow-card);
+      padding: clamp(1.1rem, 2.2vw, 1.8rem);
+    }
+
+    .outcome-list,
+    .friction-list,
+    .trust-list {
+      margin: 0;
+      padding-left: 1.15rem;
+      display: grid;
+      gap: 0.55rem;
+    }
+
+    .outcome-list li,
+    .friction-list li,
+    .trust-list li {
+      color: var(--text);
+      font-weight: 500;
+    }
+
+    .scenario {
+      margin: var(--space-3) 0 0;
+      color: var(--text-muted);
+      font-style: italic;
+    }
+
+    .audience-stack {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-7);
+    }
+
+    .audience-stack.coach-first #athlete-section {
+      order: 2;
+    }
+
+    .audience-stack.coach-first #coach-section {
+      order: 1;
+    }
+
+    .friction-list,
+    .trust-list {
+      list-style: none;
+      padding-left: 0;
+    }
+
+    .friction-list li::before,
+    .trust-list li::before {
+      content: "- ";
+      color: var(--accent-strong);
+      font-weight: 700;
+    }
+
+    .waitlist-section {
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.82);
+      box-shadow: var(--shadow-soft);
+      padding: clamp(1.5rem, 2.6vw, 2.5rem);
+    }
+
+    .waitlist-grid {
+      display: grid;
+      gap: var(--space-4);
+    }
+
+    .waitlist-form {
+      display: grid;
+      gap: var(--space-2);
+      grid-template-columns: 1fr;
+      max-width: 560px;
+    }
+
+    .waitlist-form label {
+      font-size: 0.86rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .input-row {
+      display: grid;
+      gap: var(--space-2);
+      grid-template-columns: 1fr;
+    }
+
+    .waitlist-form input[type="email"] {
+      width: 100%;
+      min-height: 50px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--surface-strong);
+      color: var(--text);
+      font-size: 1rem;
+      padding: 0.75rem 0.9rem;
+      outline: none;
+      transition: border-color 160ms ease, box-shadow 160ms ease;
+    }
+
+    .waitlist-form input[type="email"]:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(15, 118, 97, 0.18);
+    }
+
+    .waitlist-form button[type="submit"] {
+      min-height: 50px;
+      border: 0;
+      border-radius: var(--radius-sm);
+      background: var(--accent);
+      color: #fff;
+      font-weight: 700;
+      font-size: 0.98rem;
+      padding: 0.7rem 1rem;
+      cursor: pointer;
+      transition: transform 180ms ease, background-color 180ms ease, box-shadow 180ms ease;
+    }
+
+    .waitlist-form button[type="submit"]:hover:not(:disabled) {
+      transform: translateY(-1px);
+      background: var(--accent-strong);
+      box-shadow: 0 8px 16px rgba(11, 94, 77, 0.18);
+    }
+
+    .waitlist-form button[type="submit"]:disabled {
+      opacity: 0.72;
+      cursor: wait;
+    }
+
+    .status {
+      margin: var(--space-1) 0 0;
+      min-height: 1.4em;
+      font-size: 0.93rem;
+      font-weight: 600;
+    }
+
+    .status-success {
+      color: var(--accent-strong);
+    }
+
+    .status-error {
+      color: var(--danger);
+    }
+
+    .microcopy {
+      margin: var(--space-2) 0 0;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      max-width: 62ch;
     }
 
     footer {
-      margin-top: 20px;
-      font-size: 14px;
-      color: #777;
-      text-align: center;
+      margin-top: var(--space-7);
+      padding-top: var(--space-4);
+      border-top: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      font-size: 0.9rem;
+      color: var(--text-muted);
     }
 
     footer a {
-      color: #007BFF;
+      color: var(--accent-strong);
       text-decoration: none;
+      font-weight: 600;
     }
 
     footer a:hover {
       text-decoration: underline;
     }
+
+    @media (min-width: 720px) {
+      .door-ctas {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        max-width: 460px;
+      }
+
+      .input-row {
+        grid-template-columns: minmax(0, 1fr) auto;
+      }
+
+      .waitlist-form button[type="submit"] {
+        min-width: 190px;
+      }
+    }
+
+    @media (min-width: 900px) {
+      .waitlist-grid {
+        grid-template-columns: minmax(0, 1fr) minmax(320px, 500px);
+        align-items: center;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+
+      *,
+      *::before,
+      *::after {
+        animation: none !important;
+        transition: none !important;
+        scroll-behavior: auto !important;
+      }
+    }
+
+    @keyframes reveal {
+      from {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
   </style>
 </head>
 
 <body>
-  <div class="container">
-    <h1>AI Conversations. Right in Your Inbox.</h1>
-    <p>No new apps. No extra logins. GeniML brings AI into your email, keeping your conversations organized and
-      accessible—right where they belong.</p>
+  <main class="shell">
+    <section class="hero" aria-labelledby="hero-title">
+      <p class="eyebrow">Early access now open</p>
+      <h1 id="hero-title">Train with clarity. Skip the overhead.</h1>
+      <p class="hero-copy">
+        For self-coached athletes who want guidance without the logistics and for coaches who want the signal from
+        noisy activity data, fast.
+      </p>
 
-    <div class="cta">
-      <form id="emailForm">
-        <input type="email" id="email" name="email" placeholder="Enter your email" required>
-        <br>
-        <button type="submit">Join the Waitlist</button>
-      </form>
-      <p id="message"></p>
-      <p class="privacy">We respect your privacy. Your email will only be used provide you with access to GeniML
-        service.</p>
+      <div class="door-ctas" aria-label="Audience doors">
+        <a class="door-btn primary" href="#athlete-section" data-audience-link="athlete">I'm self-coached</a>
+        <a class="door-btn secondary" href="#coach-section" data-audience-link="coach">I'm a coach</a>
+      </div>
+      <p class="helper-line">Early access is rolling out in small cohorts.</p>
+
+      <div class="audience-toggle" role="group" aria-label="Audience order toggle">
+        <button type="button" data-audience-toggle="athlete" class="active">Athlete first</button>
+        <button type="button" data-audience-toggle="coach">Coach first</button>
+      </div>
+    </section>
+
+    <div class="audience-stack" id="audience-stack">
+      <section class="section" id="athlete-section" aria-labelledby="athlete-title">
+        <h2 id="athlete-title">Guidance without scheduling</h2>
+        <p class="section-intro">
+          You already train. We help you stay focused, consistent, and adaptable, especially when life interrupts the
+          plan.
+        </p>
+        <div class="panel">
+          <ul class="outcome-list">
+            <li>Know what to focus on this week (and what to ignore)</li>
+            <li>Course-correct early when fatigue, stress, or inconsistency creeps in</li>
+            <li>Build momentum with lightweight accountability</li>
+          </ul>
+          <p class="scenario">Busy week? You do not fall off. You adjust and keep the streak of progress going.</p>
+        </div>
+      </section>
+
+      <section class="section" id="coach-section" aria-labelledby="coach-title">
+        <h2 id="coach-title">The athlete summary you wish you had</h2>
+        <p class="section-intro">
+          Instead of digging through dashboards, get a clear brief that surfaces the changes and questions that matter.
+        </p>
+        <div class="panel">
+          <ul class="outcome-list">
+            <li>What improved, what regressed, what looks risky</li>
+            <li>Key moments worth a conversation</li>
+            <li>Faster check-ins without losing context</li>
+          </ul>
+          <p class="scenario">Open a weekly brief. Know exactly what to ask your athlete next.</p>
+        </div>
+      </section>
     </div>
 
-    <div class="how-it-works">
-      <h2>How It Works</h2>
-      <ul>
-        <li><span>✅</span> <span class="highlight">Sign Up</span> – Enter your email and join the waitlist.</li>
-        <li><span>✅</span> <span class="highlight">Get Verified</span> – Once approved, you’ll receive a confirmation
-          email.</li>
-        <li><span>✅</span> <span class="highlight">Start Chatting</span> – Simply email your favorite AI agent at&nbsp;
-          <strong>**@geniml.com</strong>.
-        </li>
-        <li><span>✅</span> <span class="highlight">Get Smart Replies</span> – AI responds directly in your inbox.</li>
-      </ul>
-      <p>💡 <strong>Example:</strong> Need puppy advice? Just email <span class="highlight">vet@geniml.com</span> and
-        get expert tips!</p>
-    </div>
-  </div>
+    <section class="section" aria-labelledby="friction-title">
+      <h2 id="friction-title">Less logistics. More coaching.</h2>
+      <p class="section-intro">The work should be training and coaching, not administrative drag and data overload.</p>
+      <div class="panel">
+        <ul class="friction-list">
+          <li>No back-and-forth scheduling</li>
+          <li>No "where do I even start?" uncertainty</li>
+          <li>No drowning in data</li>
+        </ul>
+      </div>
+    </section>
 
-  <footer>
-    Contact us at: <a href="mailto:support@geniml.com">support@geniml.com</a><br>
-    &copy; 2025 GeniML. All rights reserved.
-  </footer>
+    <section class="section" aria-labelledby="trust-title">
+      <h2 id="trust-title">Private by default</h2>
+      <div class="panel">
+        <ul class="trust-list">
+          <li>You control what you share</li>
+          <li>Data is not sold</li>
+          <li>Delete anytime</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="section waitlist-section" id="waitlist" aria-labelledby="waitlist-title">
+      <div class="waitlist-grid">
+        <div>
+          <h2 id="waitlist-title">Get early access</h2>
+          <p class="section-intro">Tell us if you are self-coached or coaching athletes, we will invite cohorts as we
+            expand.</p>
+          <p class="microcopy">Early cohorts get priority onboarding and direct input into what ships next.</p>
+        </div>
+        <div>
+          <form class="waitlist-form" data-waitlist-form novalidate>
+            <label for="waitlist-email">Email address</label>
+            <div class="input-row">
+              <input id="waitlist-email" name="email" type="email" placeholder="you@example.com" autocomplete="email"
+                required>
+              <button type="submit" data-submit-button>Join the waitlist</button>
+            </div>
+            <p class="status" data-status role="status" aria-live="polite"></p>
+          </form>
+          <p class="microcopy">Private by default. No spam. We only email when there is meaningful progress to share.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <div>Contact: <a href="mailto:support@geniml.com">support@geniml.com</a></div>
+      <div>&copy; 2026 GeniML. All rights reserved.</div>
+    </footer>
+  </main>
 
   <script type="module">
     import { registerUser } from "./api.js";
 
-    document.addEventListener("DOMContentLoaded", () => {
-      const form = document.getElementById("emailForm");
-      form.addEventListener("submit", handleSubmit);
+    const WAITLIST_FORMS = document.querySelectorAll("[data-waitlist-form]");
+    const TOGGLE_BUTTONS = document.querySelectorAll("[data-audience-toggle]");
+    const AUDIENCE_LINKS = document.querySelectorAll("[data-audience-link]");
+    const AUDIENCE_STACK = document.getElementById("audience-stack");
+
+    WAITLIST_FORMS.forEach((form) => {
+      form.addEventListener("submit", (event) => handleSubmit(event, form));
     });
 
-    async function handleSubmit(event) {
-      event.preventDefault();
-      const email = document.getElementById("email").value;
+    TOGGLE_BUTTONS.forEach((button) => {
+      button.addEventListener("click", () => setAudienceOrder(button.dataset.audienceToggle));
+    });
 
-      if (!email) {
-        document.getElementById("message").textContent = "Please enter a valid email.";
+    AUDIENCE_LINKS.forEach((link) => {
+      link.addEventListener("click", () => setAudienceOrder(link.dataset.audienceLink));
+    });
+
+    function setAudienceOrder(audience) {
+      const coachFirst = audience === "coach";
+      AUDIENCE_STACK.classList.toggle("coach-first", coachFirst);
+
+      TOGGLE_BUTTONS.forEach((button) => {
+        button.classList.toggle("active", button.dataset.audienceToggle === (coachFirst ? "coach" : "athlete"));
+      });
+    }
+
+    function setStatus(form, message, isSuccess) {
+      const status = form.querySelector("[data-status]");
+      status.textContent = message;
+      status.classList.remove("status-success", "status-error");
+      status.classList.add(isSuccess ? "status-success" : "status-error");
+    }
+
+    function resetStatus(form) {
+      const status = form.querySelector("[data-status]");
+      status.textContent = "";
+      status.classList.remove("status-success", "status-error");
+    }
+
+    function isValidEmail(email) {
+      return /.+@.+\..+/.test(email);
+    }
+
+    async function handleSubmit(event, form) {
+      event.preventDefault();
+
+      const input = form.querySelector('input[name="email"]');
+      const button = form.querySelector("[data-submit-button]");
+      const email = input.value.trim();
+
+      resetStatus(form);
+
+      if (!email || !isValidEmail(email)) {
+        setStatus(form, "Please enter a valid email address.", false);
+        input.focus();
         return;
       }
 
-      const message = await registerUser(email);
-      document.getElementById("message").textContent = message;
-      document.getElementById("email").value = "";
+      if (button.disabled) {
+        return;
+      }
+
+      const defaultButtonText = button.textContent;
+      button.disabled = true;
+      button.textContent = "Submitting...";
+
+      const result = await registerUser(email);
+      setStatus(form, result.message, result.ok);
+
+      if (result.ok) {
+        input.value = "";
+      }
+
+      button.disabled = false;
+      button.textContent = defaultButtonText;
     }
   </script>
 </body>

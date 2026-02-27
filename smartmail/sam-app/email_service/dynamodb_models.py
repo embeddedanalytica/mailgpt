@@ -13,6 +13,7 @@ import time
 import logging
 import secrets
 import base64
+import uuid
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 from botocore.exceptions import ClientError
@@ -24,10 +25,16 @@ logger = logging.getLogger()
 dynamodb = boto3.resource("dynamodb", region_name=os.getenv("AWS_REGION", "us-west-2"))
 
 # Table names
-COACH_PROFILES_TABLE = "coach_profiles"
-ACTION_TOKENS_TABLE = "action_tokens"
-VERIFIED_SESSIONS_TABLE = "verified_sessions"
-RATE_LIMITS_TABLE = "rate_limits"
+COACH_PROFILES_TABLE = os.getenv("COACH_PROFILES_TABLE_NAME", "coach_profiles")
+ACTION_TOKENS_TABLE = os.getenv("ACTION_TOKENS_TABLE_NAME", "action_tokens")
+VERIFIED_SESSIONS_TABLE = os.getenv("VERIFIED_SESSIONS_TABLE_NAME", "verified_sessions")
+RATE_LIMITS_TABLE = os.getenv("RATE_LIMITS_TABLE_NAME", "rate_limits")
+ATHLETE_CONNECTIONS_TABLE = os.getenv("ATHLETE_CONNECTIONS_TABLE_NAME", "athlete_connections")
+PROVIDER_TOKENS_TABLE = os.getenv("PROVIDER_TOKENS_TABLE_NAME", "provider_tokens")
+ACTIVITIES_TABLE = os.getenv("ACTIVITIES_TABLE_NAME", "activities")
+DAILY_METRICS_TABLE = os.getenv("DAILY_METRICS_TABLE_NAME", "daily_metrics")
+PLAN_HISTORY_TABLE = os.getenv("PLAN_HISTORY_TABLE_NAME", "plan_history")
+RECOMMENDATION_LOG_TABLE = os.getenv("RECOMMENDATION_LOG_TABLE_NAME", "recommendation_log")
 
 
 # ============================================================================
@@ -204,6 +211,501 @@ def merge_coach_profile_fields(email: str, updates: Dict[str, Any]) -> bool:
     except ClientError as e:
         logger.error(f"Error merging coach profile fields for {email}: {e}")
         return False
+
+
+# ============================================================================
+# ATHLETE ID + CONNECTOR DATA
+# ============================================================================
+
+def ensure_athlete_id(email: str) -> Optional[str]:
+    """
+    Ensures an opaque athlete_id exists for a profile and returns it.
+
+    This lets connector/activity tables avoid using raw email as the primary key.
+    """
+    try:
+        table = dynamodb.Table(COACH_PROFILES_TABLE)
+        now = int(time.time())
+        new_athlete_id = f"ath_{uuid.uuid4().hex}"
+        response = table.update_item(
+            Key={"email": email.lower()},
+            UpdateExpression="""
+                SET #created_at = if_not_exists(#created_at, :created_at),
+                    #updated_at = :updated_at,
+                    #athlete_id = if_not_exists(#athlete_id, :athlete_id)
+            """,
+            ExpressionAttributeNames={
+                "#created_at": "created_at",
+                "#updated_at": "updated_at",
+                "#athlete_id": "athlete_id",
+            },
+            ExpressionAttributeValues={
+                ":created_at": now,
+                ":updated_at": now,
+                ":athlete_id": new_athlete_id,
+            },
+            ReturnValues="ALL_NEW",
+        )
+        item = response.get("Attributes", {})
+        athlete_id = item.get("athlete_id")
+        if isinstance(athlete_id, str) and athlete_id.strip():
+            return athlete_id
+        return None
+    except ClientError as e:
+        logger.error(f"Error ensuring athlete_id for {email}: {e}")
+        return None
+
+
+def upsert_athlete_connection(
+    athlete_id: str,
+    provider: str,
+    status: str = "connected",
+    provider_athlete_id: Optional[str] = None,
+    scopes: Optional[List[str]] = None,
+    sync_cursor: Optional[str] = None,
+    last_sync_at: Optional[int] = None,
+    revoked_at: Optional[int] = None,
+) -> bool:
+    """Creates or updates connector state for an athlete/provider pair."""
+    try:
+        table = dynamodb.Table(ATHLETE_CONNECTIONS_TABLE)
+        now = int(time.time())
+        provider_norm = provider.strip().lower()
+
+        expression_attribute_names = {
+            "#created_at": "created_at",
+            "#updated_at": "updated_at",
+            "#status": "status",
+            "#gsi_provider": "gsi_provider",
+            "#provider": "provider",
+        }
+        expression_attribute_values = {
+            ":created_at": now,
+            ":updated_at": now,
+            ":status": status,
+            ":gsi_provider": provider_norm,
+            ":provider": provider_norm,
+        }
+        set_clauses = [
+            "#created_at = if_not_exists(#created_at, :created_at)",
+            "#updated_at = :updated_at",
+            "#status = :status",
+            "#gsi_provider = :gsi_provider",
+            "#provider = :provider",
+        ]
+
+        if provider_athlete_id:
+            expression_attribute_names["#provider_athlete_id"] = "provider_athlete_id"
+            expression_attribute_names["#gsi_provider_athlete_id"] = "gsi_provider_athlete_id"
+            expression_attribute_values[":provider_athlete_id"] = provider_athlete_id
+            set_clauses.append("#provider_athlete_id = :provider_athlete_id")
+            set_clauses.append("#gsi_provider_athlete_id = :provider_athlete_id")
+        if scopes is not None:
+            expression_attribute_names["#scopes"] = "scopes"
+            expression_attribute_values[":scopes"] = scopes
+            set_clauses.append("#scopes = :scopes")
+        if sync_cursor is not None:
+            expression_attribute_names["#sync_cursor"] = "sync_cursor"
+            expression_attribute_values[":sync_cursor"] = sync_cursor
+            set_clauses.append("#sync_cursor = :sync_cursor")
+        if last_sync_at is not None:
+            expression_attribute_names["#last_sync_at"] = "last_sync_at"
+            expression_attribute_values[":last_sync_at"] = last_sync_at
+            set_clauses.append("#last_sync_at = :last_sync_at")
+        if revoked_at is not None:
+            expression_attribute_names["#revoked_at"] = "revoked_at"
+            expression_attribute_values[":revoked_at"] = revoked_at
+            set_clauses.append("#revoked_at = :revoked_at")
+
+        table.update_item(
+            Key={"athlete_id": athlete_id, "provider": provider_norm},
+            UpdateExpression="SET " + ", ".join(set_clauses),
+            ExpressionAttributeNames=expression_attribute_names,
+            ExpressionAttributeValues=expression_attribute_values,
+        )
+        return True
+    except ClientError as e:
+        logger.error(
+            f"Error upserting athlete connection athlete_id={athlete_id}, provider={provider}: {e}"
+        )
+        return False
+
+
+def get_athlete_connection(athlete_id: str, provider: str) -> Optional[Dict[str, Any]]:
+    """Returns connector state for an athlete/provider pair."""
+    try:
+        table = dynamodb.Table(ATHLETE_CONNECTIONS_TABLE)
+        response = table.get_item(Key={"athlete_id": athlete_id, "provider": provider.lower()})
+        return response.get("Item")
+    except ClientError as e:
+        logger.error(
+            f"Error getting athlete connection athlete_id={athlete_id}, provider={provider}: {e}"
+        )
+        return None
+
+
+def lookup_athlete_connection_by_provider_id(
+    provider: str,
+    provider_athlete_id: str,
+) -> Optional[Dict[str, Any]]:
+    """Looks up a connection by external provider identity (OAuth callback helper)."""
+    try:
+        from boto3.dynamodb.conditions import Key
+
+        table = dynamodb.Table(ATHLETE_CONNECTIONS_TABLE)
+        response = table.query(
+            IndexName="ProviderAthleteLookupIndex",
+            KeyConditionExpression=Key("gsi_provider").eq(provider.lower())
+            & Key("gsi_provider_athlete_id").eq(provider_athlete_id),
+            Limit=1,
+        )
+        items = response.get("Items", [])
+        return items[0] if items else None
+    except ClientError as e:
+        logger.error(
+            f"Error looking up connection provider={provider}, provider_athlete_id={provider_athlete_id}: {e}"
+        )
+        return None
+
+
+def upsert_provider_tokens(
+    connection_id: str,
+    access_token_enc: str,
+    refresh_token_enc: Optional[str],
+    expires_at: int,
+) -> bool:
+    """
+    Stores encrypted provider OAuth tokens by connection_id.
+
+    NOTE: Encryption should happen before calling this method.
+    """
+    try:
+        table = dynamodb.Table(PROVIDER_TOKENS_TABLE)
+        now = int(time.time())
+        table.update_item(
+            Key={"connection_id": connection_id},
+            UpdateExpression="""
+                SET #created_at = if_not_exists(#created_at, :created_at),
+                    #updated_at = :updated_at,
+                    #access_token_enc = :access_token_enc,
+                    #refresh_token_enc = :refresh_token_enc,
+                    #expires_at = :expires_at
+            """,
+            ExpressionAttributeNames={
+                "#created_at": "created_at",
+                "#updated_at": "updated_at",
+                "#access_token_enc": "access_token_enc",
+                "#refresh_token_enc": "refresh_token_enc",
+                "#expires_at": "expires_at",
+            },
+            ExpressionAttributeValues={
+                ":created_at": now,
+                ":updated_at": now,
+                ":access_token_enc": access_token_enc,
+                ":refresh_token_enc": refresh_token_enc,
+                ":expires_at": int(expires_at),
+            },
+        )
+        return True
+    except ClientError as e:
+        logger.error(f"Error upserting provider tokens for connection_id={connection_id}: {e}")
+        return False
+
+
+def get_provider_tokens(connection_id: str) -> Optional[Dict[str, Any]]:
+    """Returns encrypted token payload for a connector connection_id."""
+    try:
+        table = dynamodb.Table(PROVIDER_TOKENS_TABLE)
+        response = table.get_item(Key={"connection_id": connection_id})
+        return response.get("Item")
+    except ClientError as e:
+        logger.error(f"Error getting provider tokens for connection_id={connection_id}: {e}")
+        return None
+
+
+def put_normalized_activity(
+    athlete_id: str,
+    provider: str,
+    provider_activity_id: str,
+    activity_start_ts: int,
+    sport: str,
+    metrics: Dict[str, Any],
+    source_payload_version: str = "v1",
+) -> Dict[str, Any]:
+    """
+    Inserts one normalized activity idempotently.
+
+    Dedupe key: (athlete_id, provider_activity_key), where provider_activity_key = "{provider}#{provider_activity_id}".
+    """
+    provider_norm = provider.strip().lower()
+    provider_activity_key = f"{provider_norm}#{provider_activity_id}"
+    now = int(time.time())
+
+    item = {
+        "athlete_id": athlete_id,
+        "provider_activity_key": provider_activity_key,
+        "provider": provider_norm,
+        "provider_activity_id": provider_activity_id,
+        "activity_start_ts": int(activity_start_ts),
+        "sport": sport,
+        "metrics": metrics,
+        "source_payload_version": source_payload_version,
+        "ingested_at": now,
+    }
+
+    try:
+        table = dynamodb.Table(ACTIVITIES_TABLE)
+        table.put_item(
+            Item=item,
+            ConditionExpression="attribute_not_exists(provider_activity_key)",
+        )
+        return {"inserted": True, "reason": "inserted", "provider_activity_key": provider_activity_key}
+    except ClientError as e:
+        error_code = e.response.get("Error", {}).get("Code", "")
+        if error_code == "ConditionalCheckFailedException":
+            return {
+                "inserted": False,
+                "reason": "duplicate",
+                "provider_activity_key": provider_activity_key,
+            }
+        logger.error(
+            f"Error putting normalized activity athlete_id={athlete_id}, key={provider_activity_key}: {e}"
+        )
+        return {
+            "inserted": False,
+            "reason": "storage_error",
+            "provider_activity_key": provider_activity_key,
+        }
+
+
+def put_daily_metrics(
+    athlete_id: str,
+    metric_date: str,
+    metrics: Dict[str, Any],
+    source_window_start_ts: Optional[int] = None,
+    source_window_end_ts: Optional[int] = None,
+) -> bool:
+    """Upserts daily derived metrics for an athlete/date."""
+    try:
+        table = dynamodb.Table(DAILY_METRICS_TABLE)
+        now = int(time.time())
+        item = {
+            "athlete_id": athlete_id,
+            "metric_date": metric_date,
+            "metrics": metrics,
+            "updated_at": now,
+        }
+        if source_window_start_ts is not None:
+            item["source_window_start_ts"] = int(source_window_start_ts)
+        if source_window_end_ts is not None:
+            item["source_window_end_ts"] = int(source_window_end_ts)
+        table.put_item(Item=item)
+        return True
+    except ClientError as e:
+        logger.error(f"Error putting daily metrics athlete_id={athlete_id}, metric_date={metric_date}: {e}")
+        return False
+
+
+def append_plan_history(
+    athlete_id: str,
+    plan_version_ts: int,
+    plan: Dict[str, Any],
+    rationale: Optional[str] = None,
+    changes_from_previous: Optional[List[str]] = None,
+) -> bool:
+    """Appends an immutable training-plan snapshot."""
+    try:
+        table = dynamodb.Table(PLAN_HISTORY_TABLE)
+        now = int(time.time())
+        item: Dict[str, Any] = {
+            "athlete_id": athlete_id,
+            "plan_version_ts": int(plan_version_ts),
+            "plan": plan,
+            "created_at": now,
+        }
+        if rationale:
+            item["rationale"] = rationale
+        if changes_from_previous is not None:
+            item["changes_from_previous"] = changes_from_previous
+
+        table.put_item(
+            Item=item,
+            ConditionExpression="attribute_not_exists(plan_version_ts)",
+        )
+        return True
+    except ClientError as e:
+        error_code = e.response.get("Error", {}).get("Code", "")
+        if error_code == "ConditionalCheckFailedException":
+            logger.warning(
+                f"Plan history already exists athlete_id={athlete_id}, plan_version_ts={plan_version_ts}"
+            )
+            return False
+        logger.error(
+            f"Error appending plan history athlete_id={athlete_id}, plan_version_ts={plan_version_ts}: {e}"
+        )
+        return False
+
+
+def log_recommendation(
+    athlete_id: str,
+    recommendation_text: str,
+    evidence_window_days: int,
+    confidence: Optional[float] = None,
+    status: str = "proposed",
+    metadata: Optional[Dict[str, Any]] = None,
+    created_at: Optional[int] = None,
+) -> bool:
+    """Writes one recommendation log entry for feedback loop tracking."""
+    try:
+        table = dynamodb.Table(RECOMMENDATION_LOG_TABLE)
+        now = int(time.time())
+        created_ts = int(created_at) if created_at is not None else now
+
+        item: Dict[str, Any] = {
+            "athlete_id": athlete_id,
+            "created_at": created_ts,
+            "recommendation_text": recommendation_text,
+            "evidence_window_days": int(evidence_window_days),
+            "status": status,
+            "logged_at": now,
+        }
+        if confidence is not None:
+            item["confidence"] = float(confidence)
+        if metadata is not None:
+            item["metadata"] = metadata
+
+        table.put_item(
+            Item=item,
+            ConditionExpression="attribute_not_exists(created_at)",
+        )
+        return True
+    except ClientError as e:
+        error_code = e.response.get("Error", {}).get("Code", "")
+        if error_code == "ConditionalCheckFailedException":
+            logger.warning(
+                f"Recommendation log collision athlete_id={athlete_id}, created_at={created_at}"
+            )
+            return False
+        logger.error(
+            f"Error logging recommendation athlete_id={athlete_id}, created_at={created_at}: {e}"
+        )
+        return False
+
+
+# ============================================================================
+# CURRENT PLAN (Stored in coach_profiles.current_plan)
+# ============================================================================
+
+def _default_plan_start_date(now_epoch: Optional[int] = None) -> str:
+    if now_epoch is None:
+        now_epoch = int(time.time())
+    return datetime.fromtimestamp(now_epoch, tz=timezone.utc).strftime("%Y-%m-%d")
+
+
+def _build_default_current_plan(goal: Optional[str], now_epoch: Optional[int] = None) -> Dict[str, Any]:
+    """
+    Builds a minimal, structured starter plan.
+
+    Required shape:
+    - goal
+    - start_date
+    - week_index
+    - sessions: [{date, type, target}]
+    - revision
+    """
+    start_date = _default_plan_start_date(now_epoch=now_epoch)
+    normalized_goal = (goal or "").strip() or "Build consistency"
+    return {
+        "goal": normalized_goal,
+        "start_date": start_date,
+        "week_index": 1,
+        "sessions": [
+            {"date": start_date, "type": "easy", "target": "30 minutes easy effort"},
+        ],
+        "revision": 1,
+    }
+
+
+def ensure_current_plan(email: str, fallback_goal: Optional[str] = None) -> bool:
+    """
+    Ensures coach_profiles.current_plan exists for a user.
+
+    If current_plan already exists, it is left unchanged.
+    """
+    try:
+        existing_profile = get_coach_profile(email) or {}
+        existing_plan = existing_profile.get("current_plan")
+        if isinstance(existing_plan, dict) and existing_plan:
+            return True
+
+        goal = str(existing_profile.get("goal", "")).strip() or fallback_goal
+        default_plan = _build_default_current_plan(goal=goal)
+        now = int(time.time())
+        table = dynamodb.Table(COACH_PROFILES_TABLE)
+        table.update_item(
+            Key={"email": email.lower()},
+            UpdateExpression="""
+                SET #created_at = if_not_exists(#created_at, :created_at),
+                    #updated_at = :updated_at,
+                    #current_plan = if_not_exists(#current_plan, :current_plan)
+            """,
+            ExpressionAttributeNames={
+                "#created_at": "created_at",
+                "#updated_at": "updated_at",
+                "#current_plan": "current_plan",
+            },
+            ExpressionAttributeValues={
+                ":created_at": now,
+                ":updated_at": now,
+                ":current_plan": default_plan,
+            },
+        )
+        return True
+    except ClientError as e:
+        logger.error(f"Error ensuring current plan for {email}: {e}")
+        return False
+
+
+def get_current_plan(email: str) -> Optional[Dict[str, Any]]:
+    """Returns current_plan map for a user if present."""
+    profile = get_coach_profile(email)
+    if not profile:
+        return None
+    plan = profile.get("current_plan")
+    if isinstance(plan, dict):
+        return plan
+    return None
+
+
+def fetch_current_plan_summary(email: str) -> Optional[str]:
+    """
+    Returns a compact human-readable plan summary for reply composition.
+    """
+    plan = get_current_plan(email)
+    if not plan:
+        return None
+
+    goal = str(plan.get("goal", "")).strip() or "Unknown goal"
+    start_date = str(plan.get("start_date", "")).strip() or "unknown"
+    week_index = int(plan.get("week_index", 1) or 1)
+    revision = int(plan.get("revision", 1) or 1)
+    sessions = plan.get("sessions")
+
+    session_chunks: List[str] = []
+    if isinstance(sessions, list):
+        for session in sessions[:3]:
+            if not isinstance(session, dict):
+                continue
+            date_value = str(session.get("date", "")).strip() or "unknown-date"
+            type_value = str(session.get("type", "")).strip() or "session"
+            target_value = str(session.get("target", "")).strip() or "target TBD"
+            session_chunks.append(f"{date_value}: {type_value} ({target_value})")
+
+    sessions_text = "; ".join(session_chunks) if session_chunks else "No sessions yet."
+    return (
+        f"Current plan - Goal: {goal}. Start: {start_date}. "
+        f"Week: {week_index}. Revision: {revision}. Sessions: {sessions_text}"
+    )
 
 
 # ============================================================================

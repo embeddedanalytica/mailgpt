@@ -7,14 +7,492 @@ Handles GET /action/{token} endpoint for action links (verification, etc.)
 import os
 import logging
 import time
+import json
+import uuid
+import base64
 import boto3 # type: ignore
 from botocore.exceptions import ClientError # type: ignore
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+from urllib.error import URLError, HTTPError
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 # Initialize DynamoDB client
 dynamodb = boto3.resource("dynamodb", region_name=os.getenv("AWS_REGION", "us-west-2"))
+kms_client = boto3.client("kms", region_name=os.getenv("AWS_REGION", "us-west-2"))
+
+
+STRAVA_AUTHORIZE_URL = "https://www.strava.com/oauth/authorize"
+STRAVA_TOKEN_URL = "https://www.strava.com/oauth/token"
+
+
+def _token_table_name() -> str:
+    return os.getenv("ACTION_TOKENS_TABLE_NAME", "")
+
+
+def _coach_profiles_table_name() -> str:
+    return os.getenv("COACH_PROFILES_TABLE_NAME", "")
+
+
+def _athlete_connections_table_name() -> str:
+    return os.getenv("ATHLETE_CONNECTIONS_TABLE_NAME", "")
+
+
+def _provider_tokens_table_name() -> str:
+    return os.getenv("PROVIDER_TOKENS_TABLE_NAME", "")
+
+
+def _strava_client_id() -> str:
+    return os.getenv("STRAVA_CLIENT_ID", "").strip()
+
+
+def _strava_client_secret() -> str:
+    return os.getenv("STRAVA_CLIENT_SECRET", "").strip()
+
+
+def _strava_redirect_uri() -> str:
+    return os.getenv("STRAVA_REDIRECT_URI", "").strip()
+
+
+def _strava_scopes() -> str:
+    return os.getenv("STRAVA_SCOPES", "read,activity:read_all").strip()
+
+
+def _strava_state_ttl_seconds() -> int:
+    try:
+        minutes = int(os.getenv("STRAVA_STATE_TTL_MINUTES", "15"))
+        if minutes <= 0:
+            return 900
+        return minutes * 60
+    except (ValueError, TypeError):
+        return 900
+
+
+def _kms_key_id() -> str:
+    return os.getenv("TOKENS_KMS_KEY_ID", "").strip()
+
+
+def create_action_token_record(
+    email: str,
+    action_type: str,
+    payload: dict,
+    expires_in_seconds: int,
+    source: str,
+) -> str:
+    """Creates a new action token row and returns token_id."""
+    table_name = _token_table_name()
+    if not table_name:
+        raise RuntimeError("ACTION_TOKENS_TABLE_NAME is not set")
+
+    token_id = base64.urlsafe_b64encode(os.urandom(32)).decode("utf-8").rstrip("=")
+    now = int(time.time())
+    item = {
+        "token_id": token_id,
+        "email": email.lower(),
+        "action_type": action_type,
+        "payload": payload,
+        "source": source,
+        "created_at": now,
+        "expires_at": now + int(expires_in_seconds),
+    }
+    table = dynamodb.Table(table_name)
+    table.put_item(Item=item)
+    return token_id
+
+
+def render_connect_strava_success_html() -> str:
+    return """<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SmartMail Coach</title>
+    <style>
+      body { font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif; padding: 24px; line-height: 1.4; }
+      .card { max-width: 640px; margin: 0 auto; border: 1px solid #ddd; border-radius: 12px; padding: 18px 20px; }
+      .ok { font-size: 20px; margin: 0 0 8px; }
+      .muted { color: #555; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <p class="ok">Connected to Strava</p>
+      <p class="muted">You can close this tab and continue in email.</p>
+    </div>
+  </body>
+</html>"""
+
+
+def render_connect_strava_failed_html(message: str) -> str:
+    safe_message = message.replace("<", "&lt;").replace(">", "&gt;")
+    return f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SmartMail Coach</title>
+    <style>
+      body {{ font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif; padding: 24px; line-height: 1.4; }}
+      .card {{ max-width: 640px; margin: 0 auto; border: 1px solid #ddd; border-radius: 12px; padding: 18px 20px; }}
+      .muted {{ color: #555; }}
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h2>Could not connect Strava</h2>
+      <p class="muted">{safe_message}</p>
+    </div>
+  </body>
+</html>"""
+
+
+def ensure_athlete_id(email: str) -> str:
+    """Ensures an athlete_id exists in coach_profiles and returns it."""
+    table_name = _coach_profiles_table_name()
+    if not table_name:
+        raise RuntimeError("COACH_PROFILES_TABLE_NAME is not set")
+
+    table = dynamodb.Table(table_name)
+    now = int(time.time())
+    response = table.update_item(
+        Key={"email": email.lower()},
+        UpdateExpression="""
+            SET #created_at = if_not_exists(#created_at, :created_at),
+                #updated_at = :updated_at,
+                #athlete_id = if_not_exists(#athlete_id, :athlete_id)
+        """,
+        ExpressionAttributeNames={
+            "#created_at": "created_at",
+            "#updated_at": "updated_at",
+            "#athlete_id": "athlete_id",
+        },
+        ExpressionAttributeValues={
+            ":created_at": now,
+            ":updated_at": now,
+            ":athlete_id": f"ath_{uuid.uuid4().hex}",
+        },
+        ReturnValues="ALL_NEW",
+    )
+    athlete_id = (response.get("Attributes") or {}).get("athlete_id")
+    if not isinstance(athlete_id, str) or not athlete_id.strip():
+        raise RuntimeError("Could not ensure athlete_id")
+    return athlete_id
+
+
+def upsert_athlete_connection(
+    athlete_id: str,
+    provider: str,
+    provider_athlete_id: str,
+    scopes: list[str],
+) -> None:
+    """Upserts athlete/provider connector metadata."""
+    table_name = _athlete_connections_table_name()
+    if not table_name:
+        raise RuntimeError("ATHLETE_CONNECTIONS_TABLE_NAME is not set")
+
+    provider_norm = provider.strip().lower()
+    now = int(time.time())
+    table = dynamodb.Table(table_name)
+    table.update_item(
+        Key={"athlete_id": athlete_id, "provider": provider_norm},
+        UpdateExpression="""
+            SET #created_at = if_not_exists(#created_at, :created_at),
+                #updated_at = :updated_at,
+                #status = :status,
+                #gsi_provider = :gsi_provider,
+                #provider_athlete_id = :provider_athlete_id,
+                #gsi_provider_athlete_id = :provider_athlete_id,
+                #scopes = :scopes
+        """,
+        ExpressionAttributeNames={
+            "#created_at": "created_at",
+            "#updated_at": "updated_at",
+            "#status": "status",
+            "#gsi_provider": "gsi_provider",
+            "#provider_athlete_id": "provider_athlete_id",
+            "#gsi_provider_athlete_id": "gsi_provider_athlete_id",
+            "#scopes": "scopes",
+        },
+        ExpressionAttributeValues={
+            ":created_at": now,
+            ":updated_at": now,
+            ":status": "connected",
+            ":gsi_provider": provider_norm,
+            ":provider_athlete_id": provider_athlete_id,
+            ":scopes": scopes,
+        },
+    )
+
+
+def encrypt_with_kms(plaintext: str) -> str:
+    """KMS encrypts token values and returns base64 ciphertext."""
+    key_id = _kms_key_id()
+    if not key_id:
+        raise RuntimeError("TOKENS_KMS_KEY_ID is not set")
+
+    result = kms_client.encrypt(
+        KeyId=key_id,
+        Plaintext=plaintext.encode("utf-8"),
+    )
+    ciphertext_blob = result.get("CiphertextBlob")
+    if not ciphertext_blob:
+        raise RuntimeError("KMS encrypt returned empty ciphertext")
+    return base64.b64encode(ciphertext_blob).decode("utf-8")
+
+
+def upsert_provider_tokens(
+    connection_id: str,
+    access_token: str,
+    refresh_token: str,
+    expires_at: int,
+) -> None:
+    table_name = _provider_tokens_table_name()
+    if not table_name:
+        raise RuntimeError("PROVIDER_TOKENS_TABLE_NAME is not set")
+
+    now = int(time.time())
+    table = dynamodb.Table(table_name)
+    table.update_item(
+        Key={"connection_id": connection_id},
+        UpdateExpression="""
+            SET #created_at = if_not_exists(#created_at, :created_at),
+                #updated_at = :updated_at,
+                #access_token_enc = :access_token_enc,
+                #refresh_token_enc = :refresh_token_enc,
+                #expires_at = :expires_at
+        """,
+        ExpressionAttributeNames={
+            "#created_at": "created_at",
+            "#updated_at": "updated_at",
+            "#access_token_enc": "access_token_enc",
+            "#refresh_token_enc": "refresh_token_enc",
+            "#expires_at": "expires_at",
+        },
+        ExpressionAttributeValues={
+            ":created_at": now,
+            ":updated_at": now,
+            ":access_token_enc": encrypt_with_kms(access_token),
+            ":refresh_token_enc": encrypt_with_kms(refresh_token) if refresh_token else None,
+            ":expires_at": int(expires_at),
+        },
+    )
+
+
+def exchange_strava_code_for_tokens(code: str) -> dict:
+    client_id = _strava_client_id()
+    client_secret = _strava_client_secret()
+    if not client_id or not client_secret:
+        raise RuntimeError("STRAVA_CLIENT_ID/STRAVA_CLIENT_SECRET must be configured")
+
+    payload = {
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "code": code,
+        "grant_type": "authorization_code",
+    }
+    request = Request(
+        STRAVA_TOKEN_URL,
+        data=urlencode(payload).encode("utf-8"),
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=10) as response:
+            response_data = response.read().decode("utf-8")
+            return json.loads(response_data)
+    except HTTPError as e:
+        body = ""
+        try:
+            body = e.read().decode("utf-8")
+        except Exception:
+            body = str(e)
+        raise RuntimeError(f"Strava token exchange failed: {e.code} {body}") from e
+    except URLError as e:
+        raise RuntimeError(f"Strava token exchange failed: {e}") from e
+
+
+def handle_connect_strava_action(token_id: str, token_data: dict) -> dict:
+    """Creates one-time OAuth state token and redirects user to Strava authorize."""
+    email = (token_data.get("email") or "").strip().lower()
+    if not email:
+        return {
+            "statusCode": 400,
+            "headers": {"Content-Type": "text/html; charset=utf-8"},
+            "body": render_invalid_token_html(),
+            "result": "missing_email_on_connect_strava",
+        }
+
+    redirect_uri = _strava_redirect_uri()
+    client_id = _strava_client_id()
+    if not redirect_uri or not client_id:
+        return {
+            "statusCode": 500,
+            "headers": {"Content-Type": "text/html; charset=utf-8"},
+            "body": render_connect_strava_failed_html("OAuth config is not set correctly."),
+            "result": "strava_oauth_config_missing",
+        }
+
+    try:
+        state_token = create_action_token_record(
+            email=email,
+            action_type="STRAVA_OAUTH_STATE",
+            payload={"email": email, "origin_action_token_id": token_id},
+            expires_in_seconds=_strava_state_ttl_seconds(),
+            source="connect_strava",
+        )
+    except Exception as e:
+        logger.error(f"Failed creating OAuth state token for {email}: {e}")
+        return {
+            "statusCode": 500,
+            "headers": {"Content-Type": "text/html; charset=utf-8"},
+            "body": render_connect_strava_failed_html("Could not start Strava authorization."),
+            "result": "strava_state_create_failed",
+        }
+
+    params = {
+        "client_id": client_id,
+        "response_type": "code",
+        "redirect_uri": redirect_uri,
+        "approval_prompt": "auto",
+        "scope": _strava_scopes(),
+        "state": state_token,
+    }
+    authorize_url = f"{STRAVA_AUTHORIZE_URL}?{urlencode(params)}"
+    return {
+        "statusCode": 302,
+        "headers": {"Location": authorize_url},
+        "body": "",
+        "result": "redirected_to_strava_authorize",
+    }
+
+
+def handle_strava_callback(event: dict, aws_request_id: str = None) -> dict:
+    query = event.get("queryStringParameters") or {}
+    if not isinstance(query, dict):
+        query = {}
+
+    error_value = (query.get("error") or "").strip()
+    if error_value:
+        logger.info(
+            "result=strava_oauth_denied, error=%s%s",
+            error_value,
+            f", aws_request_id={aws_request_id}" if aws_request_id else "",
+        )
+        return {
+            "statusCode": 400,
+            "headers": {"Content-Type": "text/html; charset=utf-8"},
+            "body": render_connect_strava_failed_html("Authorization was denied in Strava."),
+        }
+
+    state_token = (query.get("state") or "").strip()
+    code = (query.get("code") or "").strip()
+    if not state_token or not code:
+        return {
+            "statusCode": 400,
+            "headers": {"Content-Type": "text/html; charset=utf-8"},
+            "body": render_connect_strava_failed_html("Missing OAuth callback parameters."),
+        }
+
+    token_data = get_token_from_db(state_token)
+    now = int(time.time())
+    if not token_data:
+        return {
+            "statusCode": 400,
+            "headers": {"Content-Type": "text/html; charset=utf-8"},
+            "body": render_connect_strava_failed_html("OAuth state is invalid or expired."),
+        }
+    if token_data.get("action_type") != "STRAVA_OAUTH_STATE":
+        return {
+            "statusCode": 400,
+            "headers": {"Content-Type": "text/html; charset=utf-8"},
+            "body": render_connect_strava_failed_html("OAuth state is invalid."),
+        }
+    expires_at = int(token_data.get("expires_at", 0) or 0)
+    if expires_at <= now:
+        return {
+            "statusCode": 410,
+            "headers": {"Content-Type": "text/html; charset=utf-8"},
+            "body": render_connect_strava_failed_html("OAuth state expired. Start again from email."),
+        }
+    if token_data.get("used_at") is not None:
+        return {
+            "statusCode": 409,
+            "headers": {"Content-Type": "text/html; charset=utf-8"},
+            "body": render_connect_strava_failed_html("OAuth state already used. Start again from email."),
+        }
+    if not consume_token_atomically(state_token, now):
+        return {
+            "statusCode": 409,
+            "headers": {"Content-Type": "text/html; charset=utf-8"},
+            "body": render_connect_strava_failed_html("OAuth state already used. Start again from email."),
+        }
+
+    email = (token_data.get("payload") or {}).get("email") or token_data.get("email")
+    if not isinstance(email, str) or not email.strip():
+        return {
+            "statusCode": 400,
+            "headers": {"Content-Type": "text/html; charset=utf-8"},
+            "body": render_connect_strava_failed_html("OAuth state is missing user info."),
+        }
+
+    try:
+        token_response = exchange_strava_code_for_tokens(code)
+        access_token = str(token_response.get("access_token") or "").strip()
+        refresh_token = str(token_response.get("refresh_token") or "").strip()
+        expires_at = int(token_response.get("expires_at") or 0)
+        athlete = token_response.get("athlete") or {}
+        provider_athlete_id = str(athlete.get("id") or "").strip()
+        if not access_token or not refresh_token or not expires_at or not provider_athlete_id:
+            raise RuntimeError("Strava token response is missing required fields")
+
+        callback_scope = (query.get("scope") or "").strip()
+        scopes = [s.strip() for s in callback_scope.split(",") if s.strip()] if callback_scope else []
+        athlete_id = ensure_athlete_id(email)
+        upsert_athlete_connection(
+            athlete_id=athlete_id,
+            provider="strava",
+            provider_athlete_id=provider_athlete_id,
+            scopes=scopes,
+        )
+        connection_id = f"{athlete_id}#strava"
+        upsert_provider_tokens(
+            connection_id=connection_id,
+            access_token=access_token,
+            refresh_token=refresh_token,
+            expires_at=expires_at,
+        )
+    except Exception as e:
+        logger.error(f"Strava callback processing failed: {e}")
+        return {
+            "statusCode": 500,
+            "headers": {"Content-Type": "text/html; charset=utf-8"},
+            "body": render_connect_strava_failed_html("Failed to complete Strava connection."),
+        }
+
+    log_parts = [f"email={email.lower()}", "provider=strava", "result=strava_connected"]
+    if aws_request_id:
+        log_parts.append(f"aws_request_id={aws_request_id}")
+    logger.info(", ".join(log_parts))
+    return {
+        "statusCode": 200,
+        "headers": {"Content-Type": "text/html; charset=utf-8"},
+        "body": render_connect_strava_success_html(),
+    }
+
+
+def is_strava_callback_request(event: dict) -> bool:
+    path_candidates = [
+        event.get("rawPath"),
+        event.get("path"),
+        (event.get("requestContext") or {}).get("path"),
+        (event.get("requestContext") or {}).get("http", {}).get("path"),
+    ]
+    for value in path_candidates:
+        if isinstance(value, str) and value.endswith("/oauth/strava/callback"):
+            return True
+    return False
 
 
 def get_token_from_db(token_id: str) -> dict:
@@ -125,8 +603,10 @@ def route_action(token_id: str, action_type: str, token_data: dict, now: int, aw
             "body": render_unsubscribe_html(),
             "result": route_decision
         }
-    elif action_type_upper in ["CONNECT_STRAVA", "PAUSE_COACHING"]:
-        # These actions are recognized but not yet implemented
+    elif action_type_upper == "CONNECT_STRAVA":
+        response = handle_connect_strava_action(token_id, token_data)
+        route_decision = response.get("result", "connect_strava_failed")
+    elif action_type_upper == "PAUSE_COACHING":
         route_decision = "unknown_action"
         response = {
             "statusCode": 400,
@@ -499,6 +979,9 @@ def lambda_handler(event, context):
         aws_request_id = context.aws_request_id
     
     try:
+        if is_strava_callback_request(event):
+            return handle_strava_callback(event, aws_request_id)
+
         # Extract token from path parameters
         path_parameters = event.get("pathParameters") or {}
         token_id = path_parameters.get("token", "")

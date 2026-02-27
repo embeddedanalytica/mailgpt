@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SmartMail icon alternative 1</title>
+  <desc id="desc">Sport-forward badge with envelope and summit chevrons.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#FF6A1A"/>
+      <stop offset="100%" stop-color="#D63B00"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="16" stdDeviation="18" flood-color="#7F2200" flood-opacity="0.28"/>
+    </filter>
+  </defs>
+
+  <rect x="64" y="64" width="896" height="896" rx="220" fill="url(#bg)"/>
+
+  <g opacity="0.2">
+    <circle cx="512" cy="512" r="350" fill="none" stroke="#FFFFFF" stroke-width="26"/>
+    <circle cx="512" cy="512" r="255" fill="none" stroke="#FFFFFF" stroke-width="18"/>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="214" y="330" width="596" height="380" rx="82" fill="#FFFFFF"/>
+    <path d="M214 430L512 628L810 430" fill="none" stroke="#F15A12" stroke-width="42" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <path d="M412 256L512 384L612 256" fill="#FFFFFF"/>
+  <path d="M452 220L512 298L572 220" fill="#FFD9C7"/>
+</svg>
