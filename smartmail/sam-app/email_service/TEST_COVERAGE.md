@@ -10,6 +10,9 @@
 | **Coaching** | `test_coaching.py` | `build_profile_gated_reply` (Dynamo/merge mocked) | Skipped if boto3/botocore not installed |
 | **Business** | `test_business.py` | `get_reply_for_inbound` delegates to coaching | Skipped if boto3/botocore not installed |
 | **Email parsing** | `test_email_processor.py` | `parse_sns_event`, `decode_email_content`, `clean_email_body` | No network |
+| **Recommendation contract** | `test_recommendation_contract.py` | `AthleteState`, `Recommendation`, `RecommendationContext` validation + serialization | No network |
+| **Data request policy** | `test_data_request_policy.py` | Liberal policy decisions, validation, hard-cap normalization | No network |
+| **Connector gateway** | `test_connector_gateway.py` | Policy gating, provider dispatch, error handling | No network |
 
 ## Running tests
 
@@ -23,7 +26,7 @@ python3 -m unittest discover -v
 python3 -m unittest test_verified_quota_gate -v
 
 # Unit tests that don't need boto
-python3 -m unittest test_profile test_email_processor -v
+python3 -m unittest test_profile test_email_processor test_recommendation_contract test_data_request_policy test_connector_gateway -v
 ```
 
 With boto3/botocore installed (e.g. in Lambda or a venv), coaching and business tests run as well.

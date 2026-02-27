@@ -82,3 +82,12 @@ Update this only when we make a new decision (avoid noise).
 **Decision:** "Ready for coaching" is determined by profile completeness, not message order.
 **Required fields:** `goal`, `weekly_time_budget_minutes`, `sports` (or explicit unknown/skip markers per field).
 **Why:** Keeps behavior deterministic and robust across any email sequence.
+
+---
+
+## D12 — Recommendation Contract v1 Is Versioned and Strict
+**Decision:** Recommendation generation and storage must use a shared versioned contract in code (`recommendation_contract.py`).
+**Contract version:** `v1`
+**Why:** Prevent field drift between connector ingestion, LLM generation, storage, and reply composition.
+**Compatibility rule:** `v1` changes are additive-only. Existing required fields and meanings must remain stable.
+**Validation rule:** Payloads are validated before use and before persistence; invalid payloads are rejected.
