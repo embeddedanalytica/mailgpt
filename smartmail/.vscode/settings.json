@@ -1,0 +1,14 @@
+{
+  // Workspace-specific settings only
+  // Git settings are configured globally in Cursor User Settings
+  // File watcher exclusions (project-specific performance optimization)
+  "files.watcherExclude": {
+    "**/.git/objects/**": true,
+    "**/.git/subtree-cache/**": true,
+    "**/node_modules/**": true,
+    "**/vendor/**": true,
+    "**/__pycache__/**": true,
+    "**/.aws-sam/**": true
+  },
+  "window.zoomLevel": 1
+}

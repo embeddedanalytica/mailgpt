@@ -13,12 +13,18 @@ from typing import Optional, Dict, Any
 sys.path.append("vendor")
 sys.path.append(".")
 
-from dynamodb_models import is_verified
+from dynamodb_models import (
+    is_verified,
+    canonicalize_email,
+    ensure_athlete_id_for_email,
+    ensure_progress_snapshot_exists,
+)
 from auth import is_registered, handle_unverified_sender
 from rate_limits import check_verified_quota_or_block
 from business import get_reply_for_inbound
 from email_processor import EmailProcessor
 from email_reply_sender import EmailReplySender
+from email_copy import EmailCopy
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -51,22 +57,24 @@ def _log_inbound_outcome(
     logger.info(", ".join(log_parts))
 
 
-def _handle_unregistered_verified_sender(
+def _handle_unregistered_sender(
     email_data: Dict[str, Any],
     aws_request_id: Optional[str],
 ) -> Dict[str, Any]:
     from_email = email_data["sender"]
     _log_inbound_outcome(
         from_email=from_email,
-        verified=True,
-        result="verified_unregistered_blocked",
+        verified=False,
+        result="unregistered_blocked_before_verification",
         aws_request_id=aws_request_id,
     )
-    registration_prompt = (
-        "Please register your SmartMail account first to continue. "
-        "Visit https://geniml.com and complete registration, then email me again."
+    message_id = EmailReplySender.send_reply(
+        email_data,
+        {
+            "text": EmailCopy.REGISTRATION_REQUIRED_REPLY,
+            "html": EmailCopy.REGISTRATION_REQUIRED_REPLY_HTML,
+        },
     )
-    message_id = EmailReplySender.send_reply(email_data, registration_prompt)
     return {"statusCode": 200, "body": f"Registration required. Message ID: {message_id}"}
 
 
@@ -77,22 +85,30 @@ def lambda_handler(event, context):
         if not email_data:
             return {"statusCode": 400, "body": "Invalid email data."}
 
-        from_email = email_data["sender"]
+        from_email = canonicalize_email(email_data["sender"])
+        email_data["sender"] = from_email
         aws_request_id = _aws_request_id_from_context(context)
+
+        if not is_registered(from_email):
+            return _handle_unregistered_sender(email_data, aws_request_id)
 
         if not is_verified(from_email):
             return handle_unverified_sender(from_email, aws_request_id)
 
         logger.info("User %s is verified. Proceeding with response.", from_email)
 
-        if not is_registered(from_email):
-            return _handle_unregistered_verified_sender(email_data, aws_request_id)
-
         quota_block_response = check_verified_quota_or_block(from_email, aws_request_id)
         if quota_block_response is not None:
             return quota_block_response
 
+        athlete_id = ensure_athlete_id_for_email(from_email)
+        if not athlete_id:
+            logger.error("Could not resolve athlete_id for verified sender %s", from_email)
+            return {"statusCode": 500, "body": "Could not initialize athlete profile state."}
+        ensure_progress_snapshot_exists(athlete_id)
+
         reply_body = get_reply_for_inbound(
+            athlete_id=athlete_id,
             from_email=from_email,
             email_data=email_data,
             aws_request_id=aws_request_id,

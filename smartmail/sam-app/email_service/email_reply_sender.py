@@ -3,6 +3,8 @@ Sending replies via SES: format (HTML), evaluate via ResponseEvaluation, send.
 Depends on business/LLM only for the reply content; no auth or rate-limit logic here.
 """
 import logging
+import re
+from html import escape
 import email.utils
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -10,13 +12,29 @@ import boto3  # type: ignore
 
 from config import AWS_REGION
 from response_evaluator import ResponseEvaluation
+from email_copy import EmailCopy
 
 logger = logging.getLogger(__name__)
 ses_client = boto3.client("ses", region_name=AWS_REGION)
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]")
 
 
 class EmailReplySender:
     """Handles formatting and sending replies via AWS SES."""
+
+    @staticmethod
+    def _clean_text(value):
+        """Removes non-printable control chars and escapes HTML."""
+        text = _CONTROL_CHARS_RE.sub("", str(value or ""))
+        return escape(text)
+
+    @staticmethod
+    def _is_existing_thread(email_data):
+        """True when inbound mail indicates this is part of an existing thread."""
+        subject = str(email_data.get("subject", "")).strip().lower()
+        in_reply_to = email_data.get("in_reply_to")
+        references = email_data.get("references")
+        return bool(in_reply_to or references or subject.startswith("re:"))
 
     @staticmethod
     def filter_valid_recipients(recipients):
@@ -36,7 +54,12 @@ class EmailReplySender:
     def send_reply(email_data, reply_content):
         """Sends a reply email using AWS SES; evaluates and stores the reply via ResponseEvaluation."""
         try:
-            formatted_reply = EmailReplySender.format_reply(email_data, reply_content)
+            is_existing_thread = EmailReplySender._is_existing_thread(email_data)
+            formatted_reply = EmailReplySender.format_reply(
+                email_data,
+                reply_content,
+                include_thread_context=is_existing_thread,
+            )
             #ResponseEvaluation.evaluate_response(email_data["body"], reply_content) #TODO: Uncomment this when we have a way to store the evaluation results
 
             from_ai_address = EmailReplySender.get_geniml_email(
@@ -57,8 +80,11 @@ class EmailReplySender:
             msg["To"] = ", ".join(to_recipients)
             msg["Cc"] = ", ".join(cc_recipients)
             msg["Reply-To"] = from_ai_address
-            msg["In-Reply-To"] = email_data["message_id"]
-            msg["References"] = email_data["message_id"]
+            if is_existing_thread:
+                message_id = str(email_data.get("message_id", "")).strip()
+                if message_id:
+                    msg["In-Reply-To"] = message_id
+                    msg["References"] = message_id
             msg["Date"] = email.utils.formatdate(localtime=True)
             msg["Message-ID"] = email.utils.make_msgid(domain=from_ai_address.split("@")[-1])
             msg.attach(MIMEText(formatted_reply, "html", "utf-8"))
@@ -81,18 +107,44 @@ class EmailReplySender:
             return None
 
     @staticmethod
-    def format_reply(email_data, reply_content):
-        """Formats the reply email with original message context (HTML)."""
-        cc_text = f"CC: {', '.join(email_data['cc_recipients'])}<br>" if email_data["cc_recipients"] else ""
+    def format_reply(email_data, reply_content, include_thread_context=True):
+        """Formats the reply email with original message context (HTML).
+        reply_content may be a string (escaped and newlines→br) or a dict with
+        'html' (used as-is) and optionally 'text' (fallback)."""
+        if isinstance(reply_content, dict) and reply_content.get("html") is not None:
+            safe_reply_content = reply_content["html"]
+        else:
+            text = reply_content.get("text", reply_content) if isinstance(reply_content, dict) else reply_content
+            safe_reply_content = EmailReplySender._clean_text(text).replace(chr(10), "<br>")
+        if not include_thread_context:
+            return f"<html><body>{safe_reply_content}</body></html>"
+
+        safe_sender = EmailReplySender._clean_text(email_data.get("sender", ""))
+        safe_date_received = EmailReplySender._clean_text(email_data.get("date_received", ""))
+        safe_subject = EmailReplySender._clean_text(email_data.get("subject", ""))
+        safe_body = EmailReplySender._clean_text(email_data.get("body", "")).replace(chr(10), "<br>")
+        safe_to = ", ".join(
+            EmailReplySender._clean_text(recipient)
+            for recipient in email_data.get("to_recipients", [])
+        )
+        safe_cc = ", ".join(
+            EmailReplySender._clean_text(recipient)
+            for recipient in email_data.get("cc_recipients", [])
+        )
+        cc_text = (
+            f"{EmailCopy.REPLY_WRAPPER_CC}: {safe_cc}<br>"
+            if email_data.get("cc_recipients")
+            else ""
+        )
         return (
             f"<html><body>"
-            f"{reply_content.replace(chr(10), '<br>')}<br>"
-            f"---<br>"
-            f"From: {email_data['sender']}<br>"
-            f"Sent: {email_data['date_received']}<br>"
-            f"To: {', '.join(email_data['to_recipients'])}<br>"
+            f"{safe_reply_content}<br>"
+            f"{EmailCopy.REPLY_WRAPPER_SEPARATOR}<br>"
+            f"{EmailCopy.REPLY_WRAPPER_FROM}: {safe_sender}<br>"
+            f"{EmailCopy.REPLY_WRAPPER_SENT}: {safe_date_received}<br>"
+            f"{EmailCopy.REPLY_WRAPPER_TO}: {safe_to}<br>"
             f"{cc_text}"
-            f"Subject: {email_data['subject']}<br><br>"
-            f"{email_data['body'].replace(chr(10), '<br>')}"
+            f"{EmailCopy.REPLY_WRAPPER_SUBJECT}: {safe_subject}<br><br>"
+            f"{safe_body}"
             f"</body></html>"
         )

@@ -10,6 +10,7 @@ import boto3  # type: ignore
 import openai  # type: ignore
 
 from config import OPENAI_REASONING_MODEL, RESPONSE_EVALUATION_TABLE, AWS_REGION
+from email_copy import AIEvaluationCopy
 
 logger = logging.getLogger(__name__)
 openai.api_key = os.getenv("OPENAI_API_KEY")
@@ -19,27 +20,7 @@ dynamodb = boto3.resource("dynamodb", region_name=AWS_REGION)
 class ResponseEvaluation:
     """Evaluates AI-generated replies and stores results in DynamoDB."""
 
-    EVAL_SYSTEM_PROMPT_TEMPLATE = (
-        "You are a strict evaluator of email replies. Here is the email thread. "
-        "Read it in reverse chronological order to understand the entire thread:\n\n{original_email}\n\n"
-        "Here is the suggested reply from the agent:\n\n{ai_response}\n\n"
-        "Please do the following:\n"
-        "1. Assign a score from 1-5 for each of the following categories: Accuracy, Relevance, Clarity, Helpfulness, and Tone.\n"
-        "2. For each category, provide one or two sentences explaining why you gave that score.\n\n"
-        "Respond in JSON only, with the following structure:\n"
-        "{{\n"
-        '  "accuracy_score": X,\n'
-        '  "accuracy_justification": "...",\n'
-        '  "relevance_score": X,\n'
-        '  "relevance_justification": "...",\n'
-        '  "clarity_score": X,\n'
-        '  "clarity_justification": "...",\n'
-        '  "helpfulness_score": X,\n'
-        '  "helpfulness_justification": "...",\n'
-        '  "tone_score": X,\n'
-        '  "tone_justification": "..."\n'
-        "}}"
-    )
+    EVAL_SYSTEM_PROMPT_TEMPLATE = AIEvaluationCopy.EVAL_SYSTEM_PROMPT_TEMPLATE
 
     @staticmethod
     def evaluate_response(original_email: str, ai_response: str) -> str | None:

@@ -18,6 +18,7 @@ from config import (
     SEND_RATE_LIMIT_NOTICE,
     RATE_LIMIT_NOTICE_COOLDOWN_MINUTES,
 )
+from email_copy import EmailCopy
 
 logger = logging.getLogger(__name__)
 
@@ -29,27 +30,14 @@ class RateLimitNoticeSender:
     def send_rate_limit_notice(email: str) -> bool:
         try:
             ses_client = boto3.client("ses", region_name=AWS_REGION)
-            subject = "SmartMail usage limit reached"
-            body_text = (
-                "You've reached your SmartMail request limit for now.\n\n"
-                "Please try again later. Your limit resets automatically each hour/day.\n\n"
-                "SmartMail Coach"
-            )
-            body_html = """<html>
-<body>
-<p>You've reached your SmartMail request limit for now.</p>
-<p>Please try again later. Your limit resets automatically each hour/day.</p>
-<p>SmartMail Coach</p>
-</body>
-</html>"""
             ses_client.send_email(
                 Source="hello@geniml.com",
                 Destination={"ToAddresses": [email]},
                 Message={
-                    "Subject": {"Data": subject, "Charset": "UTF-8"},
+                    "Subject": {"Data": EmailCopy.RATE_LIMIT_SUBJECT, "Charset": "UTF-8"},
                     "Body": {
-                        "Text": {"Data": body_text, "Charset": "UTF-8"},
-                        "Html": {"Data": body_html, "Charset": "UTF-8"},
+                        "Text": {"Data": EmailCopy.RATE_LIMIT_TEXT, "Charset": "UTF-8"},
+                        "Html": {"Data": EmailCopy.RATE_LIMIT_HTML, "Charset": "UTF-8"},
                     },
                 },
             )

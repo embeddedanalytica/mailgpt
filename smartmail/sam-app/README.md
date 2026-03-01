@@ -9,8 +9,10 @@ The application consists of three main Lambda functions:
 1. **EmailServiceFunction** (Python) - Processes incoming emails with verification gate and anti-abuse protection
    - Triggered by SNS notifications from SES
    - Parses email content from SNS messages
-   - **Verification Gate**: Checks if sender has verified session before processing
-   - **Unverified Users**: Creates verification token and sends verification email (no LLM calls)
+   - **Registration Gate**: Requires sender to exist in `users` before verification or response processing
+   - **Verification Gate**: For registered users, checks if sender has verified session before processing
+   - **Registered + Unverified Users**: Creates verification token and sends verification email (no LLM calls)
+   - **Unregistered Users**: Sends registration prompt only (no verification token/email, no LLM calls)
    - **Cooldown Protection**: Enforces 30-minute cooldown between verification emails (prevents spam/abuse)
    - **Verified Users**: Generates AI responses using OpenAI (when implemented)
    - Sends replies via SES
@@ -34,24 +36,30 @@ The application consists of three main Lambda functions:
 ```
 Incoming Email → AWS SES → SNS Topic → EmailServiceFunction
                                       ↓
-                              Check verified_sessions
+                                  Check users
                                       ↓
                     ┌─────────────────┴─────────────────┐
                     │                                   │
-            Not Verified                          Verified
+             Not Registered                      Registered
                     │                                   │
-        Check cooldown (rate_limits)          Generate AI Response
-                    │                                   │
-        ┌───────────┴───────────┐                      │
-        │                       │                      │
-  Cooldown Active        Cooldown Expired              │
-        │                       │                      │
-  Drop Silently    Create token + Send verify email    │
-        │              (action_tokens)                 │
-        │                       │                      │
-        └───────────────────────┘                      │
+      Send registration prompt               Check verified_sessions
                                                         ↓
-                                              OpenAI API → SES Reply
+                                      ┌─────────────────┴─────────────────┐
+                                      │                                   │
+                                Not Verified                          Verified
+                                      │                                   │
+                          Check cooldown (rate_limits)          Generate AI Response
+                                      │                                   │
+                          ┌───────────┴───────────┐                      │
+                          │                       │                      │
+                    Cooldown Active        Cooldown Expired              │
+                          │                       │                      │
+                    Drop Silently    Create token + Send verify email    │
+                          │              (action_tokens)                 │
+                          │                       │                      │
+                          └───────────────────────┘                      │
+                                                                          ↓
+                                                                OpenAI API → SES Reply
 
 User Registration → API Gateway → mailgptregistration → DynamoDB + SES Welcome Email
 
@@ -378,18 +386,21 @@ sam logs -n ActionLinkHandlerFunction --stack-name "sam-app" --filter "result=ve
 2. **SNS Notification**: SES publishes a notification to SNS topic
 3. **Lambda Triggered**: `EmailServiceFunction` is invoked by SNS
 4. **Email Parsing**: Function extracts email content from SNS message
-5. **Verification Check**: 
-   - Checks `verified_sessions` table for sender's email
+5. **Registration Check**:
+   - Checks `users` table for sender's email
+   - If not registered → send registration prompt and return (no token, no LLM call)
+6. **Verification Check**:
+   - For registered users, checks `verified_sessions` table for sender's email
    - If verified and session not expired → proceed to response generation
    - If not verified → go to verification flow
-6. **Verification Flow** (unverified users):
+7. **Verification Flow** (registered, unverified users):
    - Check `rate_limits` table for cooldown status
    - If cooldown active → drop silently (no email, no LLM call)
    - If cooldown expired → atomically set cooldown (race-safe)
    - Create verification token in `action_tokens` table (30-minute TTL)
    - Send verification email with action link
    - Return (no LLM call, no response sent)
-7. **Response Generation** (verified users only):
+8. **Response Generation** (verified users only):
    - Determines if AI should respond (checks if AI is mentioned or direct recipient)
    - Generates response using OpenAI GPT models (when implemented)
    - Evaluates response quality
@@ -403,7 +414,7 @@ sam logs -n ActionLinkHandlerFunction --stack-name "sam-app" --filter "result=ve
 
 ### Action Link Flow (Email Verification)
 
-1. **Token Generation**: EmailServiceFunction creates action token in `action_tokens` table when unverified user sends email
+1. **Token Generation**: EmailServiceFunction creates action token in `action_tokens` table when a registered but unverified user sends email
    - Token ID: Secure random base64url (32+ bytes)
    - Action Type: `VERIFY_SESSION`
    - Expires: 30 minutes from creation
@@ -445,7 +456,8 @@ sam logs -n ActionLinkHandlerFunction --stack-name "sam-app" --filter "result=ve
 ## Key Features
 
 ### Security & Anti-Abuse
-- **Email Verification Gate**: Unverified users receive verification emails instead of LLM responses
+- **Registration-First Auth**: Unregistered users are prompted to register before any verification token can be issued
+- **Email Verification Gate**: Registered unverified users receive verification emails instead of LLM responses
 - **Cooldown Protection**: 30-minute cooldown between verification emails prevents spam/abuse
 - **Race-Safe Operations**: Atomic conditional updates prevent duplicate verification emails in concurrent requests
 - **No Data Leakage**: Personal data never sent to unverified/spoofed addresses

@@ -1,43 +1,34 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>GeniML | Train with Clarity</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GeniML Waitlist | Coaching That Fits Real Life</title>
   <meta name="description"
-    content="Train with clarity and less overhead. Early access for self-coached athletes and coaches.">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link
-    href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
-    rel="stylesheet">
+    content="Join the GeniML waitlist for coaching-first guidance that adapts to your real training life.">
+  <meta property="og:title" content="GeniML Waitlist | Coaching That Fits Real Life">
+  <meta property="og:description"
+    content="Check in after workouts and get the next right step. Join the early-access waitlist.">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="assets/icon/smartmail-strava-icon-final-512.png">
+  <link rel="icon" type="image/png" href="assets/icon/smartmail-strava-icon-final-128.png">
   <style>
     :root {
-      --bg: #f4f6f5;
-      --bg-elevated: #fbfcfb;
-      --surface: rgba(255, 255, 255, 0.8);
-      --surface-strong: #ffffff;
-      --text: #15211e;
-      --text-muted: #4e615b;
-      --accent: #0f7661;
-      --accent-strong: #0b5e4d;
-      --accent-soft: #d6eee8;
-      --danger: #a73d3d;
-      --border: rgba(21, 33, 30, 0.12);
-      --shadow-soft: 0 14px 40px rgba(13, 36, 30, 0.08);
-      --shadow-card: 0 8px 24px rgba(13, 36, 30, 0.06);
-      --radius-lg: 22px;
-      --radius-md: 14px;
+      --bg: #f5f5f2;
+      --bg-card: #ffffff;
+      --text: #18211f;
+      --text-muted: #4f5f59;
+      --border: rgba(24, 33, 31, 0.12);
+      --accent: #0b6f5d;
+      --accent-strong: #085645;
+      --danger: #a13f3f;
+      --success: #0a5c4c;
+      --radius-lg: 24px;
+      --radius-md: 16px;
       --radius-sm: 10px;
-      --space-1: 0.5rem;
-      --space-2: 0.75rem;
-      --space-3: 1rem;
-      --space-4: 1.5rem;
-      --space-5: 2rem;
-      --space-6: 3rem;
-      --space-7: 4rem;
       --container: 1120px;
+      --shadow: 0 16px 44px rgba(13, 30, 27, 0.08);
     }
 
     * {
@@ -51,552 +42,558 @@
     }
 
     body {
-      min-height: 100vh;
-      font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
+      font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", "Nimbus Sans", sans-serif;
       color: var(--text);
       line-height: 1.55;
       background:
-        radial-gradient(circle at 14% 16%, rgba(15, 118, 97, 0.16), transparent 30%),
-        radial-gradient(circle at 82% 12%, rgba(11, 94, 77, 0.12), transparent 34%),
-        linear-gradient(180deg, #f9fbfa 0%, var(--bg) 48%, #eff3f1 100%);
-    }
-
-    .shell {
-      width: min(var(--container), 92vw);
-      margin: 0 auto;
-      padding: var(--space-5) 0 var(--space-7);
+        radial-gradient(circle at 12% 12%, rgba(11, 111, 93, 0.14), transparent 28%),
+        radial-gradient(circle at 90% 10%, rgba(11, 111, 93, 0.08), transparent 32%),
+        var(--bg);
     }
 
     h1,
     h2,
     h3 {
-      font-family: "Fraunces", Georgia, serif;
-      margin: 0;
+      font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Palatino, Georgia, serif;
       letter-spacing: -0.02em;
       line-height: 1.1;
+      margin: 0;
     }
 
-    .hero {
-      background: var(--surface);
+    .page {
+      width: min(var(--container), 92vw);
+      margin: 0 auto;
+      padding: 1rem 0 4rem;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      margin-top: 0.5rem;
+      padding: 0.7rem 1rem;
       border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
-      box-shadow: var(--shadow-soft);
-      padding: clamp(1.5rem, 2.6vw, 3rem);
-      backdrop-filter: blur(2px);
-      animation: reveal 560ms ease-out;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.86);
+      backdrop-filter: blur(6px);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
     }
 
-    .eyebrow {
-      font-size: 0.8rem;
-      letter-spacing: 0.14em;
-      text-transform: uppercase;
-      color: var(--accent);
+    .brand {
       font-weight: 700;
-      margin: 0 0 var(--space-3);
+      letter-spacing: 0.01em;
     }
 
-    h1 {
-      font-size: clamp(2rem, 5vw, 3.4rem);
-      max-width: 16ch;
-    }
-
-    .hero-copy {
-      margin: var(--space-3) 0 var(--space-4);
-      max-width: 70ch;
-      color: var(--text-muted);
-      font-size: clamp(1rem, 1.9vw, 1.15rem);
-    }
-
-    .door-ctas {
-      display: grid;
-      gap: var(--space-2);
-      margin: 0 0 var(--space-2);
-    }
-
-    .door-btn {
-      min-height: 48px;
+    .cta-btn {
       display: inline-flex;
       align-items: center;
       justify-content: center;
+      border: 0;
       border-radius: var(--radius-sm);
-      border: 1px solid var(--border);
+      background: var(--accent);
+      color: #fff;
       text-decoration: none;
       font-weight: 700;
-      font-size: 0.96rem;
-      transition: transform 180ms ease, background-color 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
-    }
-
-    .door-btn.primary {
-      background: var(--accent);
-      color: #fff;
-      border-color: transparent;
-    }
-
-    .door-btn.secondary {
-      background: var(--surface-strong);
-      color: var(--text);
-    }
-
-    .door-btn:hover {
-      transform: translateY(-1px);
-      box-shadow: 0 8px 16px rgba(11, 94, 77, 0.16);
-    }
-
-    .helper-line {
-      margin: 0;
-      color: var(--text-muted);
-      font-size: 0.88rem;
-    }
-
-    .audience-toggle {
-      margin-top: var(--space-3);
-      display: inline-flex;
-      align-items: center;
-      gap: var(--space-1);
-      background: rgba(255, 255, 255, 0.72);
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      padding: 0.28rem;
-    }
-
-    .audience-toggle button {
-      border: 0;
-      background: transparent;
-      border-radius: 999px;
-      padding: 0.38rem 0.75rem;
-      font-size: 0.82rem;
-      font-weight: 600;
-      color: var(--text-muted);
-      cursor: pointer;
-    }
-
-    .audience-toggle button.active {
-      color: var(--text);
-      background: var(--accent-soft);
-    }
-
-    .section {
-      margin-top: var(--space-7);
-    }
-
-    .section h2 {
-      font-size: clamp(1.7rem, 3.8vw, 2.6rem);
-      margin-bottom: var(--space-2);
-    }
-
-    .section-intro {
-      margin: 0 0 var(--space-4);
-      color: var(--text-muted);
-      max-width: 62ch;
-    }
-
-    .panel {
-      background: var(--bg-elevated);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-md);
-      box-shadow: var(--shadow-card);
-      padding: clamp(1.1rem, 2.2vw, 1.8rem);
-    }
-
-    .outcome-list,
-    .friction-list,
-    .trust-list {
-      margin: 0;
-      padding-left: 1.15rem;
-      display: grid;
-      gap: 0.55rem;
-    }
-
-    .outcome-list li,
-    .friction-list li,
-    .trust-list li {
-      color: var(--text);
-      font-weight: 500;
-    }
-
-    .scenario {
-      margin: var(--space-3) 0 0;
-      color: var(--text-muted);
-      font-style: italic;
-    }
-
-    .audience-stack {
-      display: flex;
-      flex-direction: column;
-      gap: var(--space-7);
-    }
-
-    .audience-stack.coach-first #athlete-section {
-      order: 2;
-    }
-
-    .audience-stack.coach-first #coach-section {
-      order: 1;
-    }
-
-    .friction-list,
-    .trust-list {
-      list-style: none;
-      padding-left: 0;
-    }
-
-    .friction-list li::before,
-    .trust-list li::before {
-      content: "- ";
-      color: var(--accent-strong);
-      font-weight: 700;
-    }
-
-    .waitlist-section {
-      border-radius: var(--radius-lg);
-      border: 1px solid var(--border);
-      background: rgba(255, 255, 255, 0.82);
-      box-shadow: var(--shadow-soft);
-      padding: clamp(1.5rem, 2.6vw, 2.5rem);
-    }
-
-    .waitlist-grid {
-      display: grid;
-      gap: var(--space-4);
-    }
-
-    .waitlist-form {
-      display: grid;
-      gap: var(--space-2);
-      grid-template-columns: 1fr;
-      max-width: 560px;
-    }
-
-    .waitlist-form label {
-      font-size: 0.86rem;
-      font-weight: 600;
-      color: var(--text);
-    }
-
-    .input-row {
-      display: grid;
-      gap: var(--space-2);
-      grid-template-columns: 1fr;
-    }
-
-    .waitlist-form input[type="email"] {
-      width: 100%;
-      min-height: 50px;
-      border: 1px solid var(--border);
-      border-radius: var(--radius-sm);
-      background: var(--surface-strong);
-      color: var(--text);
-      font-size: 1rem;
-      padding: 0.75rem 0.9rem;
-      outline: none;
-      transition: border-color 160ms ease, box-shadow 160ms ease;
-    }
-
-    .waitlist-form input[type="email"]:focus {
-      border-color: var(--accent);
-      box-shadow: 0 0 0 3px rgba(15, 118, 97, 0.18);
-    }
-
-    .waitlist-form button[type="submit"] {
-      min-height: 50px;
-      border: 0;
-      border-radius: var(--radius-sm);
-      background: var(--accent);
-      color: #fff;
-      font-weight: 700;
-      font-size: 0.98rem;
+      min-height: 46px;
       padding: 0.7rem 1rem;
       cursor: pointer;
-      transition: transform 180ms ease, background-color 180ms ease, box-shadow 180ms ease;
+      transition: transform 150ms ease, background-color 150ms ease;
     }
 
-    .waitlist-form button[type="submit"]:hover:not(:disabled) {
+    .cta-btn:hover:not(:disabled) {
       transform: translateY(-1px);
       background: var(--accent-strong);
-      box-shadow: 0 8px 16px rgba(11, 94, 77, 0.18);
     }
 
-    .waitlist-form button[type="submit"]:disabled {
+    .cta-btn:disabled {
       opacity: 0.72;
       cursor: wait;
     }
 
-    .status {
-      margin: var(--space-1) 0 0;
-      min-height: 1.4em;
-      font-size: 0.93rem;
+    .section {
+      margin-top: 4rem;
+    }
+
+    .hero {
+      margin-top: 1.4rem;
+      padding: clamp(1.4rem, 2.6vw, 2.8rem);
+      border-radius: var(--radius-lg);
+      background: rgba(255, 255, 255, 0.85);
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow);
+    }
+
+    .hero h1 {
+      font-size: clamp(2rem, 5.8vw, 3.7rem);
+      max-width: 16ch;
+    }
+
+    .hero-sub {
+      margin: 1rem 0 1.4rem;
+      color: var(--text-muted);
+      max-width: 64ch;
+      font-size: clamp(1rem, 1.9vw, 1.18rem);
+    }
+
+    .cred-strip {
+      margin-top: 0.9rem;
+      color: var(--text-muted);
+      font-size: 0.92rem;
+    }
+
+    .scroll-link {
+      display: inline-block;
+      margin-top: 0.8rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .section h2 {
+      font-size: clamp(1.65rem, 4.4vw, 2.65rem);
+    }
+
+    .intro {
+      margin: 0.9rem 0 0;
+      color: var(--text-muted);
+      max-width: 64ch;
+    }
+
+    .steps {
+      display: grid;
+      gap: 1rem;
+      margin-top: 1.3rem;
+    }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 1.1rem;
+    }
+
+    .card h3 {
+      font-size: 1.24rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .card p {
+      margin: 0;
+      color: var(--text-muted);
+    }
+
+    .audience-grid {
+      display: grid;
+      gap: 1rem;
+      margin-top: 1.3rem;
+    }
+
+    .audience-grid ul,
+    .benefits ul {
+      margin: 0;
+      padding-left: 1.2rem;
+      display: grid;
+      gap: 0.6rem;
+    }
+
+    .audience-grid li,
+    .benefits li {
+      font-weight: 500;
+    }
+
+    .section-cta {
+      margin-top: 1.2rem;
+    }
+
+    .benefits {
+      background: rgba(255, 255, 255, 0.75);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 1.2rem;
+    }
+
+    .trust-note {
+      margin: 1rem 0 0;
+      color: var(--text-muted);
+      font-style: italic;
+    }
+
+    .quote {
+      font-size: 1.1rem;
+      font-style: italic;
+      margin: 1rem 0 0.5rem;
+    }
+
+    .quote-by {
+      margin: 0;
+      color: var(--text-muted);
       font-weight: 600;
     }
 
+    .faq {
+      display: grid;
+      gap: 0.8rem;
+      margin-top: 1.1rem;
+    }
+
+    .faq details {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 0.85rem 1rem;
+      background: rgba(255, 255, 255, 0.72);
+    }
+
+    .faq summary {
+      cursor: pointer;
+      font-weight: 700;
+    }
+
+    .faq p {
+      margin: 0.65rem 0 0;
+      color: var(--text-muted);
+    }
+
+    .final-cta {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      background: rgba(255, 255, 255, 0.88);
+      padding: clamp(1.4rem, 2.8vw, 2.4rem);
+      box-shadow: var(--shadow);
+    }
+
+    .waitlist-form {
+      margin-top: 1rem;
+      display: grid;
+      gap: 0.65rem;
+      max-width: 560px;
+    }
+
+    .input-row {
+      display: grid;
+      gap: 0.65rem;
+    }
+
+    .waitlist-form input[type="email"] {
+      min-height: 46px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 0.65rem 0.8rem;
+      font-size: 1rem;
+      color: var(--text);
+      background: #fff;
+    }
+
+    .waitlist-form input[type="email"]:focus {
+      outline: 2px solid rgba(11, 111, 93, 0.25);
+      outline-offset: 1px;
+      border-color: var(--accent);
+    }
+
+    .microcopy {
+      margin: 0;
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+
+    .status {
+      min-height: 1.3em;
+      margin: 0;
+      font-weight: 600;
+      font-size: 0.93rem;
+    }
+
     .status-success {
-      color: var(--accent-strong);
+      color: var(--success);
     }
 
     .status-error {
       color: var(--danger);
     }
 
-    .microcopy {
-      margin: var(--space-2) 0 0;
-      font-size: 0.85rem;
-      color: var(--text-muted);
-      max-width: 62ch;
-    }
-
     footer {
-      margin-top: var(--space-7);
-      padding-top: var(--space-4);
+      margin-top: 3.4rem;
+      padding-top: 1.2rem;
       border-top: 1px solid var(--border);
-      display: flex;
-      flex-direction: column;
-      gap: 0.5rem;
-      font-size: 0.9rem;
       color: var(--text-muted);
+      font-size: 0.92rem;
+      display: grid;
+      gap: 0.35rem;
     }
 
     footer a {
-      color: var(--accent-strong);
-      text-decoration: none;
-      font-weight: 600;
+      color: inherit;
     }
 
-    footer a:hover {
-      text-decoration: underline;
-    }
+    @media (min-width: 760px) {
+      .steps {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
 
-    @media (min-width: 720px) {
-      .door-ctas {
+      .audience-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
-        max-width: 460px;
       }
 
       .input-row {
         grid-template-columns: minmax(0, 1fr) auto;
       }
 
-      .waitlist-form button[type="submit"] {
-        min-width: 190px;
-      }
-    }
-
-    @media (min-width: 900px) {
-      .waitlist-grid {
-        grid-template-columns: minmax(0, 1fr) minmax(320px, 500px);
-        align-items: center;
-      }
-    }
-
-    @media (prefers-reduced-motion: reduce) {
-
-      *,
-      *::before,
-      *::after {
-        animation: none !important;
-        transition: none !important;
-        scroll-behavior: auto !important;
-      }
-    }
-
-    @keyframes reveal {
-      from {
-        opacity: 0;
-        transform: translateY(10px);
-      }
-
-      to {
-        opacity: 1;
-        transform: translateY(0);
+      .waitlist-form .cta-btn {
+        min-width: 200px;
       }
     }
   </style>
 </head>
 
 <body>
-  <main class="shell">
-    <section class="hero" aria-labelledby="hero-title">
-      <p class="eyebrow">Early access now open</p>
-      <h1 id="hero-title">Train with clarity. Skip the overhead.</h1>
-      <p class="hero-copy">
-        For self-coached athletes who want guidance without the logistics and for coaches who want the signal from
-        noisy activity data, fast.
-      </p>
+  <main class="page">
+    <header class="topbar" aria-label="Primary">
+      <div class="brand">GeniML</div>
+      <a class="cta-btn" href="#waitlist">Join the waitlist</a>
+    </header>
 
-      <div class="door-ctas" aria-label="Audience doors">
-        <a class="door-btn primary" href="#athlete-section" data-audience-link="athlete">I'm self-coached</a>
-        <a class="door-btn secondary" href="#coach-section" data-audience-link="coach">I'm a coach</a>
-      </div>
-      <p class="helper-line">Early access is rolling out in small cohorts.</p>
+    <section class="hero" id="top" aria-labelledby="hero-title">
+      <h1 id="hero-title">Coaching that fits your life.</h1>
+      <p class="hero-sub">Check in after workouts, get the next right step, and stay accountable — without the friction
+        of traditional coaching.</p>
 
-      <div class="audience-toggle" role="group" aria-label="Audience order toggle">
-        <button type="button" data-audience-toggle="athlete" class="active">Athlete first</button>
-        <button type="button" data-audience-toggle="coach">Coach first</button>
+      <form class="waitlist-form" data-waitlist-form novalidate>
+        <label for="hero-email">Email</label>
+        <div class="input-row">
+          <input id="hero-email" name="email" type="email" autocomplete="email" placeholder="you@example.com" required>
+          <button class="cta-btn" type="submit" data-submit-button>Join the waitlist</button>
+        </div>
+        <p class="status" data-status role="status" aria-live="polite"></p>
+        <p class="microcopy">Early access invites first. No spam — unsubscribe anytime.</p>
+      </form>
+
+      <a class="scroll-link" href="#how-it-works">See how it works</a>
+      <p class="cred-strip">Built for real life: travel, busy weeks, and changing energy levels.</p>
+    </section>
+
+    <section class="section" id="how-it-works" aria-labelledby="how-title">
+      <h2 id="how-title">How It Works</h2>
+      <p class="intro">A simple check-in loop that stays useful without adding app overhead.</p>
+      <div class="steps">
+        <article class="card">
+          <h3>Tell us what you’re training for</h3>
+          <p>A quick conversation about your goal, schedule, experience, and constraints.</p>
+        </article>
+        <article class="card">
+          <h3>Check in after each session</h3>
+          <p>Drop a note like “I ran 5K” — we’ll ask what matters, not everything.</p>
+        </article>
+        <article class="card">
+          <h3>Get the next right step</h3>
+          <p>Rest, push, adjust — guidance that adapts to how you’re actually doing.</p>
+        </article>
       </div>
     </section>
 
-    <div class="audience-stack" id="audience-stack">
-      <section class="section" id="athlete-section" aria-labelledby="athlete-title">
-        <h2 id="athlete-title">Guidance without scheduling</h2>
-        <p class="section-intro">
-          You already train. We help you stay focused, consistent, and adaptable, especially when life interrupts the
-          plan.
-        </p>
-        <div class="panel">
-          <ul class="outcome-list">
-            <li>Know what to focus on this week (and what to ignore)</li>
-            <li>Course-correct early when fatigue, stress, or inconsistency creeps in</li>
-            <li>Build momentum with lightweight accountability</li>
+    <section class="section" id="who" aria-labelledby="who-title">
+      <h2 id="who-title">Who It’s For</h2>
+      <div class="audience-grid">
+        <article class="card" aria-labelledby="athlete-title">
+          <h3 id="athlete-title">For Athletes</h3>
+          <ul>
+            <li>You want structure, but not another app to manage.</li>
+            <li>You want accountability without scheduling calls.</li>
+            <li>You want guidance that adapts when life happens.</li>
           </ul>
-          <p class="scenario">Busy week? You do not fall off. You adjust and keep the streak of progress going.</p>
-        </div>
-      </section>
-
-      <section class="section" id="coach-section" aria-labelledby="coach-title">
-        <h2 id="coach-title">The athlete summary you wish you had</h2>
-        <p class="section-intro">
-          Instead of digging through dashboards, get a clear brief that surfaces the changes and questions that matter.
-        </p>
-        <div class="panel">
-          <ul class="outcome-list">
-            <li>What improved, what regressed, what looks risky</li>
-            <li>Key moments worth a conversation</li>
-            <li>Faster check-ins without losing context</li>
+        </article>
+        <article class="card" aria-labelledby="coach-title">
+          <h3 id="coach-title">For Coaches</h3>
+          <ul>
+            <li>You want cleaner athlete updates, not walls of noise.</li>
+            <li>You want quick context: what changed, what matters.</li>
+            <li>You want to scale your coaching attention.</li>
           </ul>
-          <p class="scenario">Open a weekly brief. Know exactly what to ask your athlete next.</p>
-        </div>
-      </section>
-    </div>
-
-    <section class="section" aria-labelledby="friction-title">
-      <h2 id="friction-title">Less logistics. More coaching.</h2>
-      <p class="section-intro">The work should be training and coaching, not administrative drag and data overload.</p>
-      <div class="panel">
-        <ul class="friction-list">
-          <li>No back-and-forth scheduling</li>
-          <li>No "where do I even start?" uncertainty</li>
-          <li>No drowning in data</li>
-        </ul>
+        </article>
+      </div>
+      <div class="section-cta">
+        <a class="cta-btn" href="#waitlist">Join the waitlist</a>
       </div>
     </section>
 
-    <section class="section" aria-labelledby="trust-title">
-      <h2 id="trust-title">Private by default</h2>
-      <div class="panel">
-        <ul class="trust-list">
-          <li>You control what you share</li>
-          <li>Data is not sold</li>
-          <li>Delete anytime</li>
+    <section class="section" id="benefits" aria-labelledby="benefits-title">
+      <h2 id="benefits-title">What You’ll Get</h2>
+      <div class="benefits">
+        <ul>
+          <li>A coach that remembers your goals and last sessions.</li>
+          <li>Follow-ups when your update is vague — like a real coach.</li>
+          <li>Progress snapshots you can understand in seconds.</li>
+          <li>Motivation that feels personal, not automated.</li>
+          <li>Coaching that respects your plan and your reality.</li>
         </ul>
+        <p class="trust-note">Not built for people who want a rigid plan they never change.</p>
       </div>
     </section>
 
-    <section class="section waitlist-section" id="waitlist" aria-labelledby="waitlist-title">
-      <div class="waitlist-grid">
-        <div>
-          <h2 id="waitlist-title">Get early access</h2>
-          <p class="section-intro">Tell us if you are self-coached or coaching athletes, we will invite cohorts as we
-            expand.</p>
-          <p class="microcopy">Early cohorts get priority onboarding and direct input into what ships next.</p>
-        </div>
-        <div>
-          <form class="waitlist-form" data-waitlist-form novalidate>
-            <label for="waitlist-email">Email address</label>
-            <div class="input-row">
-              <input id="waitlist-email" name="email" type="email" placeholder="you@example.com" autocomplete="email"
-                required>
-              <button type="submit" data-submit-button>Join the waitlist</button>
-            </div>
-            <p class="status" data-status role="status" aria-live="polite"></p>
-          </form>
-          <p class="microcopy">Private by default. No spam. We only email when there is meaningful progress to share.
+    <section class="section" id="social-proof" aria-labelledby="proof-title">
+      <h2 id="proof-title">Preview quotes from early testers.</h2>
+      <p class="quote">“This felt like texting a coach who actually pays attention.”</p>
+      <p class="quote-by">— Early tester (runner)</p>
+    </section>
+
+    <section class="section" id="faq" aria-labelledby="faq-title">
+      <h2 id="faq-title">FAQ</h2>
+      <div class="faq">
+        <details>
+          <summary>Is this a training plan app?</summary>
+          <p>It’s coaching-first. You check in, it responds with what’s next. Plans exist, but they’re meant to adapt.
           </p>
-        </div>
+        </details>
+        <details>
+          <summary>Do I need Strava or Garmin?</summary>
+          <p>No. You can use it with simple check-ins. Optional integrations may enhance the experience later.</p>
+        </details>
+        <details>
+          <summary>What sports is it for?</summary>
+          <p>Starting with endurance-style training (running/cycling), expanding from there.</p>
+        </details>
+        <details>
+          <summary>Is this replacing a human coach?</summary>
+          <p>It’s designed for people who can’t or don’t want the overhead of traditional coaching. Coaches will also be
+            able to use it later.</p>
+        </details>
+        <details>
+          <summary>How much will it cost?</summary>
+          <p>Waitlist members get early-access pricing. Tiers will vary based on coaching depth and responsiveness.</p>
+        </details>
+        <details>
+          <summary>Will you spam me?</summary>
+          <p>No. Only product updates and early access — unsubscribe anytime.</p>
+        </details>
       </div>
+    </section>
+
+    <section class="section final-cta" id="waitlist" aria-labelledby="final-title">
+      <h2 id="final-title">Ready to train with less friction?</h2>
+      <p class="intro">Join the waitlist and be first to try coaching that adapts to real life.</p>
+
+      <form class="waitlist-form" data-waitlist-form novalidate>
+        <label for="final-email">Email</label>
+        <div class="input-row">
+          <input id="final-email" name="email" type="email" autocomplete="email" placeholder="you@example.com" required>
+          <button class="cta-btn" type="submit" data-submit-button>Join the waitlist</button>
+        </div>
+        <p class="status" data-status role="status" aria-live="polite"></p>
+        <p class="microcopy">Early access invites first. No spam — unsubscribe anytime.</p>
+      </form>
     </section>
 
     <footer>
+      <div>© <span id="year"></span> GeniML</div>
+      <div>We only use your email for waitlist updates.</div>
       <div>Contact: <a href="mailto:support@geniml.com">support@geniml.com</a></div>
-      <div>&copy; 2026 GeniML. All rights reserved.</div>
     </footer>
   </main>
 
   <script type="module">
     import { registerUser } from "./api.js";
 
-    const WAITLIST_FORMS = document.querySelectorAll("[data-waitlist-form]");
-    const TOGGLE_BUTTONS = document.querySelectorAll("[data-audience-toggle]");
-    const AUDIENCE_LINKS = document.querySelectorAll("[data-audience-link]");
-    const AUDIENCE_STACK = document.getElementById("audience-stack");
+    const forms = document.querySelectorAll("[data-waitlist-form]");
+    const yearEl = document.getElementById("year");
 
-    WAITLIST_FORMS.forEach((form) => {
-      form.addEventListener("submit", (event) => handleSubmit(event, form));
-    });
+    if (yearEl) {
+      yearEl.textContent = String(new Date().getFullYear());
+    }
 
-    TOGGLE_BUTTONS.forEach((button) => {
-      button.addEventListener("click", () => setAudienceOrder(button.dataset.audienceToggle));
-    });
+    trackEvent("page_view");
 
-    AUDIENCE_LINKS.forEach((link) => {
-      link.addEventListener("click", () => setAudienceOrder(link.dataset.audienceLink));
-    });
-
-    function setAudienceOrder(audience) {
-      const coachFirst = audience === "coach";
-      AUDIENCE_STACK.classList.toggle("coach-first", coachFirst);
-
-      TOGGLE_BUTTONS.forEach((button) => {
-        button.classList.toggle("active", button.dataset.audienceToggle === (coachFirst ? "coach" : "athlete"));
+    forms.forEach((form) => {
+      form.addEventListener("submit", (event) => {
+        void handleSubmit(event, form);
       });
-    }
-
-    function setStatus(form, message, isSuccess) {
-      const status = form.querySelector("[data-status]");
-      status.textContent = message;
-      status.classList.remove("status-success", "status-error");
-      status.classList.add(isSuccess ? "status-success" : "status-error");
-    }
-
-    function resetStatus(form) {
-      const status = form.querySelector("[data-status]");
-      status.textContent = "";
-      status.classList.remove("status-success", "status-error");
-    }
+    });
 
     function isValidEmail(email) {
-      return /.+@.+\..+/.test(email);
+      return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+    }
+
+    function setStatus(form, message, statusType) {
+      const statusEl = form.querySelector("[data-status]");
+      if (!statusEl) {
+        return;
+      }
+
+      statusEl.textContent = message;
+      statusEl.classList.remove("status-success", "status-error");
+
+      if (statusType === "success") {
+        statusEl.classList.add("status-success");
+      } else if (statusType === "error") {
+        statusEl.classList.add("status-error");
+      }
+    }
+
+    function setSubmitting(form, isSubmitting) {
+      const button = form.querySelector("[data-submit-button]");
+      if (!button) {
+        return;
+      }
+
+      button.disabled = isSubmitting;
+      button.textContent = isSubmitting ? "Submitting..." : "Join the waitlist";
     }
 
     async function handleSubmit(event, form) {
       event.preventDefault();
 
       const input = form.querySelector('input[name="email"]');
-      const button = form.querySelector("[data-submit-button]");
+      if (!input) {
+        return;
+      }
+
       const email = input.value.trim();
+      setStatus(form, "", null);
 
-      resetStatus(form);
-
-      if (!email || !isValidEmail(email)) {
-        setStatus(form, "Please enter a valid email address.", false);
+      if (!isValidEmail(email)) {
+        setStatus(form, "Please enter a valid email address.", "error");
         input.focus();
         return;
       }
 
-      if (button.disabled) {
+      const submitButton = form.querySelector("[data-submit-button]");
+      if (submitButton && submitButton.disabled) {
         return;
       }
 
-      const defaultButtonText = button.textContent;
-      button.disabled = true;
-      button.textContent = "Submitting...";
+      setSubmitting(form, true);
 
-      const result = await registerUser(email);
-      setStatus(form, result.message, result.ok);
+      try {
+        const result = await registerUser(email);
 
-      if (result.ok) {
-        input.value = "";
+        if (result.ok) {
+          setStatus(form, "You’re on the list — watch your inbox.", "success");
+          trackEvent("waitlist_submit_success", { location: form.id || "waitlist-form" });
+          input.value = "";
+        } else {
+          const errorMsg = result.message
+            ? `Error submitting email: ${result.message}`
+            : "Something went wrong — try again.";
+          setStatus(form, errorMsg, "error");
+          trackEvent("waitlist_submit_error", { location: form.id || "waitlist-form", reason: result.message });
+        }
+      } catch {
+        setStatus(form, "Something went wrong — try again.", "error");
+        trackEvent("waitlist_submit_error", { location: form.id || "waitlist-form", reason: "unexpected" });
+      } finally {
+        setSubmitting(form, false);
+      }
+    }
+
+    function trackEvent(name, params = {}) {
+      if (typeof window.gtag === "function") {
+        window.gtag("event", name, params);
+        return;
       }
 
-      button.disabled = false;
-      button.textContent = defaultButtonText;
+      const analytics = window.analytics;
+      if (analytics && typeof analytics.track === "function") {
+        analytics.track(name, params);
+      }
     }
   </script>
 </body>

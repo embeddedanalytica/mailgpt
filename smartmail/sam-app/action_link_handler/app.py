@@ -36,6 +36,10 @@ def _coach_profiles_table_name() -> str:
     return os.getenv("COACH_PROFILES_TABLE_NAME", "")
 
 
+def _athlete_identities_table_name() -> str:
+    return os.getenv("ATHLETE_IDENTITIES_TABLE_NAME", "")
+
+
 def _athlete_connections_table_name() -> str:
     return os.getenv("ATHLETE_CONNECTIONS_TABLE_NAME", "")
 
@@ -72,6 +76,28 @@ def _strava_state_ttl_seconds() -> int:
 
 def _kms_key_id() -> str:
     return os.getenv("TOKENS_KMS_KEY_ID", "").strip()
+
+
+def _welcome_email_source() -> str:
+    source = os.getenv("WELCOME_EMAIL_SOURCE", "no-reply@geniml.com").strip()
+    return source or "no-reply@geniml.com"
+
+
+def _welcome_email_subject() -> str:
+    return "Welcome to GeniML"
+
+
+def render_welcome_email_text() -> str:
+    return (
+        "Welcome to GeniML.\n\n"
+        "Your email is now confirmed and authenticated. Your account is fully registered, "
+        "and you can start using the platform.\n\n"
+        "If this was not you, please contact support."
+    )
+
+
+def canonicalize_email(email: str) -> str:
+    return str(email or "").strip().lower()
 
 
 def create_action_token_record(
@@ -149,15 +175,21 @@ def render_connect_strava_failed_html(message: str) -> str:
 
 
 def ensure_athlete_id(email: str) -> str:
-    """Ensures an athlete_id exists in coach_profiles and returns it."""
-    table_name = _coach_profiles_table_name()
-    if not table_name:
+    """Ensures an athlete_id exists for email and returns it."""
+    canonical_email = canonicalize_email(email)
+    if not canonical_email:
+        raise RuntimeError("Email is required")
+    identities_table_name = _athlete_identities_table_name()
+    profiles_table_name = _coach_profiles_table_name()
+    if not identities_table_name:
+        raise RuntimeError("ATHLETE_IDENTITIES_TABLE_NAME is not set")
+    if not profiles_table_name:
         raise RuntimeError("COACH_PROFILES_TABLE_NAME is not set")
 
-    table = dynamodb.Table(table_name)
+    identities_table = dynamodb.Table(identities_table_name)
     now = int(time.time())
-    response = table.update_item(
-        Key={"email": email.lower()},
+    response = identities_table.update_item(
+        Key={"email": canonical_email},
         UpdateExpression="""
             SET #created_at = if_not_exists(#created_at, :created_at),
                 #updated_at = :updated_at,
@@ -178,6 +210,29 @@ def ensure_athlete_id(email: str) -> str:
     athlete_id = (response.get("Attributes") or {}).get("athlete_id")
     if not isinstance(athlete_id, str) or not athlete_id.strip():
         raise RuntimeError("Could not ensure athlete_id")
+
+    profiles_table = dynamodb.Table(profiles_table_name)
+    profiles_table.update_item(
+        Key={"athlete_id": athlete_id},
+        UpdateExpression="""
+            SET #created_at = if_not_exists(#created_at, :created_at),
+                #updated_at = :updated_at,
+                #experience_level = if_not_exists(#experience_level, :experience_level),
+                #constraints = if_not_exists(#constraints, :constraints)
+        """,
+        ExpressionAttributeNames={
+            "#created_at": "created_at",
+            "#updated_at": "updated_at",
+            "#experience_level": "experience_level",
+            "#constraints": "constraints",
+        },
+        ExpressionAttributeValues={
+            ":created_at": now,
+            ":updated_at": now,
+            ":experience_level": "unknown",
+            ":constraints": [],
+        },
+    )
     return athlete_id
 
 
@@ -429,8 +484,8 @@ def handle_strava_callback(event: dict, aws_request_id: str = None) -> dict:
             "body": render_connect_strava_failed_html("OAuth state already used. Start again from email."),
         }
 
-    email = (token_data.get("payload") or {}).get("email") or token_data.get("email")
-    if not isinstance(email, str) or not email.strip():
+    email = canonicalize_email((token_data.get("payload") or {}).get("email") or token_data.get("email"))
+    if not email:
         return {
             "statusCode": 400,
             "headers": {"Content-Type": "text/html; charset=utf-8"},
@@ -471,7 +526,7 @@ def handle_strava_callback(event: dict, aws_request_id: str = None) -> dict:
             "body": render_connect_strava_failed_html("Failed to complete Strava connection."),
         }
 
-    log_parts = [f"email={email.lower()}", "provider=strava", "result=strava_connected"]
+    log_parts = [f"email={email}", "provider=strava", "result=strava_connected"]
     if aws_request_id:
         log_parts.append(f"aws_request_id={aws_request_id}")
     logger.info(", ".join(log_parts))
@@ -573,7 +628,12 @@ def route_action(token_id: str, action_type: str, token_data: dict, now: int, aw
         session_created = create_or_update_verified_session(email, now, session_ttl_days)
         
         if session_created:
-            route_decision = "verified_session_created"
+            welcome_sent = send_post_verification_welcome_email(email)
+            route_decision = (
+                "verified_session_created_welcome_sent"
+                if welcome_sent
+                else "verified_session_created_welcome_failed"
+            )
             response = {
                 "statusCode": 200,
                 "headers": {
@@ -719,6 +779,26 @@ def create_or_update_verified_session(email: str, now: int, session_ttl_days: in
         return True
     except ClientError as e:
         logger.error(f"Error creating/updating verified session for {email}: {e}")
+        return False
+
+
+def send_post_verification_welcome_email(email: str) -> bool:
+    """Sends a basic welcome email after successful verification."""
+    try:
+        ses_client = boto3.client("ses", region_name=os.getenv("AWS_REGION", "us-west-2"))
+        ses_client.send_email(
+            Source=_welcome_email_source(),
+            Destination={"ToAddresses": [email]},
+            Message={
+                "Subject": {"Data": _welcome_email_subject(), "Charset": "UTF-8"},
+                "Body": {
+                    "Text": {"Data": render_welcome_email_text(), "Charset": "UTF-8"},
+                },
+            },
+        )
+        return True
+    except Exception as e:
+        logger.error(f"Failed to send post-verification welcome email to {email}: {e}")
         return False
 
 

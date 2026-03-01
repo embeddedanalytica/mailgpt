@@ -25,6 +25,30 @@ else:
 
 if "boto3" not in sys.modules:
     boto3_module = types.ModuleType("boto3")
+    dynamodb_module = types.ModuleType("boto3.dynamodb")
+    dynamodb_conditions_module = types.ModuleType("boto3.dynamodb.conditions")
+    dynamodb_types_module = types.ModuleType("boto3.dynamodb.types")
+
+    class _KeyCondition:
+        def between(self, *_args, **_kwargs):
+            return self
+
+        def eq(self, *_args, **_kwargs):
+            return self
+
+        def __and__(self, _other):
+            return self
+
+    class Key:
+        def __init__(self, _name):
+            pass
+
+        def eq(self, *_args, **_kwargs):
+            return _KeyCondition()
+
+    class TypeSerializer:
+        def serialize(self, value):
+            return {"S": str(value)}
 
     class _Boto3Stub:
         def get_item(self, *args, **kwargs):
@@ -52,7 +76,14 @@ if "boto3" not in sys.modules:
 
     boto3_module.resource = _resource
     boto3_module.client = _client
+    dynamodb_conditions_module.Key = Key
+    dynamodb_types_module.TypeSerializer = TypeSerializer
+    dynamodb_module.conditions = dynamodb_conditions_module
+    dynamodb_module.types = dynamodb_types_module
     sys.modules["boto3"] = boto3_module
+    sys.modules["boto3.dynamodb"] = dynamodb_module
+    sys.modules["boto3.dynamodb.conditions"] = dynamodb_conditions_module
+    sys.modules["boto3.dynamodb.types"] = dynamodb_types_module
 
 if "openai" not in sys.modules:
     openai_module = types.ModuleType("openai")
@@ -352,6 +383,53 @@ class VerifiedPathGateTests(unittest.TestCase):
             "cc_recipients": [],
         }
 
+    def test_unregistered_unverified_sender_is_blocked_before_verification(self):
+        email_data = self._verified_email_data()
+
+        with mock.patch.object(app.EmailProcessor, "parse_sns_event", return_value=email_data), \
+            mock.patch.object(app, "is_registered", return_value=False), \
+            mock.patch.object(app, "is_verified") as is_verified_mock, \
+            mock.patch.object(app, "handle_unverified_sender") as handle_unverified_mock, \
+            mock.patch.object(app.EmailReplySender, "send_reply", return_value="msg-reg-1") as send_reply_mock:
+            response = app.lambda_handler(event={"Records": []}, context=None)
+
+        self.assertEqual(response["statusCode"], 200)
+        self.assertIn("Registration required.", response["body"])
+        is_verified_mock.assert_not_called()
+        handle_unverified_mock.assert_not_called()
+        send_reply_mock.assert_called_once()
+
+    def test_registered_unverified_sender_uses_verification_flow(self):
+        email_data = self._verified_email_data()
+        expected = {"statusCode": 200, "body": "Verification email sent."}
+
+        with mock.patch.object(app.EmailProcessor, "parse_sns_event", return_value=email_data), \
+            mock.patch.object(app, "is_registered", return_value=True), \
+            mock.patch.object(app, "is_verified", return_value=False), \
+            mock.patch.object(app, "handle_unverified_sender", return_value=expected) as handle_unverified_mock, \
+            mock.patch.object(app.EmailReplySender, "send_reply") as send_reply_mock:
+            response = app.lambda_handler(event={"Records": []}, context=None)
+
+        self.assertEqual(response, expected)
+        handle_unverified_mock.assert_called_once_with("verified@example.com", None)
+        send_reply_mock.assert_not_called()
+
+    def test_unregistered_verified_sender_still_blocked_by_registration_gate_first(self):
+        email_data = self._verified_email_data()
+
+        with mock.patch.object(app.EmailProcessor, "parse_sns_event", return_value=email_data), \
+            mock.patch.object(app, "is_registered", return_value=False), \
+            mock.patch.object(app, "is_verified") as is_verified_mock, \
+            mock.patch.object(app, "handle_unverified_sender") as handle_unverified_mock, \
+            mock.patch.object(app.EmailReplySender, "send_reply", return_value="msg-reg-2") as send_reply_mock:
+            response = app.lambda_handler(event={"Records": []}, context=None)
+
+        self.assertEqual(response["statusCode"], 200)
+        self.assertIn("Registration required.", response["body"])
+        is_verified_mock.assert_not_called()
+        handle_unverified_mock.assert_not_called()
+        send_reply_mock.assert_called_once()
+
     def test_handler_success_calls_business_and_send_reply(self):
         """E2E-style: verified, registered, under quota -> get_reply_for_inbound and send_reply called."""
         email_data = self._verified_email_data()
@@ -359,6 +437,8 @@ class VerifiedPathGateTests(unittest.TestCase):
             mock.patch.object(app, "is_verified", return_value=True), \
             mock.patch.object(app, "is_registered", return_value=True), \
             mock.patch.object(app, "check_verified_quota_or_block", return_value=None), \
+            mock.patch.object(app, "ensure_athlete_id_for_email", return_value="ath_1"), \
+            mock.patch.object(app, "ensure_progress_snapshot_exists", return_value=True), \
             mock.patch.object(app, "get_reply_for_inbound", return_value="Reply body here") as get_reply_mock, \
             mock.patch.object(app.EmailReplySender, "send_reply", return_value="msg-123") as send_reply_mock:
             response = app.lambda_handler(event={"Records": []}, context=None)

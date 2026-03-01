@@ -18,6 +18,7 @@ from config import (
     VERIFY_EMAIL_COOLDOWN_MINUTES,
     VERIFY_TOKEN_TTL_MINUTES,
 )
+from email_copy import EmailCopy
 
 logger = logging.getLogger(__name__)
 dynamodb = boto3.resource("dynamodb", region_name=AWS_REGION)
@@ -103,32 +104,19 @@ class VerificationEmailSender:
                 return False
             verification_link = f"{ACTION_BASE_URL}{token_id}"
             from_address = "hello@geniml.com"
-            subject = "Verify to access your coaching insights"
-            body_text = (
-                "To protect your privacy and prevent abuse, we verify email addresses before sending coaching responses.\n\n"
-                f"Verify your email by clicking this link:\n\n{verification_link}\n\n"
-                f"Link expires in {VERIFY_TOKEN_TTL_MINUTES} minutes.\n\n"
-                "If you didn't request this, you can safely ignore this email.\n\nSmartMail Coach"
+            copy = EmailCopy.render_verify_email(
+                verification_link=verification_link,
+                verify_token_ttl_minutes=VERIFY_TOKEN_TTL_MINUTES,
             )
-            body_html = f"""<html>
-<body>
-<p>To protect your privacy and prevent abuse, we verify email addresses before sending coaching responses.</p>
-<p>Verify your email by clicking this link:</p>
-<p><a href="{verification_link}">{verification_link}</a></p>
-<p>Link expires in {VERIFY_TOKEN_TTL_MINUTES} minutes.</p>
-<p>If you didn't request this, you can safely ignore this email.</p>
-<p>SmartMail Coach</p>
-</body>
-</html>"""
             ses_client = boto3.client("ses", region_name=AWS_REGION)
             ses_client.send_email(
                 Source=from_address,
                 Destination={"ToAddresses": [email]},
                 Message={
-                    "Subject": {"Data": subject, "Charset": "UTF-8"},
+                    "Subject": {"Data": copy["subject"], "Charset": "UTF-8"},
                     "Body": {
-                        "Text": {"Data": body_text, "Charset": "UTF-8"},
-                        "Html": {"Data": body_html, "Charset": "UTF-8"},
+                        "Text": {"Data": copy["text"], "Charset": "UTF-8"},
+                        "Html": {"Data": copy["html"], "Charset": "UTF-8"},
                     },
                 },
             )

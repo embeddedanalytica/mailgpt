@@ -14,10 +14,14 @@ import logging
 import secrets
 import base64
 import uuid
+import json
+import hashlib
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 from botocore.exceptions import ClientError
 import boto3
+from boto3.dynamodb.conditions import Key
+from boto3.dynamodb.types import TypeSerializer
 
 logger = logging.getLogger()
 
@@ -29,152 +33,329 @@ COACH_PROFILES_TABLE = os.getenv("COACH_PROFILES_TABLE_NAME", "coach_profiles")
 ACTION_TOKENS_TABLE = os.getenv("ACTION_TOKENS_TABLE_NAME", "action_tokens")
 VERIFIED_SESSIONS_TABLE = os.getenv("VERIFIED_SESSIONS_TABLE_NAME", "verified_sessions")
 RATE_LIMITS_TABLE = os.getenv("RATE_LIMITS_TABLE_NAME", "rate_limits")
+ATHLETE_IDENTITIES_TABLE = os.getenv("ATHLETE_IDENTITIES_TABLE_NAME", "athlete_identities")
 ATHLETE_CONNECTIONS_TABLE = os.getenv("ATHLETE_CONNECTIONS_TABLE_NAME", "athlete_connections")
 PROVIDER_TOKENS_TABLE = os.getenv("PROVIDER_TOKENS_TABLE_NAME", "provider_tokens")
 ACTIVITIES_TABLE = os.getenv("ACTIVITIES_TABLE_NAME", "activities")
 DAILY_METRICS_TABLE = os.getenv("DAILY_METRICS_TABLE_NAME", "daily_metrics")
 PLAN_HISTORY_TABLE = os.getenv("PLAN_HISTORY_TABLE_NAME", "plan_history")
+PLAN_UPDATE_REQUESTS_TABLE = os.getenv("PLAN_UPDATE_REQUESTS_TABLE_NAME", "plan_update_requests")
 RECOMMENDATION_LOG_TABLE = os.getenv("RECOMMENDATION_LOG_TABLE_NAME", "recommendation_log")
+MANUAL_ACTIVITY_SNAPSHOTS_TABLE = os.getenv(
+    "MANUAL_ACTIVITY_SNAPSHOTS_TABLE_NAME", "manual_activity_snapshots"
+)
+PROGRESS_SNAPSHOTS_TABLE = os.getenv("PROGRESS_SNAPSHOTS_TABLE_NAME", "progress_snapshots")
 
 
 # ============================================================================
 # COACH PROFILES
 # ============================================================================
 
-def get_coach_profile(email: str) -> Optional[Dict[str, Any]]:
-    """
-    Retrieves a coach profile by email.
-    
-    Args:
-        email: Email address (lowercase)
-    
-    Returns:
-        Profile dict or None if not found
-    """
+_EXPERIENCE_LEVELS = {"beginner", "intermediate", "advanced", "unknown"}
+_CONSTRAINT_TYPES = {"injury", "schedule", "equipment", "medical", "preference", "other"}
+_CONSTRAINT_SEVERITIES = {"low", "medium", "high"}
+_CONSISTENCY_STATUSES = {"low", "medium", "high"}
+_TREND_DIRECTIONS = {"improving", "plateau", "declining", "unknown"}
+_GOAL_ALIGNMENT = {"on_track", "at_risk", "off_track", "unknown"}
+_ENERGY_STATES = {"low", "ok", "high", "unknown"}
+_SORENESS_STATES = {"low", "medium", "high", "unknown"}
+_SLEEP_STATES = {"poor", "ok", "good", "unknown"}
+_DATA_QUALITY = {"low", "medium", "high"}
+_RESPONSE_CADENCE_EXPECTATIONS = {"immediate", "daily", "few_times_per_week", "weekly", "unknown"}
+_PROFILE_TEXT_FIELD_MAX_LEN = 1024
+_PROFILE_TEXT_FIELDS = {
+    "goal_why",
+    "success_definition",
+    "barriers_summary",
+    "lifestyle_baseline",
+    "accountability_preferences",
+    "feedback_style_preference",
+    "coach_expectations",
+}
+_TYPE_SERIALIZER = TypeSerializer()
+
+
+def canonicalize_email(email: str) -> str:
+    return str(email or "").strip().lower()
+
+
+def _normalize_constraint_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if not isinstance(item, dict):
+        return None
+    summary = str(item.get("summary", "")).strip()
+    if not summary:
+        return None
+
+    constraint_type = str(item.get("type", "other")).strip().lower() or "other"
+    if constraint_type not in _CONSTRAINT_TYPES:
+        constraint_type = "other"
+
+    severity = str(item.get("severity", "medium")).strip().lower() or "medium"
+    if severity not in _CONSTRAINT_SEVERITIES:
+        severity = "medium"
+
+    active = item.get("active")
+    if not isinstance(active, bool):
+        active = True
+
+    return {
+        "type": constraint_type,
+        "summary": summary,
+        "severity": severity,
+        "active": active,
+    }
+
+
+def _dedupe_constraints(constraints: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    deduped: List[Dict[str, Any]] = []
+    seen = set()
+    for item in constraints:
+        normalized = _normalize_constraint_item(item)
+        if normalized is None:
+            continue
+        key = (
+            normalized["type"],
+            " ".join(normalized["summary"].strip().lower().split()),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(normalized)
+    return deduped
+
+
+def _normalize_profile_text_field(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    return value.strip()[:_PROFILE_TEXT_FIELD_MAX_LEN]
+
+
+def normalize_profile_updates(updates: Dict[str, Any]) -> Dict[str, Any]:
+    normalized: Dict[str, Any] = {}
+
+    primary_goal = updates.get("primary_goal")
+    if isinstance(primary_goal, str):
+        primary_goal = primary_goal.strip()
+    if primary_goal:
+        normalized["primary_goal"] = primary_goal
+
+    time_availability = updates.get("time_availability")
+    if isinstance(time_availability, dict):
+        normalized_time: Dict[str, Any] = {}
+        sessions_per_week = time_availability.get("sessions_per_week")
+        if isinstance(sessions_per_week, (int, float)) and int(sessions_per_week) > 0:
+            normalized_time["sessions_per_week"] = int(sessions_per_week)
+        hours_per_week = time_availability.get("hours_per_week")
+        if isinstance(hours_per_week, (int, float)) and float(hours_per_week) > 0:
+            normalized_time["hours_per_week"] = float(hours_per_week)
+        if normalized_time:
+            normalized["time_availability"] = normalized_time
+
+    experience_level = updates.get("experience_level")
+    if isinstance(experience_level, str):
+        experience_level = experience_level.strip().lower()
+    else:
+        experience_level = ""
+    if experience_level:
+        normalized["experience_level"] = (
+            experience_level if experience_level in _EXPERIENCE_LEVELS else "unknown"
+        )
+
+    experience_level_note = updates.get("experience_level_note")
+    if isinstance(experience_level_note, str):
+        experience_level_note = experience_level_note.strip()
+        if experience_level_note:
+            normalized["experience_level_note"] = experience_level_note
+
+    constraints = updates.get("constraints")
+    if isinstance(constraints, list):
+        normalized["constraints"] = _dedupe_constraints(constraints)
+
+    for field_name in _PROFILE_TEXT_FIELDS:
+        value = _normalize_profile_text_field(updates.get(field_name))
+        if value:
+            normalized[field_name] = value
+
+    if "response_cadence_expectation" in updates:
+        cadence = str(updates.get("response_cadence_expectation", "")).strip().lower()
+        if cadence not in _RESPONSE_CADENCE_EXPECTATIONS:
+            cadence = "unknown"
+        normalized["response_cadence_expectation"] = cadence
+
+    return normalized
+
+
+def normalize_profile_record(profile: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    profile = profile or {}
+    normalized: Dict[str, Any] = {
+        "primary_goal": str(profile.get("primary_goal", "")).strip(),
+        "time_availability": {},
+        "experience_level": "unknown",
+        "constraints": [],
+        "goal_why": "",
+        "success_definition": "",
+        "barriers_summary": "",
+        "lifestyle_baseline": "",
+        "accountability_preferences": "",
+        "feedback_style_preference": "",
+        "coach_expectations": "",
+        "response_cadence_expectation": "unknown",
+    }
+
+    time_availability = profile.get("time_availability")
+    if isinstance(time_availability, dict):
+        sessions_per_week = time_availability.get("sessions_per_week")
+        if isinstance(sessions_per_week, int) and sessions_per_week > 0:
+            normalized["time_availability"]["sessions_per_week"] = sessions_per_week
+        hours_per_week = time_availability.get("hours_per_week")
+        if isinstance(hours_per_week, (int, float)) and float(hours_per_week) > 0:
+            normalized["time_availability"]["hours_per_week"] = float(hours_per_week)
+
+    experience_level = str(profile.get("experience_level", "unknown")).strip().lower()
+    if experience_level in _EXPERIENCE_LEVELS:
+        normalized["experience_level"] = experience_level
+
+    experience_level_note = profile.get("experience_level_note")
+    if isinstance(experience_level_note, str) and experience_level_note.strip():
+        normalized["experience_level_note"] = experience_level_note.strip()
+
+    constraints = profile.get("constraints")
+    if isinstance(constraints, list):
+        normalized["constraints"] = _dedupe_constraints(constraints)
+
+    for field_name in _PROFILE_TEXT_FIELDS:
+        normalized[field_name] = _normalize_profile_text_field(profile.get(field_name))
+
+    cadence = str(profile.get("response_cadence_expectation", "")).strip().lower()
+    if cadence in _RESPONSE_CADENCE_EXPECTATIONS:
+        normalized["response_cadence_expectation"] = cadence
+
+    return normalized
+
+
+def get_athlete_id_for_email(email: str) -> Optional[str]:
+    canonical_email = canonicalize_email(email)
+    if not canonical_email:
+        return None
     try:
-        table = dynamodb.Table(COACH_PROFILES_TABLE)
-        response = table.get_item(Key={"email": email.lower()})
-        return response.get("Item")
+        table = dynamodb.Table(ATHLETE_IDENTITIES_TABLE)
+        response = table.get_item(Key={"email": canonical_email})
+        item = response.get("Item", {})
+        athlete_id = item.get("athlete_id")
+        if isinstance(athlete_id, str) and athlete_id.strip():
+            return athlete_id
+        return None
     except ClientError as e:
-        logger.error(f"Error getting coach profile for {email}: {e}")
+        logger.error(f"Error getting athlete_id for {email}: {e}")
         return None
 
 
-def create_or_update_coach_profile(
-    email: str,
-    goal: Optional[str] = None,
-    weekly_time_budget_minutes: Optional[int] = None,
-    sports: Optional[List[str]] = None,
-    timezone: str = "America/Vancouver",
-    privacy_mode: str = "normal",
-) -> bool:
+def ensure_athlete_id_for_email(email: str) -> Optional[str]:
     """
-    Creates or updates a coach profile.
-    
-    Args:
-        email: Email address
-        goal: Coaching goal (optional)
-        weekly_time_budget_minutes: Weekly time budget in minutes (optional)
-        sports: List of sports (optional)
-        timezone: Timezone string (default: America/Vancouver)
-        privacy_mode: Privacy mode - "normal" or "high" (default: normal)
-    
-    Returns:
-        True if successful, False otherwise
+    Ensures email -> athlete_id mapping exists and an athlete-keyed profile shell exists.
     """
+    canonical_email = canonicalize_email(email)
+    if not canonical_email:
+        return None
+    try:
+        identity_table = dynamodb.Table(ATHLETE_IDENTITIES_TABLE)
+        now = int(time.time())
+        new_athlete_id = f"ath_{uuid.uuid4().hex}"
+        response = identity_table.update_item(
+            Key={"email": canonical_email},
+            UpdateExpression="""
+                SET #created_at = if_not_exists(#created_at, :created_at),
+                    #updated_at = :updated_at,
+                    #athlete_id = if_not_exists(#athlete_id, :athlete_id)
+            """,
+            ExpressionAttributeNames={
+                "#created_at": "created_at",
+                "#updated_at": "updated_at",
+                "#athlete_id": "athlete_id",
+            },
+            ExpressionAttributeValues={
+                ":created_at": now,
+                ":updated_at": now,
+                ":athlete_id": new_athlete_id,
+            },
+            ReturnValues="ALL_NEW",
+        )
+        item = response.get("Attributes", {})
+        athlete_id = item.get("athlete_id")
+        if not isinstance(athlete_id, str) or not athlete_id.strip():
+            return None
+
+        profile_table = dynamodb.Table(COACH_PROFILES_TABLE)
+        profile_table.update_item(
+            Key={"athlete_id": athlete_id},
+            UpdateExpression="""
+                SET #created_at = if_not_exists(#created_at, :created_at),
+                    #updated_at = :updated_at,
+                    #experience_level = if_not_exists(#experience_level, :experience_level),
+                    #constraints = if_not_exists(#constraints, :constraints),
+                    #goal_why = if_not_exists(#goal_why, :goal_why),
+                    #success_definition = if_not_exists(#success_definition, :success_definition),
+                    #barriers_summary = if_not_exists(#barriers_summary, :barriers_summary),
+                    #lifestyle_baseline = if_not_exists(#lifestyle_baseline, :lifestyle_baseline),
+                    #accountability_preferences = if_not_exists(#accountability_preferences, :accountability_preferences),
+                    #feedback_style_preference = if_not_exists(#feedback_style_preference, :feedback_style_preference),
+                    #coach_expectations = if_not_exists(#coach_expectations, :coach_expectations),
+                    #response_cadence_expectation = if_not_exists(#response_cadence_expectation, :response_cadence_expectation)
+            """,
+            ExpressionAttributeNames={
+                "#created_at": "created_at",
+                "#updated_at": "updated_at",
+                "#experience_level": "experience_level",
+                "#constraints": "constraints",
+                "#goal_why": "goal_why",
+                "#success_definition": "success_definition",
+                "#barriers_summary": "barriers_summary",
+                "#lifestyle_baseline": "lifestyle_baseline",
+                "#accountability_preferences": "accountability_preferences",
+                "#feedback_style_preference": "feedback_style_preference",
+                "#coach_expectations": "coach_expectations",
+                "#response_cadence_expectation": "response_cadence_expectation",
+            },
+            ExpressionAttributeValues={
+                ":created_at": now,
+                ":updated_at": now,
+                ":experience_level": "unknown",
+                ":constraints": [],
+                ":goal_why": "",
+                ":success_definition": "",
+                ":barriers_summary": "",
+                ":lifestyle_baseline": "",
+                ":accountability_preferences": "",
+                ":feedback_style_preference": "",
+                ":coach_expectations": "",
+                ":response_cadence_expectation": "unknown",
+            },
+        )
+        return athlete_id
+    except ClientError as e:
+        logger.error(f"Error ensuring athlete_id for {email}: {e}")
+        return None
+
+
+def get_coach_profile(athlete_id: str) -> Optional[Dict[str, Any]]:
+    """Retrieves an athlete profile by athlete_id."""
     try:
         table = dynamodb.Table(COACH_PROFILES_TABLE)
-        now = int(time.time())
-        
-        # Build update expression
-        update_expr_parts = []
-        expr_attr_names = {}
-        expr_attr_values = {}
-        
-        if goal is not None:
-            update_expr_parts.append("#goal = :goal")
-            expr_attr_names["#goal"] = "goal"
-            expr_attr_values[":goal"] = goal
-        
-        if weekly_time_budget_minutes is not None:
-            update_expr_parts.append("#weekly_time_budget_minutes = :weekly_time_budget_minutes")
-            expr_attr_names["#weekly_time_budget_minutes"] = "weekly_time_budget_minutes"
-            expr_attr_values[":weekly_time_budget_minutes"] = weekly_time_budget_minutes
-        
-        if sports is not None:
-            update_expr_parts.append("#sports = :sports")
-            expr_attr_names["#sports"] = "sports"
-            expr_attr_values[":sports"] = sports
-        
-        update_expr_parts.append("#timezone = :timezone")
-        expr_attr_names["#timezone"] = "timezone"
-        expr_attr_values[":timezone"] = timezone
-        
-        update_expr_parts.append("#privacy_mode = :privacy_mode")
-        expr_attr_names["#privacy_mode"] = "privacy_mode"
-        expr_attr_values[":privacy_mode"] = privacy_mode
-        
-        update_expr_parts.append("#updated_at = :updated_at")
-        expr_attr_names["#updated_at"] = "updated_at"
-        expr_attr_values[":updated_at"] = now
-        
-        update_expr = "SET " + ", ".join(update_expr_parts)
-        update_expr += " SET #created_at = if_not_exists(#created_at, :created_at)"
-        expr_attr_names["#created_at"] = "created_at"
-        expr_attr_values[":created_at"] = now
-        
-        table.update_item(
-            Key={"email": email.lower()},
-            UpdateExpression=update_expr,
-            ExpressionAttributeNames=expr_attr_names,
-            ExpressionAttributeValues=expr_attr_values,
-        )
-        return True
+        response = table.get_item(Key={"athlete_id": athlete_id})
+        item = response.get("Item")
+        if not item:
+            return None
+        return normalize_profile_record(item)
     except ClientError as e:
-        logger.error(f"Error creating/updating coach profile for {email}: {e}")
-        return False
+        logger.error(f"Error getting coach profile for athlete_id={athlete_id}: {e}")
+        return None
 
 
-def create_default_coach_profile(email: str) -> bool:
+def merge_coach_profile_fields(athlete_id: str, updates: Dict[str, Any]) -> bool:
     """
-    Creates a default coach profile on registration if absent.
-    
-    Args:
-        email: Email address
-    
-    Returns:
-        True if created, False otherwise
+    Merges parsed profile fields for one athlete without overwriting with empty values.
     """
-    profile = get_coach_profile(email)
-    if profile is None:
-        return create_or_update_coach_profile(email)
-    return True
-
-
-def merge_coach_profile_fields(email: str, updates: Dict[str, Any]) -> bool:
-    """
-    Merges parsed profile fields for one sender without overwriting with empty values.
-    """
-    allowed_fields = {
-        "goal",
-        "goal_unknown",
-        "weekly_time_budget_minutes",
-        "weekly_time_budget_unknown",
-        "sports",
-        "sports_unknown",
-    }
-    sanitized_updates: Dict[str, Any] = {}
-    for key, value in updates.items():
-        if key not in allowed_fields:
-            continue
-        if value is None:
-            continue
-        if isinstance(value, str) and not value.strip():
-            continue
-        if isinstance(value, list) and not value:
-            continue
-        sanitized_updates[key] = value
-
+    sanitized_updates = normalize_profile_updates(updates)
     if not sanitized_updates:
         return False
 
@@ -202,14 +383,14 @@ def merge_coach_profile_fields(email: str, updates: Dict[str, Any]) -> bool:
             set_clauses.append(f"{name_token} = {value_token}")
 
         table.update_item(
-            Key={"email": email.lower()},
+            Key={"athlete_id": athlete_id},
             UpdateExpression="SET " + ", ".join(set_clauses),
             ExpressionAttributeNames=expression_attribute_names,
             ExpressionAttributeValues=expression_attribute_values,
         )
         return True
     except ClientError as e:
-        logger.error(f"Error merging coach profile fields for {email}: {e}")
+        logger.error(f"Error merging coach profile fields for athlete_id={athlete_id}: {e}")
         return False
 
 
@@ -219,41 +400,10 @@ def merge_coach_profile_fields(email: str, updates: Dict[str, Any]) -> bool:
 
 def ensure_athlete_id(email: str) -> Optional[str]:
     """
-    Ensures an opaque athlete_id exists for a profile and returns it.
-
-    This lets connector/activity tables avoid using raw email as the primary key.
+    Backward-compatible wrapper.
+    Prefer ensure_athlete_id_for_email for explicit naming.
     """
-    try:
-        table = dynamodb.Table(COACH_PROFILES_TABLE)
-        now = int(time.time())
-        new_athlete_id = f"ath_{uuid.uuid4().hex}"
-        response = table.update_item(
-            Key={"email": email.lower()},
-            UpdateExpression="""
-                SET #created_at = if_not_exists(#created_at, :created_at),
-                    #updated_at = :updated_at,
-                    #athlete_id = if_not_exists(#athlete_id, :athlete_id)
-            """,
-            ExpressionAttributeNames={
-                "#created_at": "created_at",
-                "#updated_at": "updated_at",
-                "#athlete_id": "athlete_id",
-            },
-            ExpressionAttributeValues={
-                ":created_at": now,
-                ":updated_at": now,
-                ":athlete_id": new_athlete_id,
-            },
-            ReturnValues="ALL_NEW",
-        )
-        item = response.get("Attributes", {})
-        athlete_id = item.get("athlete_id")
-        if isinstance(athlete_id, str) and athlete_id.strip():
-            return athlete_id
-        return None
-    except ClientError as e:
-        logger.error(f"Error ensuring athlete_id for {email}: {e}")
-        return None
+    return ensure_athlete_id_for_email(email)
 
 
 def upsert_athlete_connection(
@@ -506,22 +656,376 @@ def put_daily_metrics(
         return False
 
 
+def _default_progress_snapshot(athlete_id: str, now: Optional[int] = None) -> Dict[str, Any]:
+    now_epoch = int(now if now is not None else time.time())
+    return {
+        "athlete_id": athlete_id,
+        "last_activity_at": None,
+        "last_activity_type": "unknown",
+        "last_7d_activity_count": 0,
+        "last_14d_activity_count": 0,
+        "consistency_status": "low",
+        "trend_direction": "unknown",
+        "goal_alignment": "unknown",
+        "last_reported_energy": "unknown",
+        "last_reported_soreness": "unknown",
+        "last_reported_sleep": "unknown",
+        "updated_at": now_epoch,
+        "data_quality": "low",
+    }
+
+
+def normalize_progress_snapshot(record: Optional[Dict[str, Any]], athlete_id: str) -> Dict[str, Any]:
+    """
+    Returns a fully-shaped progress snapshot with safe defaults.
+    """
+    now = int(time.time())
+    base = _default_progress_snapshot(athlete_id=athlete_id, now=now)
+    record = record or {}
+
+    last_activity_at = record.get("last_activity_at")
+    if isinstance(last_activity_at, int) and last_activity_at > 0:
+        base["last_activity_at"] = last_activity_at
+
+    last_activity_type = str(record.get("last_activity_type", "")).strip()
+    if last_activity_type:
+        base["last_activity_type"] = last_activity_type
+
+    last_7d = record.get("last_7d_activity_count")
+    if isinstance(last_7d, int) and last_7d >= 0:
+        base["last_7d_activity_count"] = last_7d
+
+    last_14d = record.get("last_14d_activity_count")
+    if isinstance(last_14d, int) and last_14d >= 0:
+        base["last_14d_activity_count"] = last_14d
+
+    consistency_status = str(record.get("consistency_status", "")).strip().lower()
+    if consistency_status in _CONSISTENCY_STATUSES:
+        base["consistency_status"] = consistency_status
+
+    trend_direction = str(record.get("trend_direction", "")).strip().lower()
+    if trend_direction in _TREND_DIRECTIONS:
+        base["trend_direction"] = trend_direction
+
+    goal_alignment = str(record.get("goal_alignment", "")).strip().lower()
+    if goal_alignment in _GOAL_ALIGNMENT:
+        base["goal_alignment"] = goal_alignment
+
+    energy = str(record.get("last_reported_energy", "")).strip().lower()
+    if energy in _ENERGY_STATES:
+        base["last_reported_energy"] = energy
+
+    soreness = str(record.get("last_reported_soreness", "")).strip().lower()
+    if soreness in _SORENESS_STATES:
+        base["last_reported_soreness"] = soreness
+
+    sleep = str(record.get("last_reported_sleep", "")).strip().lower()
+    if sleep in _SLEEP_STATES:
+        base["last_reported_sleep"] = sleep
+
+    updated_at = record.get("updated_at")
+    if isinstance(updated_at, int) and updated_at > 0:
+        base["updated_at"] = updated_at
+
+    data_quality = str(record.get("data_quality", "")).strip().lower()
+    if data_quality in _DATA_QUALITY:
+        base["data_quality"] = data_quality
+    else:
+        base["data_quality"] = _data_quality(base)
+
+    return base
+
+
+def ensure_progress_snapshot_exists(athlete_id: str) -> bool:
+    """Ensures a progress snapshot record exists (defaulted) for this athlete."""
+    try:
+        table = dynamodb.Table(PROGRESS_SNAPSHOTS_TABLE)
+        now = int(time.time())
+        defaults = _default_progress_snapshot(athlete_id, now=now)
+        table.update_item(
+            Key={"athlete_id": athlete_id},
+            UpdateExpression="""
+                SET #updated_at = if_not_exists(#updated_at, :updated_at),
+                    #last_activity_at = if_not_exists(#last_activity_at, :last_activity_at),
+                    #last_activity_type = if_not_exists(#last_activity_type, :last_activity_type),
+                    #last_7d_activity_count = if_not_exists(#last_7d_activity_count, :last_7d_activity_count),
+                    #last_14d_activity_count = if_not_exists(#last_14d_activity_count, :last_14d_activity_count),
+                    #consistency_status = if_not_exists(#consistency_status, :consistency_status),
+                    #trend_direction = if_not_exists(#trend_direction, :trend_direction),
+                    #goal_alignment = if_not_exists(#goal_alignment, :goal_alignment),
+                    #last_reported_energy = if_not_exists(#last_reported_energy, :last_reported_energy),
+                    #last_reported_soreness = if_not_exists(#last_reported_soreness, :last_reported_soreness),
+                    #last_reported_sleep = if_not_exists(#last_reported_sleep, :last_reported_sleep),
+                    #data_quality = if_not_exists(#data_quality, :data_quality)
+            """,
+            ExpressionAttributeNames={
+                "#updated_at": "updated_at",
+                "#last_activity_at": "last_activity_at",
+                "#last_activity_type": "last_activity_type",
+                "#last_7d_activity_count": "last_7d_activity_count",
+                "#last_14d_activity_count": "last_14d_activity_count",
+                "#consistency_status": "consistency_status",
+                "#trend_direction": "trend_direction",
+                "#goal_alignment": "goal_alignment",
+                "#last_reported_energy": "last_reported_energy",
+                "#last_reported_soreness": "last_reported_soreness",
+                "#last_reported_sleep": "last_reported_sleep",
+                "#data_quality": "data_quality",
+            },
+            ExpressionAttributeValues={
+                ":updated_at": defaults["updated_at"],
+                ":last_activity_at": defaults["last_activity_at"],
+                ":last_activity_type": defaults["last_activity_type"],
+                ":last_7d_activity_count": defaults["last_7d_activity_count"],
+                ":last_14d_activity_count": defaults["last_14d_activity_count"],
+                ":consistency_status": defaults["consistency_status"],
+                ":trend_direction": defaults["trend_direction"],
+                ":goal_alignment": defaults["goal_alignment"],
+                ":last_reported_energy": defaults["last_reported_energy"],
+                ":last_reported_soreness": defaults["last_reported_soreness"],
+                ":last_reported_sleep": defaults["last_reported_sleep"],
+                ":data_quality": defaults["data_quality"],
+            },
+        )
+        return True
+    except ClientError as e:
+        logger.error(f"Error ensuring progress snapshot athlete_id={athlete_id}: {e}")
+        return False
+
+
+def get_progress_snapshot(athlete_id: str) -> Optional[Dict[str, Any]]:
+    try:
+        table = dynamodb.Table(PROGRESS_SNAPSHOTS_TABLE)
+        response = table.get_item(Key={"athlete_id": athlete_id})
+        item = response.get("Item")
+        if not item:
+            return normalize_progress_snapshot(None, athlete_id=athlete_id)
+        return normalize_progress_snapshot(item, athlete_id=athlete_id)
+    except ClientError as e:
+        logger.error(f"Error getting progress snapshot athlete_id={athlete_id}: {e}")
+        return None
+
+
+def put_manual_activity_snapshot(
+    athlete_id: str,
+    activity_type: str,
+    timestamp: int,
+    snapshot_event_id: Optional[str] = None,
+    duration: Optional[str] = None,
+    key_metric: Optional[str] = None,
+    subjective_feedback: Optional[str] = None,
+    subjective_state: Optional[Dict[str, str]] = None,
+    source: str = "manual",
+) -> bool:
+    """Writes one manual activity snapshot and updates aggregate progress snapshot."""
+    event_id = str(snapshot_event_id or "").strip() or uuid.uuid4().hex
+    snapshot_key = f"{int(timestamp):010d}#{event_id}"
+    try:
+        snapshots_table = dynamodb.Table(MANUAL_ACTIVITY_SNAPSHOTS_TABLE)
+        item: Dict[str, Any] = {
+            "athlete_id": athlete_id,
+            "snapshot_key": snapshot_key,
+            "timestamp": int(timestamp),
+            "event_id": event_id,
+            "activity_type": activity_type,
+            "source": source,
+        }
+        if duration:
+            item["duration"] = duration
+        if key_metric:
+            item["key_metric"] = key_metric
+        if subjective_feedback:
+            item["subjective_feedback"] = subjective_feedback
+        if subjective_state:
+            item["subjective_state"] = subjective_state
+        snapshots_table.put_item(
+            Item=item,
+            ConditionExpression="attribute_not_exists(snapshot_key)",
+        )
+    except ClientError as e:
+        error_code = e.response.get("Error", {}).get("Code", "")
+        if error_code == "ConditionalCheckFailedException":
+            # Replay for same (athlete_id, snapshot_event_id) is idempotent.
+            return True
+        logger.error(
+            f"Error putting manual activity snapshot athlete_id={athlete_id}, timestamp={timestamp}: {e}"
+        )
+        return False
+
+    return recompute_progress_snapshot(athlete_id, now_epoch=int(timestamp))
+
+
+def _query_manual_snapshots_between(
+    athlete_id: str,
+    start_ts: int,
+    end_ts: int,
+) -> List[Dict[str, Any]]:
+    try:
+        from boto3.dynamodb.conditions import Key
+
+        table = dynamodb.Table(MANUAL_ACTIVITY_SNAPSHOTS_TABLE)
+        start_key = f"{int(start_ts):010d}#"
+        end_key = f"{int(end_ts):010d}#~"
+        response = table.query(
+            KeyConditionExpression=Key("athlete_id").eq(athlete_id)
+            & Key("snapshot_key").between(start_key, end_key),
+            ScanIndexForward=False,
+        )
+        return response.get("Items", [])
+    except ClientError as e:
+        logger.error(
+            f"Error querying manual snapshots athlete_id={athlete_id}, start={start_ts}, end={end_ts}: {e}"
+        )
+        return []
+
+
+def _latest_manual_snapshot(athlete_id: str) -> Optional[Dict[str, Any]]:
+    try:
+        from boto3.dynamodb.conditions import Key
+
+        table = dynamodb.Table(MANUAL_ACTIVITY_SNAPSHOTS_TABLE)
+        response = table.query(
+            KeyConditionExpression=Key("athlete_id").eq(athlete_id),
+            ScanIndexForward=False,
+            Limit=1,
+        )
+        items = response.get("Items", [])
+        return items[0] if items else None
+    except ClientError as e:
+        logger.error(f"Error querying latest manual snapshot athlete_id={athlete_id}: {e}")
+        return None
+
+
+def _count_recent_snapshots(athlete_id: str, now_epoch: int, days: int) -> int:
+    window_start = now_epoch - (days * 86400)
+    items = _query_manual_snapshots_between(athlete_id, window_start, now_epoch)
+    return len(items)
+
+
+def _consistency_status(last_7d_count: int) -> str:
+    if last_7d_count >= 4:
+        return "high"
+    if last_7d_count >= 2:
+        return "medium"
+    return "low"
+
+
+def _trend_direction(athlete_id: str, now_epoch: int) -> str:
+    current_start = now_epoch - (7 * 86400)
+    previous_start = now_epoch - (14 * 86400)
+    previous_end = current_start - 1
+    current_count = len(_query_manual_snapshots_between(athlete_id, current_start, now_epoch))
+    previous_count = len(_query_manual_snapshots_between(athlete_id, previous_start, previous_end))
+    if current_count == 0 and previous_count == 0:
+        return "unknown"
+    if current_count > previous_count:
+        return "improving"
+    if current_count < previous_count:
+        return "declining"
+    return "plateau"
+
+
+def _goal_alignment(last_7d_count: int, last_14d_count: int) -> str:
+    if last_7d_count >= 3:
+        return "on_track"
+    if last_7d_count >= 1 or last_14d_count >= 2:
+        return "at_risk"
+    if last_14d_count == 0:
+        return "unknown"
+    return "off_track"
+
+
+def _extract_subjective_state(snapshot: Optional[Dict[str, Any]]) -> Dict[str, str]:
+    unknowns = {
+        "last_reported_energy": "unknown",
+        "last_reported_soreness": "unknown",
+        "last_reported_sleep": "unknown",
+    }
+    if not snapshot:
+        return unknowns
+    subjective_state = snapshot.get("subjective_state")
+    if not isinstance(subjective_state, dict):
+        return unknowns
+    return {
+        "last_reported_energy": str(subjective_state.get("energy", "unknown")),
+        "last_reported_soreness": str(subjective_state.get("soreness", "unknown")),
+        "last_reported_sleep": str(subjective_state.get("sleep", "unknown")),
+    }
+
+
+def _data_quality(snapshot: Dict[str, Any]) -> str:
+    score = 0
+    if snapshot.get("last_activity_type") and snapshot.get("last_activity_type") != "unknown":
+        score += 1
+    if snapshot.get("last_7d_activity_count", 0) > 0:
+        score += 1
+    if snapshot.get("last_reported_energy") != "unknown":
+        score += 1
+    if snapshot.get("last_reported_soreness") != "unknown":
+        score += 1
+    if snapshot.get("last_reported_sleep") != "unknown":
+        score += 1
+    if score >= 4:
+        return "high"
+    if score >= 2:
+        return "medium"
+    return "low"
+
+
+def recompute_progress_snapshot(athlete_id: str, now_epoch: Optional[int] = None) -> bool:
+    now = int(now_epoch if now_epoch is not None else time.time())
+    latest = _latest_manual_snapshot(athlete_id)
+    if latest is None:
+        return ensure_progress_snapshot_exists(athlete_id)
+
+    last_7d = _count_recent_snapshots(athlete_id, now, 7)
+    last_14d = _count_recent_snapshots(athlete_id, now, 14)
+    subjective = _extract_subjective_state(latest)
+
+    snapshot: Dict[str, Any] = {
+        "athlete_id": athlete_id,
+        "last_activity_at": latest.get("timestamp"),
+        "last_activity_type": str(latest.get("activity_type", "unknown")),
+        "last_7d_activity_count": last_7d,
+        "last_14d_activity_count": last_14d,
+        "consistency_status": _consistency_status(last_7d),
+        "trend_direction": _trend_direction(athlete_id, now),
+        "goal_alignment": _goal_alignment(last_7d, last_14d),
+        "last_reported_energy": subjective["last_reported_energy"],
+        "last_reported_soreness": subjective["last_reported_soreness"],
+        "last_reported_sleep": subjective["last_reported_sleep"],
+        "updated_at": now,
+    }
+    snapshot["data_quality"] = _data_quality(snapshot)
+    snapshot = normalize_progress_snapshot(snapshot, athlete_id=athlete_id)
+
+    try:
+        table = dynamodb.Table(PROGRESS_SNAPSHOTS_TABLE)
+        table.put_item(Item=snapshot)
+        return True
+    except ClientError as e:
+        logger.error(f"Error writing progress snapshot athlete_id={athlete_id}: {e}")
+        return False
+
+
 def append_plan_history(
     athlete_id: str,
-    plan_version_ts: int,
+    plan_version: int,
     plan: Dict[str, Any],
+    logical_request_id: str,
+    updated_at: int,
     rationale: Optional[str] = None,
     changes_from_previous: Optional[List[str]] = None,
 ) -> bool:
     """Appends an immutable training-plan snapshot."""
     try:
         table = dynamodb.Table(PLAN_HISTORY_TABLE)
-        now = int(time.time())
         item: Dict[str, Any] = {
             "athlete_id": athlete_id,
-            "plan_version_ts": int(plan_version_ts),
+            "plan_version": int(plan_version),
+            "updated_at": int(updated_at),
+            "logical_request_id": str(logical_request_id),
             "plan": plan,
-            "created_at": now,
         }
         if rationale:
             item["rationale"] = rationale
@@ -530,20 +1034,51 @@ def append_plan_history(
 
         table.put_item(
             Item=item,
-            ConditionExpression="attribute_not_exists(plan_version_ts)",
+            ConditionExpression="attribute_not_exists(plan_version)",
         )
         return True
     except ClientError as e:
         error_code = e.response.get("Error", {}).get("Code", "")
         if error_code == "ConditionalCheckFailedException":
             logger.warning(
-                f"Plan history already exists athlete_id={athlete_id}, plan_version_ts={plan_version_ts}"
+                f"Plan history already exists athlete_id={athlete_id}, plan_version={plan_version}"
             )
             return False
         logger.error(
-            f"Error appending plan history athlete_id={athlete_id}, plan_version_ts={plan_version_ts}: {e}"
+            f"Error appending plan history athlete_id={athlete_id}, plan_version={plan_version}: {e}"
         )
         return False
+    except Exception as e:
+        logger.error(
+            f"Unexpected error appending plan history athlete_id={athlete_id}, plan_version={plan_version}: {e}"
+        )
+        return False
+
+
+def get_plan_history(
+    athlete_id: str,
+    *,
+    limit: int = 50,
+    cursor: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Returns immutable plan history for one athlete in ascending plan_version order."""
+    try:
+        table = dynamodb.Table(PLAN_HISTORY_TABLE)
+        query_kwargs: Dict[str, Any] = {
+            "KeyConditionExpression": Key("athlete_id").eq(athlete_id),
+            "ScanIndexForward": True,
+            "Limit": max(1, min(int(limit), 200)),
+        }
+        if cursor:
+            query_kwargs["ExclusiveStartKey"] = cursor
+        response = table.query(**query_kwargs)
+        return {
+            "items": response.get("Items", []),
+            "cursor": response.get("LastEvaluatedKey"),
+        }
+    except ClientError as e:
+        logger.error(f"Error getting plan history athlete_id={athlete_id}: {e}")
+        return {"items": [], "cursor": None}
 
 
 def log_recommendation(
@@ -596,58 +1131,195 @@ def log_recommendation(
 # CURRENT PLAN (Stored in coach_profiles.current_plan)
 # ============================================================================
 
+_PLAN_PHASES = {"base", "build", "peak", "recovery", "unknown"}
+_PLAN_STATUSES = {"active", "adjusting", "recovery"}
+
+
 def _default_plan_start_date(now_epoch: Optional[int] = None) -> str:
     if now_epoch is None:
         now_epoch = int(time.time())
     return datetime.fromtimestamp(now_epoch, tz=timezone.utc).strftime("%Y-%m-%d")
 
 
-def _build_default_current_plan(goal: Optional[str], now_epoch: Optional[int] = None) -> Dict[str, Any]:
-    """
-    Builds a minimal, structured starter plan.
+def _normalize_next_recommended_session(value: Any, fallback_date: str) -> Dict[str, Any]:
+    if not isinstance(value, dict):
+        return {
+            "date": fallback_date,
+            "type": "easy",
+            "target": "30 minutes easy effort",
+        }
+    date_value = str(value.get("date", "")).strip() or fallback_date
+    type_value = str(value.get("type", "")).strip() or "easy"
+    target_value = str(value.get("target", "")).strip() or "30 minutes easy effort"
+    return {"date": date_value, "type": type_value, "target": target_value}
 
-    Required shape:
-    - goal
-    - start_date
-    - week_index
-    - sessions: [{date, type, target}]
-    - revision
-    """
-    start_date = _default_plan_start_date(now_epoch=now_epoch)
-    normalized_goal = (goal or "").strip() or "Build consistency"
+
+def normalize_current_plan(plan: Optional[Dict[str, Any]], fallback_goal: Optional[str] = None) -> Dict[str, Any]:
+    now = int(time.time())
+    start_date = _default_plan_start_date(now_epoch=now)
+    plan = plan or {}
+    primary_goal = str(
+        plan.get("primary_goal", "") or fallback_goal or "Build consistency"
+    ).strip() or "Build consistency"
+
+    phase = str(plan.get("current_phase", "unknown")).strip().lower()
+    if phase not in _PLAN_PHASES:
+        phase = "unknown"
+    focus = str(plan.get("current_focus", "")).strip() or "Build consistency"
+
+    status = str(plan.get("plan_status", "active")).strip().lower()
+    if status not in _PLAN_STATUSES:
+        status = "active"
+
+    plan_version_raw = plan.get("plan_version")
+    if isinstance(plan_version_raw, int) and plan_version_raw >= 1:
+        plan_version = plan_version_raw
+    else:
+        plan_version = 1
+
+    updated_at_raw = plan.get("updated_at")
+    if isinstance(updated_at_raw, int) and updated_at_raw > 0:
+        updated_at = updated_at_raw
+    else:
+        updated_at = now
+
+    next_session = _normalize_next_recommended_session(
+        plan.get("next_recommended_session"), fallback_date=start_date
+    )
     return {
-        "goal": normalized_goal,
-        "start_date": start_date,
-        "week_index": 1,
-        "sessions": [
-            {"date": start_date, "type": "easy", "target": "30 minutes easy effort"},
-        ],
-        "revision": 1,
+        "primary_goal": primary_goal,
+        "plan_version": plan_version,
+        "current_phase": phase,
+        "current_focus": focus,
+        "next_recommended_session": next_session,
+        "plan_status": status,
+        "updated_at": updated_at,
     }
 
 
-def ensure_current_plan(email: str, fallback_goal: Optional[str] = None) -> bool:
+def _build_default_current_plan(goal: Optional[str], now_epoch: Optional[int] = None) -> Dict[str, Any]:
+    """
+    Builds a minimal starter current-plan object in Story 1.2 shape.
+    """
+    now = int(now_epoch if now_epoch is not None else time.time())
+    start_date = _default_plan_start_date(now_epoch=now)
+    normalized_goal = (goal or "").strip() or "Build consistency"
+    return normalize_current_plan(
+        {
+            "primary_goal": normalized_goal,
+            "plan_version": 1,
+            "current_phase": "base",
+            "current_focus": "Build consistency",
+            "next_recommended_session": {
+                "date": start_date,
+                "type": "easy",
+                "target": "30 minutes easy effort",
+            },
+            "plan_status": "active",
+            "updated_at": now,
+        },
+        fallback_goal=normalized_goal,
+    )
+
+
+def _serialize_item(item: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    return {k: _TYPE_SERIALIZER.serialize(v) for k, v in item.items()}
+
+
+def _serialize_values(values: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    return {k: _TYPE_SERIALIZER.serialize(v) for k, v in values.items()}
+
+
+def _normalize_changes_from_previous(changes_from_previous: Optional[List[str]]) -> List[str]:
+    if not changes_from_previous:
+        return []
+    normalized: List[str] = []
+    for entry in changes_from_previous:
+        value = str(entry).strip()
+        if value:
+            normalized.append(value)
+    return normalized
+
+
+def _normalize_plan_updates(updates: Dict[str, Any]) -> Dict[str, Any]:
+    normalized: Dict[str, Any] = {}
+    for key in ("primary_goal", "current_phase", "current_focus", "plan_status"):
+        value = updates.get(key)
+        if isinstance(value, str) and value.strip():
+            normalized[key] = value.strip()
+    if "next_recommended_session" in updates:
+        normalized["next_recommended_session"] = _normalize_next_recommended_session(
+            updates.get("next_recommended_session"),
+            fallback_date=_default_plan_start_date(),
+        )
+    return normalized
+
+
+def _compute_plan_update_payload_hash(
+    athlete_id: str,
+    updates: Dict[str, Any],
+    rationale: Optional[str],
+    changes_from_previous: Optional[List[str]],
+) -> str:
+    canonical_payload = {
+        "athlete_id": athlete_id,
+        "updates": _normalize_plan_updates(updates),
+        "rationale": str(rationale or "").strip(),
+        "changes_from_previous": _normalize_changes_from_previous(changes_from_previous),
+    }
+    canonical_json = json.dumps(canonical_payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+
+
+def _get_raw_coach_profile(athlete_id: str) -> Optional[Dict[str, Any]]:
+    try:
+        table = dynamodb.Table(COACH_PROFILES_TABLE)
+        response = table.get_item(Key={"athlete_id": athlete_id})
+        return response.get("Item")
+    except ClientError as e:
+        logger.error(f"Error getting raw coach profile athlete_id={athlete_id}: {e}")
+        return None
+
+
+def _get_plan_update_request(athlete_id: str, logical_request_id: str) -> Optional[Dict[str, Any]]:
+    try:
+        table = dynamodb.Table(PLAN_UPDATE_REQUESTS_TABLE)
+        response = table.get_item(
+            Key={"athlete_id": athlete_id, "logical_request_id": logical_request_id}
+        )
+        return response.get("Item")
+    except ClientError as e:
+        logger.error(
+            "Error reading plan update request athlete_id=%s logical_request_id=%s: %s",
+            athlete_id,
+            logical_request_id,
+            e,
+        )
+        return None
+
+
+def ensure_current_plan(athlete_id: str, fallback_goal: Optional[str] = None) -> bool:
     """
     Ensures coach_profiles.current_plan exists for a user.
 
     If current_plan already exists, it is left unchanged.
     """
     try:
-        existing_profile = get_coach_profile(email) or {}
+        existing_profile = _get_raw_coach_profile(athlete_id) or {}
         existing_plan = existing_profile.get("current_plan")
         if isinstance(existing_plan, dict) and existing_plan:
             return True
 
-        goal = str(existing_profile.get("goal", "")).strip() or fallback_goal
+        goal = str(existing_profile.get("primary_goal", "")).strip() or fallback_goal
         default_plan = _build_default_current_plan(goal=goal)
         now = int(time.time())
         table = dynamodb.Table(COACH_PROFILES_TABLE)
         table.update_item(
-            Key={"email": email.lower()},
+            Key={"athlete_id": athlete_id},
             UpdateExpression="""
                 SET #created_at = if_not_exists(#created_at, :created_at),
                     #updated_at = :updated_at,
-                    #current_plan = if_not_exists(#current_plan, :current_plan)
+                    #current_plan = :current_plan
             """,
             ExpressionAttributeNames={
                 "#created_at": "created_at",
@@ -659,53 +1331,233 @@ def ensure_current_plan(email: str, fallback_goal: Optional[str] = None) -> bool
                 ":updated_at": now,
                 ":current_plan": default_plan,
             },
+            ConditionExpression="attribute_not_exists(#current_plan)",
         )
+        history_ok = append_plan_history(
+            athlete_id=athlete_id,
+            plan_version=1,
+            plan=default_plan,
+            logical_request_id=f"ensure_current_plan:{athlete_id}",
+            updated_at=default_plan["updated_at"],
+            rationale="initial_plan_created",
+            changes_from_previous=["initial_version"],
+        )
+        if not history_ok:
+            logger.error("Failed appending initial plan history athlete_id=%s", athlete_id)
+            return False
         return True
     except ClientError as e:
-        logger.error(f"Error ensuring current plan for {email}: {e}")
+        error_code = e.response.get("Error", {}).get("Code", "")
+        if error_code == "ConditionalCheckFailedException":
+            return True
+        logger.error(f"Error ensuring current plan for athlete_id={athlete_id}: {e}")
         return False
 
 
-def get_current_plan(email: str) -> Optional[Dict[str, Any]]:
+def get_current_plan(athlete_id: str) -> Optional[Dict[str, Any]]:
     """Returns current_plan map for a user if present."""
-    profile = get_coach_profile(email)
+    profile = _get_raw_coach_profile(athlete_id)
     if not profile:
         return None
     plan = profile.get("current_plan")
     if isinstance(plan, dict):
-        return plan
+        return normalize_current_plan(plan, fallback_goal=profile.get("primary_goal"))
     return None
 
 
-def fetch_current_plan_summary(email: str) -> Optional[str]:
+def fetch_current_plan_summary(athlete_id: str) -> Optional[str]:
     """
     Returns a compact human-readable plan summary for reply composition.
     """
-    plan = get_current_plan(email)
+    plan = get_current_plan(athlete_id)
     if not plan:
         return None
 
-    goal = str(plan.get("goal", "")).strip() or "Unknown goal"
-    start_date = str(plan.get("start_date", "")).strip() or "unknown"
-    week_index = int(plan.get("week_index", 1) or 1)
-    revision = int(plan.get("revision", 1) or 1)
-    sessions = plan.get("sessions")
-
-    session_chunks: List[str] = []
-    if isinstance(sessions, list):
-        for session in sessions[:3]:
-            if not isinstance(session, dict):
-                continue
-            date_value = str(session.get("date", "")).strip() or "unknown-date"
-            type_value = str(session.get("type", "")).strip() or "session"
-            target_value = str(session.get("target", "")).strip() or "target TBD"
-            session_chunks.append(f"{date_value}: {type_value} ({target_value})")
-
-    sessions_text = "; ".join(session_chunks) if session_chunks else "No sessions yet."
-    return (
-        f"Current plan - Goal: {goal}. Start: {start_date}. "
-        f"Week: {week_index}. Revision: {revision}. Sessions: {sessions_text}"
+    goal = str(plan.get("primary_goal", "")).strip() or "Unknown goal"
+    version = int(plan.get("plan_version", 1) or 1)
+    phase = str(plan.get("current_phase", "unknown")).strip() or "unknown"
+    focus = str(plan.get("current_focus", "")).strip() or "TBD"
+    status = str(plan.get("plan_status", "active")).strip() or "active"
+    next_session = _normalize_next_recommended_session(
+        plan.get("next_recommended_session"), fallback_date="unknown-date"
     )
+    next_session_text = (
+        f"{next_session['date']}: {next_session['type']} ({next_session['target']})"
+    )
+    return (
+        f"Current plan - Goal: {goal}. Version: {version}. "
+        f"Phase: {phase}. Focus: {focus}. Status: {status}. "
+        f"Next session: {next_session_text}"
+    )
+
+
+def update_current_plan(
+    athlete_id: str,
+    updates: Dict[str, Any],
+    *,
+    logical_request_id: str,
+    rationale: Optional[str] = None,
+    changes_from_previous: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """
+    Applies a versioned current-plan update.
+
+    Guarantees:
+    - one active plan in coach_profiles.current_plan
+    - plan_version increments on each successful update
+    - immutable snapshot appended to plan_history
+    """
+    normalized_request_id = str(logical_request_id or "").strip()
+    if not normalized_request_id:
+        return {
+            "status": "validation_error",
+            "plan_version": None,
+            "error_code": "missing_logical_request_id",
+        }
+
+    payload_hash = _compute_plan_update_payload_hash(
+        athlete_id=athlete_id,
+        updates=updates,
+        rationale=rationale,
+        changes_from_previous=changes_from_previous,
+    )
+
+    for attempt in range(2):
+        current = get_current_plan(athlete_id)
+        if current is None:
+            if not ensure_current_plan(athlete_id):
+                return {
+                    "status": "validation_error",
+                    "plan_version": None,
+                    "error_code": "missing_current_plan",
+                }
+            current = get_current_plan(athlete_id)
+        if current is None:
+            return {
+                "status": "validation_error",
+                "plan_version": None,
+                "error_code": "missing_current_plan",
+            }
+
+        normalized_current = normalize_current_plan(
+            current, fallback_goal=current.get("primary_goal")
+        )
+        expected_version = int(normalized_current.get("plan_version", 1))
+        merged = dict(normalized_current)
+        merged.update(_normalize_plan_updates(updates))
+
+        if str(merged.get("current_phase", "unknown")).lower() not in _PLAN_PHASES:
+            merged["current_phase"] = "unknown"
+        if str(merged.get("plan_status", "active")).lower() not in _PLAN_STATUSES:
+            merged["plan_status"] = "active"
+
+        merged["plan_version"] = expected_version + 1
+        merged["updated_at"] = int(time.time())
+        merged = normalize_current_plan(merged, fallback_goal=merged.get("primary_goal"))
+        next_version = int(merged["plan_version"])
+
+        now = int(time.time())
+        ledger_item = {
+            "athlete_id": athlete_id,
+            "logical_request_id": normalized_request_id,
+            "payload_hash": payload_hash,
+            "resulting_plan_version": next_version,
+            "status": "applied",
+            "created_at": now,
+            "updated_at": now,
+        }
+        history_item = {
+            "athlete_id": athlete_id,
+            "plan_version": next_version,
+            "updated_at": merged["updated_at"],
+            "logical_request_id": normalized_request_id,
+            "plan": merged,
+        }
+        if rationale:
+            history_item["rationale"] = rationale
+        normalized_changes = _normalize_changes_from_previous(changes_from_previous)
+        if normalized_changes:
+            history_item["changes_from_previous"] = normalized_changes
+
+        try:
+            dynamodb.meta.client.transact_write_items(
+                TransactItems=[
+                    {
+                        "Put": {
+                            "TableName": PLAN_UPDATE_REQUESTS_TABLE,
+                            "Item": _serialize_item(ledger_item),
+                            "ConditionExpression": "attribute_not_exists(logical_request_id)",
+                        }
+                    },
+                    {
+                        "Update": {
+                            "TableName": COACH_PROFILES_TABLE,
+                            "Key": _serialize_item({"athlete_id": athlete_id}),
+                            "UpdateExpression": "SET #updated_at = :updated_at, #current_plan = :current_plan",
+                            "ConditionExpression": "#current_plan.#plan_version = :expected_version",
+                            "ExpressionAttributeNames": {
+                                "#updated_at": "updated_at",
+                                "#current_plan": "current_plan",
+                                "#plan_version": "plan_version",
+                            },
+                            "ExpressionAttributeValues": _serialize_values(
+                                {
+                                    ":updated_at": now,
+                                    ":current_plan": merged,
+                                    ":expected_version": expected_version,
+                                }
+                            ),
+                        }
+                    },
+                    {
+                        "Put": {
+                            "TableName": PLAN_HISTORY_TABLE,
+                            "Item": _serialize_item(history_item),
+                            "ConditionExpression": "attribute_not_exists(plan_version)",
+                        }
+                    },
+                ],
+            )
+            return {"status": "applied", "plan_version": next_version, "error_code": None}
+        except ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code", "")
+            if error_code != "TransactionCanceledException":
+                logger.error("Error updating current plan athlete_id=%s: %s", athlete_id, e)
+                return {
+                    "status": "validation_error",
+                    "plan_version": None,
+                    "error_code": "transaction_error",
+                }
+
+            existing_request = _get_plan_update_request(athlete_id, normalized_request_id)
+            if existing_request is not None:
+                existing_hash = str(existing_request.get("payload_hash", ""))
+                existing_version = existing_request.get("resulting_plan_version")
+                if existing_hash == payload_hash:
+                    return {
+                        "status": "idempotent_replay",
+                        "plan_version": int(existing_version) if isinstance(existing_version, int) else None,
+                        "error_code": None,
+                    }
+                return {
+                    "status": "payload_conflict",
+                    "plan_version": None,
+                    "error_code": "logical_request_id_payload_mismatch",
+                }
+
+            if attempt == 0:
+                continue
+            return {
+                "status": "retryable_concurrency_error",
+                "plan_version": None,
+                "error_code": "version_conflict",
+            }
+
+    return {
+        "status": "retryable_concurrency_error",
+        "plan_version": None,
+        "error_code": "version_conflict",
+    }
 
 
 # ============================================================================

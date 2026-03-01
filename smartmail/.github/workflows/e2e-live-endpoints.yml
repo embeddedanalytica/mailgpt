@@ -1,0 +1,47 @@
+name: E2E Live Endpoints
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 9 * * *'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  e2e-live:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sam-app
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Configure AWS credentials (OIDC)
+        if: ${{ secrets.AWS_ROLE_TO_ASSUME != '' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: us-west-2
+
+      - name: Configure AWS credentials (Access Keys fallback)
+        if: ${{ secrets.AWS_ROLE_TO_ASSUME == '' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-west-2
+
+      - name: Verify AWS identity
+        run: aws sts get-caller-identity
+
+      - name: Run live endpoint E2E tests
+        run: python -m unittest e2e/test_live_endpoints.py

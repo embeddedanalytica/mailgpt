@@ -1,4 +1,4 @@
-"""Unit tests for profile extraction (goal, weekly time, sports)."""
+"""Unit tests for refined profile extraction and gating."""
 import unittest
 from unittest import mock
 
@@ -8,47 +8,35 @@ from openai_responder import ProfileExtractionError
 
 class TestParseProfileUpdates(unittest.TestCase):
     @mock.patch("profile.ProfileExtractor.extract_profile_fields")
-    def test_parses_goal_weekly_sports_from_llm(self, mock_extract):
+    def test_parses_refined_profile_fields(self, mock_extract):
         mock_extract.return_value = {
-            "goal": "run a marathon  ",
-            "weekly_time_budget_minutes": 300,
-            "sports": ["Running", "strength", "running"],
+            "primary_goal": "run a marathon  ",
+            "time_availability": {"sessions_per_week": 4, "hours_per_week": 6},
+            "experience_level": "Intermediate",
+            "experience_level_note": "returning after break",
+            "constraints": [
+                {"type": "injury", "summary": "left knee pain", "severity": "medium", "active": True},
+                {"type": "schedule", "summary": "weekday mornings only"},
+            ],
         }
-        body = (
-            "Goal: run a marathon\n"
-            "I can train 5 hours per week.\n"
-            "Sports: running, strength."
-        )
+        body = "My goal is marathon. I can do 4 sessions or 6 hours weekly."
         updates = profile_module.parse_profile_updates_from_email(body)
-        self.assertEqual(updates.get("goal"), "run a marathon")
-        self.assertEqual(updates.get("weekly_time_budget_minutes"), 300)
-        self.assertEqual(sorted(updates.get("sports", [])), ["running", "strength"])
+        self.assertEqual(updates.get("primary_goal"), "run a marathon")
+        self.assertEqual(updates.get("time_availability", {}).get("sessions_per_week"), 4)
+        self.assertEqual(updates.get("time_availability", {}).get("hours_per_week"), 6.0)
+        self.assertEqual(updates.get("experience_level"), "intermediate")
+        self.assertEqual(updates.get("experience_level_note"), "returning after break")
+        self.assertEqual(len(updates.get("constraints", [])), 2)
 
     @mock.patch("profile.ProfileExtractor.extract_profile_fields")
-    def test_unknown_markers_from_llm_flags(self, mock_extract):
+    def test_defaults_experience_to_unknown_when_missing(self, mock_extract):
         mock_extract.return_value = {
-            "goal": None,
-            "goal_unknown": True,
-            "weekly_time_budget_minutes": None,
-            "weekly_time_budget_unknown": True,
-            "sports": None,
-            "sports_unknown": True,
+            "primary_goal": "stay healthy",
+            "time_availability": {"hours_per_week": 3},
         }
-        body = "User did not specify details."
+        body = "I want to stay healthy."
         updates = profile_module.parse_profile_updates_from_email(body)
-        self.assertTrue(updates.get("goal_unknown"))
-        self.assertTrue(updates.get("weekly_time_budget_unknown"))
-        self.assertTrue(updates.get("sports_unknown"))
-
-    @mock.patch("profile.ProfileExtractor.extract_profile_fields")
-    def test_unknown_markers_from_text_fallback(self, mock_extract):
-        # LLM omits unknown flags, but text contains explicit unknown markers.
-        mock_extract.return_value = {}
-        body = "My goal is unknown. Weekly time not sure. Sports n/a"
-        updates = profile_module.parse_profile_updates_from_email(body)
-        self.assertTrue(updates.get("goal_unknown"))
-        self.assertTrue(updates.get("weekly_time_budget_unknown"))
-        self.assertTrue(updates.get("sports_unknown"))
+        self.assertEqual(updates.get("experience_level"), "unknown")
 
     @mock.patch("profile.ProfileExtractor.extract_profile_fields")
     def test_llm_failure_fails_closed(self, mock_extract):
@@ -63,30 +51,36 @@ class TestGetMissingRequiredProfileFields(unittest.TestCase):
     def test_all_missing(self):
         self.assertEqual(
             profile_module.get_missing_required_profile_fields({}),
-            ["goal", "weekly_time_budget_minutes", "sports"],
+            ["primary_goal", "time_availability", "experience_level", "constraints"],
         )
 
     def test_none_missing(self):
         profile = {
-            "goal": "10k",
-            "weekly_time_budget_minutes": 60,
-            "sports": ["running"],
+            "primary_goal": "10k PR",
+            "time_availability": {"hours_per_week": 4.5},
+            "experience_level": "unknown",
+            "constraints": [],
         }
         self.assertEqual(profile_module.get_missing_required_profile_fields(profile), [])
 
-    def test_unknown_markers_count_as_provided(self):
-        profile = {"goal_unknown": True, "weekly_time_budget_unknown": True, "sports_unknown": True}
-        self.assertEqual(profile_module.get_missing_required_profile_fields(profile), [])
+    def test_missing_constraints_list_is_invalid(self):
+        profile = {
+            "primary_goal": "10k PR",
+            "time_availability": {"sessions_per_week": 3},
+            "experience_level": "beginner",
+        }
+        self.assertEqual(profile_module.get_missing_required_profile_fields(profile), ["constraints"])
 
 
 class TestBuildProfileCollectionReply(unittest.TestCase):
     def test_lists_missing_fields(self):
         reply = profile_module.build_profile_collection_reply(
-            ["goal", "weekly_time_budget_minutes", "sports"]
+            ["primary_goal", "time_availability", "experience_level", "constraints"]
         )
-        self.assertIn("training goal", reply)
-        self.assertIn("weekly time budget", reply)
-        self.assertIn("Sports", reply)
+        self.assertIn("primary goal", reply)
+        self.assertIn("time availability", reply)
+        self.assertIn("experience level", reply)
+        self.assertIn("constraints", reply.lower())
         self.assertIn("unknown", reply)
 
 

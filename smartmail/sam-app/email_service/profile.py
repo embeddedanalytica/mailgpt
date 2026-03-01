@@ -6,6 +6,7 @@ import re
 from typing import Optional, Dict, Any, List
 
 from openai_responder import ProfileExtractor, ProfileExtractionError
+from email_copy import EmailCopy
 
 
 def _contains_unknown_marker(text: str) -> bool:
@@ -180,11 +181,10 @@ def _extract_sports_with_keywords(text: str) -> List[str]:
 
 def parse_profile_updates_from_email(body: str) -> Dict[str, Any]:
     """
-    Parse coach profile updates from email body (goal, weekly time, sports).
+    Parse athlete profile updates from email body.
 
-    Uses an LLM-backed extractor for primary parsing, with deterministic
-    normalization and unknown-marker handling here. On LLM failure, this
-    function fails closed by returning an empty updates dict.
+    Uses an LLM-backed extractor for primary parsing. On extraction failure,
+    returns an empty updates dict (fail closed).
     """
     updates: Dict[str, Any] = {}
 
@@ -192,48 +192,59 @@ def parse_profile_updates_from_email(body: str) -> Dict[str, Any]:
         raw = ProfileExtractor.extract_profile_fields(body)
     except ProfileExtractionError:
         # Fail closed: do not apply any profile updates if extraction fails.
-        raw = {}
+        return {}
 
-    # Goal
-    goal_value = raw.get("goal")
-    if isinstance(goal_value, str):
-        goal_value = goal_value.strip()
-    if goal_value:
-        updates["goal"] = goal_value
-    elif _contains_unknown_marker(body) and re.search(r"\bgoal\b", body, re.IGNORECASE):
-        # Preserve deterministic handling of explicit unknown-style markers
-        updates["goal_unknown"] = True
-    elif isinstance(raw.get("goal_unknown"), bool) and raw.get("goal_unknown"):
-        updates["goal_unknown"] = True
+    primary_goal = raw.get("primary_goal")
+    if isinstance(primary_goal, str) and primary_goal.strip():
+        updates["primary_goal"] = primary_goal.strip()
 
-    # Weekly time budget (minutes)
-    weekly_minutes = raw.get("weekly_time_budget_minutes")
-    if isinstance(weekly_minutes, int) and weekly_minutes > 0:
-        updates["weekly_time_budget_minutes"] = weekly_minutes
-    elif _contains_unknown_marker(body) and re.search(
-        r"\b(week|weekly|hours?|minutes?|time)\b", body, re.IGNORECASE
-    ):
-        updates["weekly_time_budget_unknown"] = True
-    elif isinstance(raw.get("weekly_time_budget_unknown"), bool) and raw.get(
-        "weekly_time_budget_unknown"
-    ):
-        updates["weekly_time_budget_unknown"] = True
+    time_availability = raw.get("time_availability")
+    if isinstance(time_availability, dict):
+        normalized_time: Dict[str, Any] = {}
+        sessions_per_week = time_availability.get("sessions_per_week")
+        if isinstance(sessions_per_week, (int, float)) and int(sessions_per_week) > 0:
+            normalized_time["sessions_per_week"] = int(sessions_per_week)
+        hours_per_week = time_availability.get("hours_per_week")
+        if isinstance(hours_per_week, (int, float)) and float(hours_per_week) > 0:
+            normalized_time["hours_per_week"] = float(hours_per_week)
+        if normalized_time:
+            updates["time_availability"] = normalized_time
 
-    # Sports
-    sports = raw.get("sports")
-    normalized_sports: List[str] = []
-    if isinstance(sports, list):
-        for item in sports:
-            if isinstance(item, str):
-                token = item.strip().lower()
-                if token and token not in normalized_sports:
-                    normalized_sports.append(token)
-    if normalized_sports:
-        updates["sports"] = normalized_sports
-    elif _contains_unknown_marker(body) and re.search(r"\bsports?\b", body, re.IGNORECASE):
-        updates["sports_unknown"] = True
-    elif isinstance(raw.get("sports_unknown"), bool) and raw.get("sports_unknown"):
-        updates["sports_unknown"] = True
+    experience_level = raw.get("experience_level")
+    if isinstance(experience_level, str) and experience_level.strip():
+        updates["experience_level"] = experience_level.strip().lower()
+    else:
+        updates["experience_level"] = "unknown"
+
+    experience_level_note = raw.get("experience_level_note")
+    if isinstance(experience_level_note, str) and experience_level_note.strip():
+        updates["experience_level_note"] = experience_level_note.strip()
+
+    constraints = raw.get("constraints")
+    if isinstance(constraints, list):
+        normalized_constraints: List[Dict[str, Any]] = []
+        for item in constraints:
+            if not isinstance(item, dict):
+                continue
+            summary = str(item.get("summary", "")).strip()
+            if not summary:
+                continue
+            constraint_type = str(item.get("type", "other")).strip().lower() or "other"
+            severity = str(item.get("severity", "medium")).strip().lower() or "medium"
+            active = item.get("active")
+            if not isinstance(active, bool):
+                active = True
+            normalized_constraints.append(
+                {
+                    "type": constraint_type,
+                    "summary": summary,
+                    "severity": severity,
+                    "active": active,
+                }
+            )
+        updates["constraints"] = normalized_constraints
+    elif _contains_unknown_marker(body) and "constraints" in body.lower():
+        updates["constraints"] = []
 
     return updates
 
@@ -243,39 +254,37 @@ def get_missing_required_profile_fields(profile: Optional[Dict[str, Any]]) -> Li
     profile = profile or {}
     missing: List[str] = []
 
-    goal = str(profile.get("goal", "")).strip()
-    if not goal and not bool(profile.get("goal_unknown")):
-        missing.append("goal")
+    primary_goal = str(profile.get("primary_goal", "")).strip()
+    if not primary_goal:
+        missing.append("primary_goal")
 
-    weekly_minutes = profile.get("weekly_time_budget_minutes")
-    # Treat any non-empty value (string, number, etc.) as present. No type checks.
-    has_weekly_minutes = bool(str(weekly_minutes).strip()) if weekly_minutes is not None else False
+    time_availability = profile.get("time_availability")
+    has_time = False
+    if isinstance(time_availability, dict):
+        sessions_per_week = time_availability.get("sessions_per_week")
+        hours_per_week = time_availability.get("hours_per_week")
+        has_sessions = isinstance(sessions_per_week, int) and sessions_per_week > 0
+        has_hours = isinstance(hours_per_week, (int, float)) and float(hours_per_week) > 0
+        has_time = has_sessions or has_hours
+    if not has_time:
+        missing.append("time_availability")
 
-    if not has_weekly_minutes and not bool(profile.get("weekly_time_budget_unknown")):
-        missing.append("weekly_time_budget_minutes")
+    experience_level = str(profile.get("experience_level", "")).strip().lower()
+    if experience_level not in {"beginner", "intermediate", "advanced", "unknown"}:
+        missing.append("experience_level")
 
-    sports = profile.get("sports")
-    valid_sports = isinstance(sports, list) and len(sports) > 0
-    if not valid_sports and not bool(profile.get("sports_unknown")):
-        missing.append("sports")
+    constraints = profile.get("constraints")
+    if not isinstance(constraints, list):
+        missing.append("constraints")
 
     return missing
 
 
 def build_profile_collection_reply(missing_fields: List[str]) -> str:
     """Build the reply text asking the user for missing profile fields."""
-    prompts = []
-    if "goal" in missing_fields:
-        prompts.append("- Your training goal (e.g., 10k PR, first marathon, improve fitness)")
-    if "weekly_time_budget_minutes" in missing_fields:
-        prompts.append("- Your weekly time budget (minutes or hours per week)")
-    if "sports" in missing_fields:
-        prompts.append("- Sports you want coaching for (e.g., running, cycling)")
-
-    joined_prompts = "\n".join(prompts)
+    joined_prompts = "\n".join(EmailCopy.build_profile_collection_lines(missing_fields))
     return (
-        "Thanks - before I can coach effectively, I need a bit more context.\n\n"
-        "Please reply with:\n"
+        f"{EmailCopy.PROFILE_COLLECTION_INTRO}"
         f"{joined_prompts}\n\n"
-        "If any item is unknown right now, you can say \"unknown\" for that item."
+        f"{EmailCopy.PROFILE_COLLECTION_UNKNOWN_HINT}"
     )

@@ -25,6 +25,8 @@ class EmailProcessor:
             date_received = sns_message["mail"]["commonHeaders"]["date"]
             to_recipients = sns_message["mail"]["commonHeaders"].get("to", [])
             cc_recipients = sns_message["mail"]["commonHeaders"].get("cc", [])
+            in_reply_to = sns_message["mail"]["commonHeaders"].get("inReplyTo")
+            references = sns_message["mail"]["commonHeaders"].get("references")
 
             logger.info(
                 "Email received sender_email %s, to_recipients: %s, cc_recipients: %s, recipient_email: %s",
@@ -48,6 +50,8 @@ class EmailProcessor:
                 "date_received": date_received,
                 "to_recipients": to_recipients,
                 "cc_recipients": cc_recipients,
+                "in_reply_to": in_reply_to,
+                "references": references,
             }
         except Exception as e:
             logger.error("Error parsing SNS event: %s", e)

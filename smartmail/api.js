@@ -1,4 +1,5 @@
-const API_BASE_URL = "https://pzv9s7kmjd.execute-api.us-west-2.amazonaws.com";
+const API_BASE_URL =
+  (typeof window !== "undefined" && window.SMARTMAIL_API_BASE) || "https://geniml.com";
 
 async function parseJsonSafe(response) {
   const text = await response.text();
@@ -14,12 +15,23 @@ async function parseJsonSafe(response) {
   }
 }
 
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
 /**
  * Registers a waitlist email.
  * @param {string} email
  * @returns {Promise<{ok: boolean, message: string}>}
  */
 export async function registerUser(email) {
+  if (!isValidEmail(email)) {
+    return {
+      ok: false,
+      message: "Invalid email address"
+    };
+  }
+
   try {
     const response = await fetch(`${API_BASE_URL}/register`, {
       method: "POST",
@@ -33,19 +45,20 @@ export async function registerUser(email) {
     if (!response.ok) {
       return {
         ok: false,
-        message: apiMessage || "We could not complete your request right now. Please try again shortly."
+        message: apiMessage || `HTTP_${response.status}`
       };
     }
 
     return {
       ok: true,
-      message: apiMessage || "You are on the waitlist. We will reach out when your invite is ready."
+      message: apiMessage || "Waitlist submission successful"
     };
   } catch (error) {
-    console.error("Error submitting waitlist email:", error);
+    const detail = error?.message ?? String(error);
+    console.error("Error submitting waitlist email:", detail, error);
     return {
       ok: false,
-      message: "Network error. Please check your connection and try again."
+      message: "Network request failed"
     };
   }
 }

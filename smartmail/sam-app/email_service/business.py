@@ -9,6 +9,7 @@ from coaching import build_profile_gated_reply
 
 
 def get_reply_for_inbound(
+    athlete_id: str,
     from_email: str,
     email_data: Dict[str, Any],
     *,
@@ -22,9 +23,12 @@ def get_reply_for_inbound(
     All LLM and coaching decisions live here so you can iterate on the flow without touching the handler.
     """
     inbound_body = email_data.get("body", "")
+    inbound_message_id = str(email_data.get("message_id", "")).strip() or None
     return build_profile_gated_reply(
+        athlete_id=athlete_id,
         from_email=from_email,
         inbound_body=inbound_body,
+        inbound_message_id=inbound_message_id,
         aws_request_id=aws_request_id,
         log_outcome=log_outcome,
     )

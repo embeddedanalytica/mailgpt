@@ -121,5 +121,44 @@ class TestStravaOAuth(unittest.TestCase):
         self.assertEqual(response["statusCode"], 200)
 
 
+class TestVerificationWelcomeEmail(unittest.TestCase):
+    def test_send_post_verification_welcome_email_sends_ses_message(self):
+        ses_client = mock.Mock()
+        with mock.patch.object(app.boto3, "client", return_value=ses_client):
+            sent = app.send_post_verification_welcome_email("user@example.com")
+
+        self.assertTrue(sent)
+        ses_client.send_email.assert_called_once()
+
+    def test_route_action_verify_session_sends_welcome(self):
+        with (
+            mock.patch.object(app, "create_or_update_verified_session", return_value=True),
+            mock.patch.object(app, "send_post_verification_welcome_email", return_value=True) as mock_send_welcome,
+        ):
+            response = app.route_action(
+                token_id="tok_1",
+                action_type="VERIFY_SESSION",
+                token_data={"email": "user@example.com"},
+                now=123456,
+            )
+
+        self.assertEqual(response["statusCode"], 200)
+        mock_send_welcome.assert_called_once_with("user@example.com")
+
+    def test_route_action_verify_session_welcome_failure_still_succeeds(self):
+        with (
+            mock.patch.object(app, "create_or_update_verified_session", return_value=True),
+            mock.patch.object(app, "send_post_verification_welcome_email", return_value=False),
+        ):
+            response = app.route_action(
+                token_id="tok_1",
+                action_type="VERIFY_SESSION",
+                token_data={"email": "user@example.com"},
+                now=123456,
+            )
+
+        self.assertEqual(response["statusCode"], 200)
+
+
 if __name__ == "__main__":
     unittest.main()
