@@ -398,6 +398,7 @@ class VerifiedPathGateTests(unittest.TestCase):
         is_verified_mock.assert_not_called()
         handle_unverified_mock.assert_not_called()
         send_reply_mock.assert_called_once()
+        self.assertFalse(send_reply_mock.call_args.kwargs["include_thread_context"])
 
     def test_registered_unverified_sender_uses_verification_flow(self):
         email_data = self._verified_email_data()

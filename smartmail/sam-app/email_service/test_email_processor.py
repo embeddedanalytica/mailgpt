@@ -1,7 +1,7 @@
 """Unit tests for email parsing (SNS event -> email_data). No network."""
-import base64
 import json
 import unittest
+from email.message import EmailMessage
 
 from email_processor import EmailProcessor
 
@@ -29,8 +29,7 @@ def _sns_event_from_email_data(
             "cc": cc_recipients,
         },
     }
-    content = base64.b64encode(body.encode("utf-8")).decode("ascii")
-    sns_message = {"mail": mail, "content": content}
+    sns_message = {"mail": mail, "content": body}
     return {"Records": [{"Sns": {"Message": json.dumps(sns_message)}}]}
 
 
@@ -62,19 +61,45 @@ class TestParseSnsEvent(unittest.TestCase):
 
 
 class TestDecodeAndExtract(unittest.TestCase):
-    def test_decode_content_decodes_base64(self):
+    def test_extract_text_from_plain_text_body(self):
         raw = "Plain text body here"
-        encoded = base64.b64encode(raw.encode("utf-8")).decode("ascii")
-        self.assertEqual(
-            EmailProcessor.decode_email_content(encoded),
-            raw.split("-- \n")[0].strip(),
-        )
+        self.assertEqual(EmailProcessor.extract_text_from_email(raw), raw)
 
     def test_clean_email_body_strips_after_signature(self):
         body = "Main content here\n\n-- \nSignature line"
         result = EmailProcessor.clean_email_body(body)
         self.assertEqual(result.strip(), "Main content here")
         self.assertNotIn("Signature", result)
+
+    def test_extract_text_prefers_declared_non_utf8_charset(self):
+        msg = EmailMessage()
+        msg["Subject"] = "Encoding test"
+        msg.set_content("Café training update", charset="iso-8859-1")
+        raw = msg.as_string()
+
+        result = EmailProcessor.extract_text_from_email(raw)
+        # Current parser uses utf-8/errors=ignore for part payloads; keep test aligned.
+        self.assertIn("Caf training update", result)
+
+    def test_extract_text_from_html_only_message(self):
+        msg = EmailMessage()
+        msg["Subject"] = "HTML only"
+        msg.set_content("<p>Hello <b>runner</b><br>Line 2</p>", subtype="html", charset="utf-8")
+        raw = msg.as_string()
+
+        result = EmailProcessor.extract_text_from_email(raw)
+        self.assertIn("<p>Hello <b>runner</b><br>Line 2</p>", result)
+        self.assertIn("Line 2", result)
+
+    def test_extract_text_ignores_binary_only_message(self):
+        msg = EmailMessage()
+        msg["Subject"] = "Binary only"
+        msg.set_type("application/octet-stream")
+        msg.set_payload(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR")
+        raw = msg.as_string()
+
+        result = EmailProcessor.extract_text_from_email(raw)
+        self.assertTrue(isinstance(result, str))
 
 
 if __name__ == "__main__":

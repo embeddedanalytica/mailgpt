@@ -29,7 +29,6 @@ from email_copy import EmailCopy
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-
 def _aws_request_id_from_context(context: Any) -> Optional[str]:
     if context and hasattr(context, "aws_request_id"):
         return context.aws_request_id
@@ -74,6 +73,7 @@ def _handle_unregistered_sender(
             "text": EmailCopy.REGISTRATION_REQUIRED_REPLY,
             "html": EmailCopy.REGISTRATION_REQUIRED_REPLY_HTML,
         },
+        include_thread_context=False,
     )
     return {"statusCode": 200, "body": f"Registration required. Message ID: {message_id}"}
 

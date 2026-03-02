@@ -174,6 +174,16 @@ sam build --use-container
 sam deploy
 ```
 
+### Rollback
+
+If a deployment causes issues, roll back by deploying a previous version of the stack:
+
+1. **Redeploy a known-good template**: Check out the last known-good commit, then run `sam build` and `sam deploy`. CloudFormation will update the stack to match the template (Lambda code, config, and any template-defined resources).
+
+2. **No destructive schema changes**: Epic 1 hardening and later changes add new DynamoDB tables only; existing tables (e.g. `coach_profiles`, `athlete_identities`) are not altered. Rolling back the template does not delete existing data in those tables.
+
+3. **New tables**: If you roll back to a template that omits tables added in a later release (e.g. `plan_history`, `plan_update_requests`, `manual_activity_snapshots`), those tables will be left in the account unless you remove them from the template and run a stack update that deletes them. You can leave them in place; the older code simply will not use them.
+
 ### Deploy Specific Function Only
 
 ```bash

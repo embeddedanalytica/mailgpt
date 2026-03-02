@@ -107,14 +107,21 @@ class _RoutingDynamo:
         )
         self._transact_side_effect = transact_side_effect
         self.last_transact = None
+        self.all_transacts = []
 
     def Table(self, name):  # noqa: N802
         return self.tables[name]
 
     def _transact_write_items(self, **kwargs):
         self.last_transact = kwargs
+        self.all_transacts.append(kwargs)
         if self._transact_side_effect is not None:
-            raise self._transact_side_effect
+            if isinstance(self._transact_side_effect, list):
+                effect = self._transact_side_effect.pop(0) if self._transact_side_effect else None
+            else:
+                effect = self._transact_side_effect
+            if effect is not None:
+                raise effect
         return {}
 
 
@@ -256,6 +263,179 @@ class TestCurrentPlanHelpers(unittest.TestCase):
 
         self.assertEqual(result["status"], "idempotent_replay")
         self.assertEqual(result["plan_version"], 2)
+
+    def test_two_plan_updates_produce_two_history_records(self):
+        """Updating plan twice results in two distinct history records (DoD: immutable plan history)."""
+        plan_v1 = {
+            "primary_goal": "Marathon",
+            "plan_version": 1,
+            "current_phase": "base",
+            "current_focus": "consistency",
+            "next_recommended_session": {
+                "date": "2026-03-10",
+                "type": "easy",
+                "target": "40 minutes",
+            },
+            "plan_status": "active",
+            "updated_at": 1735732800,
+        }
+        plan_v2 = dict(plan_v1, plan_version=2, current_phase="build", updated_at=1735732900)
+        profile_table = _CapturingTable()
+        request_table = _CapturingTable()
+        history_table = _CapturingTable()
+        dynamo = _RoutingDynamo(
+            {
+                dynamodb_models.COACH_PROFILES_TABLE: profile_table,
+                dynamodb_models.PLAN_UPDATE_REQUESTS_TABLE: request_table,
+                dynamodb_models.PLAN_HISTORY_TABLE: history_table,
+            }
+        )
+        with mock.patch.object(dynamodb_models, "dynamodb", dynamo), mock.patch.object(
+            dynamodb_models,
+            "get_current_plan",
+            side_effect=[plan_v1, plan_v2],
+        ):
+            r1 = dynamodb_models.update_current_plan(
+                "ath_1",
+                {"current_phase": "build"},
+                logical_request_id="req-1",
+            )
+            r2 = dynamodb_models.update_current_plan(
+                "ath_1",
+                {"current_focus": "threshold"},
+                logical_request_id="req-2",
+            )
+        self.assertEqual(r1["status"], "applied")
+        self.assertEqual(r1["plan_version"], 2)
+        self.assertEqual(r2["status"], "applied")
+        self.assertEqual(r2["plan_version"], 3)
+        self.assertEqual(len(dynamo.all_transacts), 2)
+        for i, transact_kwargs in enumerate(dynamo.all_transacts):
+            transact_items = transact_kwargs.get("TransactItems", [])
+            history_puts = [
+                t["Put"] for t in transact_items
+                if t.get("Put", {}).get("TableName") == dynamodb_models.PLAN_HISTORY_TABLE
+            ]
+            self.assertEqual(len(history_puts), 1, f"transact {i} should have one history Put")
+            item = history_puts[0].get("Item", {})
+            plan_version_serialized = item.get("plan_version", {})
+            raw = plan_version_serialized.get("N") or plan_version_serialized.get("S")
+            self.assertIsNotNone(raw, "plan_version should be serialized")
+            self.assertEqual(int(raw), i + 2)
+
+    def test_get_plan_history_returns_items_ascending_plan_version(self):
+        """History can be retrieved by athlete_id in ascending plan_version order (DoD)."""
+        history_table = _PlanHistoryQueryTable(
+            items=[
+                {
+                    "athlete_id": "ath_1",
+                    "plan_version": 1,
+                    "updated_at": 1735732800,
+                    "logical_request_id": "req-1",
+                    "plan": {"primary_goal": "Marathon", "plan_version": 1},
+                },
+                {
+                    "athlete_id": "ath_1",
+                    "plan_version": 2,
+                    "updated_at": 1735732900,
+                    "logical_request_id": "req-2",
+                    "plan": {"primary_goal": "Marathon", "plan_version": 2},
+                },
+            ]
+        )
+        dynamo = _RoutingDynamo({
+            dynamodb_models.PLAN_HISTORY_TABLE: history_table,
+        })
+        with mock.patch.object(dynamodb_models, "dynamodb", dynamo):
+            result = dynamodb_models.get_plan_history("ath_1", limit=10)
+        self.assertIn("items", result)
+        self.assertEqual(len(result["items"]), 2)
+        self.assertEqual(result["items"][0]["plan_version"], 1)
+        self.assertEqual(result["items"][1]["plan_version"], 2)
+        self.assertEqual(result["items"][0]["logical_request_id"], "req-1")
+        self.assertEqual(result["items"][1]["updated_at"], 1735732900)
+
+
+    def test_concurrent_plan_updates_result_in_consistent_state(self):
+        """Simulated concurrent updates: one wins, the other retries and applies; final state and history ordered (DoD)."""
+        plan_v1 = {
+            "primary_goal": "Marathon",
+            "plan_version": 1,
+            "current_phase": "base",
+            "current_focus": "consistency",
+            "next_recommended_session": {
+                "date": "2026-03-10",
+                "type": "easy",
+                "target": "40 minutes",
+            },
+            "plan_status": "active",
+            "updated_at": 1735732800,
+        }
+        plan_v2 = dict(plan_v1, plan_version=2, current_phase="build", updated_at=1735732900)
+        profile_table = _CapturingTable()
+        request_table = _CapturingTable()
+        history_table = _CapturingTable()
+        # First transact succeeds (update A); second raises (update B's first attempt); third succeeds (update B retry).
+        collision = ClientError(
+            {"Error": {"Code": "TransactionCanceledException"}},
+            "TransactWriteItems",
+        )
+        dynamo = _RoutingDynamo(
+            {
+                dynamodb_models.COACH_PROFILES_TABLE: profile_table,
+                dynamodb_models.PLAN_UPDATE_REQUESTS_TABLE: request_table,
+                dynamodb_models.PLAN_HISTORY_TABLE: history_table,
+            },
+            transact_side_effect=[None, collision, None],
+        )
+        with mock.patch.object(dynamodb_models, "dynamodb", dynamo), mock.patch.object(
+            dynamodb_models,
+            "get_current_plan",
+            side_effect=[plan_v1, plan_v1, plan_v2],
+        ), mock.patch.object(
+            dynamodb_models,
+            "_get_plan_update_request",
+            return_value=None,
+        ):
+            r1 = dynamodb_models.update_current_plan(
+                "ath_1",
+                {"current_phase": "build"},
+                logical_request_id="req-1",
+            )
+            r2 = dynamodb_models.update_current_plan(
+                "ath_1",
+                {"current_focus": "threshold"},
+                logical_request_id="req-2",
+            )
+        self.assertEqual(r1["status"], "applied")
+        self.assertEqual(r1["plan_version"], 2)
+        self.assertEqual(r2["status"], "applied")
+        self.assertEqual(r2["plan_version"], 3)
+        self.assertEqual(len(dynamo.all_transacts), 3)
+        versions_written = []
+        for transact_kwargs in dynamo.all_transacts:
+            transact_items = transact_kwargs.get("TransactItems", [])
+            history_puts = [
+                t["Put"] for t in transact_items
+                if t.get("Put", {}).get("TableName") == dynamodb_models.PLAN_HISTORY_TABLE
+            ]
+            if history_puts:
+                item = history_puts[0].get("Item", {})
+                raw = item.get("plan_version", {}).get("N") or item.get("plan_version", {}).get("S")
+                versions_written.append(int(raw))
+        # First and third transacts committed (v2, v3); second failed (would have been v2) so only v2,v3 in history.
+        self.assertIn(2, versions_written)
+        self.assertEqual(versions_written[-1], 3, "Final plan version should be 3 (consistent state after retry).")
+
+
+class _PlanHistoryQueryTable:
+    """Mock table that returns fixed items for query() to test get_plan_history."""
+
+    def __init__(self, items):
+        self._items = sorted(items, key=lambda x: x["plan_version"])
+
+    def query(self, **kwargs):
+        return {"Items": list(self._items), "LastEvaluatedKey": None}
 
 
 if __name__ == "__main__":

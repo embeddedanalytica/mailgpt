@@ -102,6 +102,30 @@ class EmailReplySenderTests(unittest.TestCase):
         self.assertIn("In-Reply-To: <msg-123@example.com>", raw_data)
         self.assertIn("References: <msg-123@example.com>", raw_data)
 
+    def test_send_reply_can_force_skip_thread_context(self):
+        existing_thread_email = dict(self.email_data, in_reply_to="<prior@example.com>")
+        with mock.patch.object(email_reply_sender, "ses_client") as ses_client_mock:
+            ses_client_mock.send_raw_email.return_value = {"MessageId": "m-3"}
+            message_id = EmailReplySender.send_reply(
+                existing_thread_email,
+                "Canned response",
+                include_thread_context=False,
+            )
+
+        self.assertEqual(message_id, "m-3")
+        raw_data = ses_client_mock.send_raw_email.call_args.kwargs["RawMessage"]["Data"]
+        self.assertNotIn("In-Reply-To:", raw_data)
+        self.assertNotIn("References:", raw_data)
+        self.assertNotIn(EmailCopy.REPLY_WRAPPER_SEPARATOR, raw_data)
+
+    def test_format_reply_empty_content_uses_fallback_copy(self):
+        html = EmailReplySender.format_reply(
+            self.email_data,
+            None,
+            include_thread_context=False,
+        )
+        self.assertIn(EmailReplySender._clean_text(EmailCopy.FALLBACK_AI_ERROR_REPLY), html)
+
 
 if __name__ == "__main__":
     unittest.main()

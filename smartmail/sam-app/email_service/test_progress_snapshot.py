@@ -41,6 +41,9 @@ if "boto3" not in sys.modules:
         def eq(self, *_args, **_kwargs):
             return _KeyCondition()
 
+        def between(self, *_args, **_kwargs):
+            return _KeyCondition()
+
     class TypeSerializer:
         def serialize(self, value):
             return {"S": str(value)}
@@ -118,6 +121,13 @@ class _SnapshotsTable:
         self.keys.add(snapshot_key)
         self.items.append(item)
         return {}
+
+    def query(self, **kwargs):
+        """Return stored items for range-query tests. Filters by athlete_id if present in KeyConditionExpression."""
+        key_condition = kwargs.get("KeyConditionExpression")
+        if key_condition is not None and hasattr(key_condition, "_values"):
+            pass  # boto3 condition object; we return all items for this table
+        return {"Items": list(self.items)}
 
 
 class _RoutingDynamo:
@@ -213,6 +223,41 @@ class TestProgressSnapshotModels(unittest.TestCase):
         self.assertTrue(first)
         self.assertTrue(second)
         self.assertEqual(len(snapshots.items), 2)
+
+    def test_query_manual_snapshots_between_returns_all_in_range(self):
+        """Range query by athlete_id and time range returns all snapshots (DoD: retrieval returns both)."""
+        snapshots = _SnapshotsTable()
+        with mock.patch.object(
+            dynamodb_models,
+            "dynamodb",
+            _RoutingDynamo({dynamodb_models.MANUAL_ACTIVITY_SNAPSHOTS_TABLE: snapshots}),
+        ), mock.patch.object(dynamodb_models, "recompute_progress_snapshot", return_value=True):
+            dynamodb_models.put_manual_activity_snapshot(
+                athlete_id="ath_1",
+                activity_type="running",
+                timestamp=1735732800,
+                snapshot_event_id="msg-1",
+            )
+            dynamodb_models.put_manual_activity_snapshot(
+                athlete_id="ath_1",
+                activity_type="cycling",
+                timestamp=1735732800,
+                snapshot_event_id="msg-2",
+            )
+        with mock.patch.object(
+            dynamodb_models,
+            "dynamodb",
+            _RoutingDynamo({dynamodb_models.MANUAL_ACTIVITY_SNAPSHOTS_TABLE: snapshots}),
+        ):
+            result = dynamodb_models._query_manual_snapshots_between(
+                athlete_id="ath_1",
+                start_ts=1735732800,
+                end_ts=1735732900,
+            )
+        self.assertEqual(len(result), 2)
+        snapshot_keys = {item["snapshot_key"] for item in result}
+        self.assertIn("1735732800#msg-1", snapshot_keys)
+        self.assertIn("1735732800#msg-2", snapshot_keys)
 
     def test_recompute_progress_snapshot_writes_aggregate(self):
         progress = _ProgressTable()

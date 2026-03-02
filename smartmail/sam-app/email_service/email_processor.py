@@ -35,7 +35,7 @@ class EmailProcessor:
 
             encoded_content = sns_message.get("content", "")
             email_body = (
-                EmailProcessor.decode_email_content(encoded_content)
+                EmailProcessor.extract_text_from_email(encoded_content)
                 if encoded_content
                 else "No content found."
             )
@@ -55,14 +55,7 @@ class EmailProcessor:
             }
         except Exception as e:
             logger.error("Error parsing SNS event: %s", e)
-            return None
-
-    @staticmethod
-    def decode_email_content(encoded_content):
-        """Decodes base64 email content and extracts text/plain body."""
-        decoded_bytes = base64.b64decode(encoded_content)
-        decoded_content = decoded_bytes.decode("utf-8", errors="ignore")
-        return EmailProcessor.extract_text_from_email(decoded_content)
+            return None            
 
     @staticmethod
     def extract_text_from_email(email_content):

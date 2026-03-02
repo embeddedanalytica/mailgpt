@@ -51,14 +51,18 @@ class EmailReplySender:
         return "hello@geniml.com"
 
     @staticmethod
-    def send_reply(email_data, reply_content):
+    def send_reply(email_data, reply_content, include_thread_context=None):
         """Sends a reply email using AWS SES; evaluates and stores the reply via ResponseEvaluation."""
         try:
-            is_existing_thread = EmailReplySender._is_existing_thread(email_data)
+            should_include_thread_context = (
+                EmailReplySender._is_existing_thread(email_data)
+                if include_thread_context is None
+                else bool(include_thread_context)
+            )
             formatted_reply = EmailReplySender.format_reply(
                 email_data,
                 reply_content,
-                include_thread_context=is_existing_thread,
+                include_thread_context=should_include_thread_context,
             )
             #ResponseEvaluation.evaluate_response(email_data["body"], reply_content) #TODO: Uncomment this when we have a way to store the evaluation results
 
@@ -80,7 +84,7 @@ class EmailReplySender:
             msg["To"] = ", ".join(to_recipients)
             msg["Cc"] = ", ".join(cc_recipients)
             msg["Reply-To"] = from_ai_address
-            if is_existing_thread:
+            if should_include_thread_context:
                 message_id = str(email_data.get("message_id", "")).strip()
                 if message_id:
                     msg["In-Reply-To"] = message_id
@@ -116,6 +120,8 @@ class EmailReplySender:
         else:
             text = reply_content.get("text", reply_content) if isinstance(reply_content, dict) else reply_content
             safe_reply_content = EmailReplySender._clean_text(text).replace(chr(10), "<br>")
+            if not safe_reply_content.strip():
+                safe_reply_content = EmailReplySender._clean_text(EmailCopy.FALLBACK_AI_ERROR_REPLY)
         if not include_thread_context:
             return f"<html><body>{safe_reply_content}</body></html>"
 
