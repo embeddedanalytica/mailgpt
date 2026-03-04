@@ -179,6 +179,47 @@ class TestBuildProfileGatedReply(unittest.TestCase):
             self.assertIn("ready for coaching", reply)
             self.assertNotIn("CONNECT STRAVA FOR MORE PERSONALIZED COACHING", reply)
 
+    def test_profile_complete_uses_selected_model_for_llm_reply(self):
+        with mock.patch.object(coaching, "get_coach_profile") as get_profile, \
+             mock.patch.object(coaching, "parse_profile_updates_from_email") as parse_updates, \
+             mock.patch.object(coaching, "parse_manual_activity_snapshot_from_email", return_value=None), \
+             mock.patch.object(coaching, "put_manual_activity_snapshot", return_value=True), \
+             mock.patch.object(coaching, "get_progress_snapshot", return_value={"data_quality": "low"}), \
+             mock.patch.object(coaching, "merge_coach_profile_fields") as merge, \
+             mock.patch.object(coaching, "ensure_current_plan") as ensure_plan, \
+             mock.patch.object(coaching, "fetch_current_plan_summary") as fetch_summary, \
+             mock.patch.object(coaching, "create_action_token") as create_token, \
+             mock.patch.object(coaching, "OpenAIResponder") as responder, \
+             mock.patch.object(coaching, "ACTION_BASE_URL", "https://geniml.com/action/"):
+            get_profile.return_value = {
+                "primary_goal": "10k",
+                "time_availability": {"hours_per_week": 2.0},
+                "experience_level": "unknown",
+                "constraints": [],
+            }
+            parse_updates.return_value = {}
+            merge.return_value = True
+            ensure_plan.return_value = True
+            fetch_summary.return_value = "Current plan - Goal: 10k."
+            create_token.return_value = "tok_123"
+            responder.generate_response.return_value = "LLM routed reply"
+
+            reply = coaching.build_profile_gated_reply(
+                "ath_1",
+                "user@example.com",
+                "Can you adjust my next sessions?",
+                inbound_subject="Plan help",
+                selected_model_name="gpt-5-nano",
+                log_outcome=None,
+            )
+
+            self.assertEqual(reply, "LLM routed reply")
+            responder.generate_response.assert_called_once()
+            kwargs = responder.generate_response.call_args.kwargs
+            self.assertEqual(kwargs["model_name"], "gpt-5-nano")
+            self.assertEqual(kwargs["subject"], "Plan help")
+            self.assertIn("Current plan context", kwargs["body"])
+
 
 if __name__ == "__main__":
     unittest.main()

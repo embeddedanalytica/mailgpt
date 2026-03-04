@@ -284,7 +284,7 @@ aws sns subscribe \
 ### Build Locally
 
 ```bash
-sam build --use-container
+sam build
 ```
 
 ### Test Email Service Function Locally
@@ -569,3 +569,4 @@ sam delete --stack-name "sam-app"
 - [AWS SES Documentation](https://docs.aws.amazon.com/ses/)
 - [OpenAI API Documentation](https://platform.openai.com/docs)
 - [SAM CLI Documentation](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-cli-install.html)
+

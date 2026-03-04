@@ -5,7 +5,7 @@ All model calls and prompts live here so you can improve the LLM flow in one pla
 import json
 import logging
 import os
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 try:
     import openai  # type: ignore
@@ -28,14 +28,15 @@ class OpenAIResponder:
     SYSTEM_PROMPT_FOR_INTENTION_CHECK = AICopy.INTENTION_CHECK_SYSTEM_PROMPT
 
     @staticmethod
-    def generate_response(subject: str, body: str) -> str:
+    def generate_response(subject: str, body: str, model_name: Optional[str] = None) -> str:
         """Generates an AI-crafted email response based on the original email content."""
         try:
             if openai is None:
                 raise RuntimeError("openai package is not installed")
             client = openai.OpenAI()
+            selected_model = str(model_name or OPENAI_GENERIC_MODEL).strip() or OPENAI_GENERIC_MODEL
             response = client.chat.completions.create(
-                model=OPENAI_GENERIC_MODEL,
+                model=selected_model,
                 messages=[
                     {"role": "system", "content": OpenAIResponder.SYSTEM_PROMPT},
                     {"role": "user", "content": f"{subject}\n{body}"},

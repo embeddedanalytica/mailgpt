@@ -17,6 +17,7 @@ from dynamodb_models import (
 )
 from config import ACTION_BASE_URL
 from activity_snapshot import parse_manual_activity_snapshot_from_email
+from openai_responder import OpenAIResponder
 from profile import (
     parse_profile_updates_from_email,
     get_missing_required_profile_fields,
@@ -47,6 +48,8 @@ def build_profile_gated_reply(
     from_email: str,
     inbound_body: str,
     inbound_message_id: Optional[str] = None,
+    inbound_subject: Optional[str] = None,
+    selected_model_name: Optional[str] = None,
     *,
     aws_request_id: Optional[str] = None,
     log_outcome: Optional[Callable[..., None]] = None,
@@ -146,4 +149,20 @@ def build_profile_gated_reply(
     plan_summary = fetch_current_plan_summary(athlete_id)
     if plan_summary:
         reply += f"\n\n{plan_summary}"
+
+    # LLM-first path: when routing selected a response model, generate coaching reply
+    # with current inbound context plus plan summary.
+    if selected_model_name:
+        llm_subject = str(inbound_subject or "").strip() or "Coaching follow-up"
+        llm_body = inbound_body
+        if plan_summary:
+            llm_body = f"{llm_body}\n\nCurrent plan context:\n{plan_summary}"
+        generated = OpenAIResponder.generate_response(
+            subject=llm_subject,
+            body=llm_body,
+            model_name=selected_model_name,
+        )
+        if generated:
+            reply = generated
+
     return reply

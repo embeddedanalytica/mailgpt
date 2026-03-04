@@ -41,6 +41,9 @@ DAILY_METRICS_TABLE = os.getenv("DAILY_METRICS_TABLE_NAME", "daily_metrics")
 PLAN_HISTORY_TABLE = os.getenv("PLAN_HISTORY_TABLE_NAME", "plan_history")
 PLAN_UPDATE_REQUESTS_TABLE = os.getenv("PLAN_UPDATE_REQUESTS_TABLE_NAME", "plan_update_requests")
 RECOMMENDATION_LOG_TABLE = os.getenv("RECOMMENDATION_LOG_TABLE_NAME", "recommendation_log")
+CONVERSATION_INTELLIGENCE_TABLE = os.getenv(
+    "CONVERSATION_INTELLIGENCE_TABLE_NAME", "conversation_intelligence"
+)
 MANUAL_ACTIVITY_SNAPSHOTS_TABLE = os.getenv(
     "MANUAL_ACTIVITY_SNAPSHOTS_TABLE_NAME", "manual_activity_snapshots"
 )
@@ -1123,6 +1126,65 @@ def log_recommendation(
             return False
         logger.error(
             f"Error logging recommendation athlete_id={athlete_id}, created_at={created_at}: {e}"
+        )
+        return False
+
+
+def put_message_intelligence(
+    athlete_id: str,
+    message_id: str,
+    intent: str,
+    complexity_score: int,
+    model_name: str,
+    *,
+    routing_decision: Optional[str] = None,
+    selected_model: Optional[str] = None,
+    created_at: Optional[int] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """
+    Stores one LLM-derived message intelligence record (intent + complexity).
+    """
+    normalized_message_id = str(message_id or "").strip()
+    if not normalized_message_id:
+        return False
+    try:
+        table = dynamodb.Table(CONVERSATION_INTELLIGENCE_TABLE)
+        now = int(time.time())
+        item: Dict[str, Any] = {
+            "athlete_id": athlete_id,
+            "message_id": normalized_message_id,
+            "intent": str(intent).strip().lower(),
+            "complexity_score": int(complexity_score),
+            "model_name": str(model_name).strip(),
+            "created_at": int(created_at) if created_at is not None else now,
+            "logged_at": now,
+        }
+        if routing_decision is not None:
+            item["routing_decision"] = str(routing_decision).strip()
+        if selected_model is not None:
+            item["selected_model"] = str(selected_model).strip()
+        if metadata is not None:
+            item["metadata"] = metadata
+        table.put_item(
+            Item=item,
+            ConditionExpression="attribute_not_exists(message_id)",
+        )
+        return True
+    except ClientError as e:
+        error_code = e.response.get("Error", {}).get("Code", "")
+        if error_code == "ConditionalCheckFailedException":
+            logger.warning(
+                "Message intelligence already exists athlete_id=%s, message_id=%s",
+                athlete_id,
+                normalized_message_id,
+            )
+            return False
+        logger.error(
+            "Error storing message intelligence athlete_id=%s, message_id=%s: %s",
+            athlete_id,
+            normalized_message_id,
+            e,
         )
         return False
 

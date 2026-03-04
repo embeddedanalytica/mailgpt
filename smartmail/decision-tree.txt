@@ -1,0 +1,157 @@
+Here’s a simple email-coaching decision tree that works across mixed-sport athletes. It’s designed to do two things fast:
+	1.	classify “where they stand” (level + focus + constraints), then
+	2.	decide “what to do next” (plan type + next email + today’s action).
+
+Decision tree overview (3 layers)
+
+Layer 1 — Intake classification (do once, then update as needed)
+
+Q1. Primary goal timeframe?
+	•	A: General health / consistency (no date)
+	•	B: Event goal (date within 8–16 weeks)
+	•	C: Performance goal (date >16 weeks or ongoing)
+
+Q2. Training identity (what are they really)?
+	•	A: Casual multi-activity (“I do a bit of everything”)
+	•	B: Single-discipline focused (mostly run OR mostly bike OR mostly swim)
+	•	C: Hybrid seasonal (main sport shifts by season; cross-train is real)
+
+Q3. Experience level in their main discipline
+	•	A: New (0–6 months consistent)
+	•	B: Intermediate (6–24 months consistent)
+	•	C: Advanced amateur (2+ years consistent + structured training history)
+
+Q4. Availability + constraints
+	•	Time: 2–3h/wk | 4–6h/wk | 7–10h/wk | 10h+/wk
+	•	Injury risk: none | recurring niggles | current pain
+	•	Logistics: equipment access (gym/pool/bike/trainer), schedule variability (low/med/high)
+
+👉 Output of Layer 1: a simple label like
+“B / C / Intermediate / 4–6h / recurring niggles / high variability”
+(Event goal + seasonal hybrid + intermediate + moderate time + some risk + variable schedule)
+
+⸻
+
+Layer 2 — Weekly plan selection (the core branch)
+
+Q5. Do they have one “main sport” right now?
+	•	Yes → build a Main Sport Plan
+	•	No → build a General Fitness Plan
+
+If General Fitness Plan
+Pick one based on time:
+	•	2–3h/wk: 3 sessions total
+	•	1 “engine” (easy aerobic), 1 strength/mobility, 1 fun/variety
+	•	4–6h/wk: 4 sessions
+	•	2 aerobic, 1 strength, 1 optional intensity OR skills
+	•	7h+/wk: 5–6 sessions
+	•	3 aerobic, 1 intensity, 1 strength, 1 optional (skills or recovery)
+
+Rules:
+	•	Keep intensity low unless they explicitly want performance.
+	•	Rotate modalities to reduce injury (run/bike/swim/gym).
+
+If Main Sport Plan
+Q6. What phase are we in?
+	•	Base (no event soon / rebuilding consistency)
+	•	Build (event 6–12 weeks away OR chasing performance)
+	•	Peak/Taper (event 0–3 weeks away)
+	•	Return-to-training (coming back from injury/illness or long break)
+
+Q7. Risk flag?
+	•	Red: pain during activity, sharp pain, worsening week-to-week → reduce load + swap to low impact + referral language
+	•	Yellow: recurring niggles, heavy fatigue, sleep/stress high → keep volume, reduce intensity
+	•	Green: normal fatigue only → proceed
+
+Then choose weekly “skeleton” (works for run/bike/swim):
+
+Time 2–3h/wk (3 sessions)
+	•	1 long/easy session (main sport)
+	•	1 short quality OR hills/tempo (only if Green)
+	•	1 strength/mobility OR cross-train easy
+
+Time 4–6h/wk (4 sessions)
+	•	2 easy aerobic (main sport)
+	•	1 quality (intervals/tempo/threshold depending on level)
+	•	1 strength OR cross-train
+
+Time 7–10h/wk (5–6 sessions)
+	•	3 easy aerobic
+	•	1 long
+	•	1 quality
+	•	1 strength or skills
+
+Time 10h+/wk
+	•	Add a second quality day only for Intermediate/Advanced + Green + stable schedule
+
+⸻
+
+Layer 3 — Session-level decision (what to tell them today)
+
+Every email check-in gets routed by 4 quick signals:
+
+Signal 1: Pain
+	•	Pain ≥4/10 or changes gait/form → Stop intensity, swap to easy cross-train, and adjust next 3–7 days
+	•	Pain 1–3/10 stable → keep easy, no intensity, monitor
+
+Signal 2: Fatigue/energy
+	•	Energy ≤4/10 → convert to “minimum effective dose” session
+	•	Energy 5–7/10 → do planned but conservative
+	•	Energy 8–10/10 → do planned or upgrade slightly (only if Green)
+
+Signal 3: Missed sessions
+	•	Missed 1 session → don’t “make up” intensity; resume plan
+	•	Missed 2+ sessions → rebuild week: easy volume first, delay intensity
+
+Signal 4: Schedule reality
+	•	If week is chaotic → prioritize the “Big 2”
+	1.	one long/easy aerobic (or longest available)
+	2.	one strength session (or short mobility if very tight)
+
+⸻
+
+How you actually run it via email (super simple workflow)
+
+Step 1: Ask 6 universal questions (works for every athlete)
+
+In every weekly check-in email, collect:
+	1.	Main goal right now + any event date?
+	2.	What sports did you do last week (and minutes)?
+	3.	How many days can you train this week (realistically)?
+	4.	Any pain (0–10) + where?
+	5.	Energy/stress/sleep (1–10 + quick note)
+	6.	Preference: more structure vs more flexibility?
+
+Step 2: Route them to one of 6 “tracks”
+
+Based on Layer 1 + 2, they fall into:
+	1.	General Fitness – Low time
+	2.	General Fitness – Moderate time
+	3.	Main Sport – Base
+	4.	Main Sport – Build
+	5.	Main Sport – Peak/Taper
+	6.	Return-to-training / Risk-managed
+
+Each track has a standard weekly skeleton you fill in.
+
+Step 3: Auto-adjust with the Red/Yellow/Green rule
+	•	Red: remove intensity + swap to low impact + reduce volume 20–50%
+	•	Yellow: keep volume-ish, reduce intensity (or replace with easy)
+	•	Green: proceed
+
+⸻
+
+Example: “Mostly running, swims in winter, 4–6h/week, intermediate”
+	•	Track: Main Sport – Base or Build (depends on event)
+	•	Weekly skeleton:
+	•	Run easy
+	•	Run quality (only if Green)
+	•	Long run easy
+	•	Swim easy recovery OR strength
+
+Example: “Casual, does everything, 2–3h/week”
+	•	Track: General Fitness – Low time
+	•	Weekly skeleton:
+	•	1 easy aerobic (any modality)
+	•	1 strength + mobility
+	•	1 fun/variety (hike, bike, swim)

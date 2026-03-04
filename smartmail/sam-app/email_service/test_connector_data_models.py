@@ -136,6 +136,22 @@ class _RecommendationTable:
         return {}
 
 
+class _ConversationIntelligenceTable:
+    def __init__(self):
+        self.seen = set()
+
+    def put_item(self, **kwargs):
+        item = kwargs["Item"]
+        key = (item["athlete_id"], item["message_id"])
+        if key in self.seen:
+            raise ClientError(
+                {"Error": {"Code": "ConditionalCheckFailedException", "Message": "duplicate"}},
+                "PutItem",
+            )
+        self.seen.add(key)
+        return {}
+
+
 class _RoutingDynamo:
     def __init__(self, tables):
         self.tables = tables
@@ -233,6 +249,31 @@ class TestConnectorDataModels(unittest.TestCase):
                 recommendation_text="Run easy tomorrow",
                 evidence_window_days=7,
                 created_at=1735732800,
+            )
+
+        self.assertTrue(first)
+        self.assertFalse(second)
+
+    def test_put_message_intelligence_collision_returns_false(self):
+        intelligence = _ConversationIntelligenceTable()
+        with mock.patch.object(
+            dynamodb_models,
+            "dynamodb",
+            _RoutingDynamo({dynamodb_models.CONVERSATION_INTELLIGENCE_TABLE: intelligence}),
+        ):
+            first = dynamodb_models.put_message_intelligence(
+                athlete_id="ath_9",
+                message_id="msg-1",
+                intent="question",
+                complexity_score=3,
+                model_name="gpt-4o-mini-2024-07-18",
+            )
+            second = dynamodb_models.put_message_intelligence(
+                athlete_id="ath_9",
+                message_id="msg-1",
+                intent="question",
+                complexity_score=3,
+                model_name="gpt-4o-mini-2024-07-18",
             )
 
         self.assertTrue(first)

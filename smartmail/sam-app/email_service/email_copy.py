@@ -198,6 +198,25 @@ class AICopy:
         "- The response MUST be valid JSON and MUST NOT contain any explanatory text."
     )
 
+    CONVERSATION_INTELLIGENCE_SYSTEM_PROMPT = (
+        "You classify one inbound coaching email message. Return only JSON.\n\n"
+        "Schema:\n"
+        "{\n"
+        '  "intent": "check_in" | "question" | "plan_change_request" | "milestone_update" | "off_topic",\n'
+        '  "complexity_score": integer 1-5\n'
+        "}\n\n"
+        "Rules:\n"
+        "- intent must be exactly one allowed enum value.\n"
+        "- complexity_score must be an integer from 1 to 5.\n"
+        "- Nutrition, sleep, soreness, energy, stress, and recovery updates are check_in when relevant to training readiness/performance.\n"
+        "- Intent precedence: if the message indicates inability or intent to stop/majorly change training (injury, cannot run, quitting), choose plan_change_request even if phrased as a question.\n"
+        '- Example: "I\'m ready to quit." -> {"intent":"plan_change_request","complexity_score":4}\n'
+        '- Example: "I broke my leg, I can\'t run anymore. what should I do?" -> {"intent":"plan_change_request","complexity_score":5}\n'
+        '- Example: "I ate a cake today and it felt weird." -> {"intent":"check_in","complexity_score":2}\n'
+        "- If uncertain, choose the closest valid label and score.\n"
+        "- Output valid JSON only. No extra keys, markdown, or explanation."
+    )
+
     RESPONSE_SIGNATURE_HTML = (
         "<br><br>Truly yours,<br>"
         "GeniML<br>"
