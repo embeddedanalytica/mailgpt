@@ -1,0 +1,81 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "IntentBenchAgentOutput",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "test_id",
+    "attempt",
+    "expected_intent",
+    "detected_intent",
+    "match",
+    "complexity_score",
+    "resolution_source",
+    "intent_resolution_reason",
+    "signals",
+    "behavior_summary",
+    "error"
+  ],
+  "properties": {
+    "test_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "expected_intent": {
+      "type": "string",
+      "minLength": 1
+    },
+    "detected_intent": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "match": {
+      "type": "boolean"
+    },
+    "complexity_score": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1,
+      "maximum": 5
+    },
+    "resolution_source": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "intent_resolution_reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "signals": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "string"
+      }
+    },
+    "behavior_summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "error": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  }
+}

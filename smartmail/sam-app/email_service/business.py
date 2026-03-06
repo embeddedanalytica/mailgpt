@@ -11,6 +11,7 @@ from conversation_intelligence import (
     analyze_conversation_intelligence,
     ConversationIntelligenceError,
 )
+from inbound_rule_router import route_inbound_with_rule_engine
 from dynamodb_models import put_message_intelligence
 from email_copy import EmailCopy
 from config import (
@@ -103,6 +104,15 @@ def get_reply_for_inbound(
             selected_model=route["selected_model"],
         )
 
+    rule_engine_decision = route_inbound_with_rule_engine(
+        athlete_id=athlete_id,
+        from_email=from_email,
+        email_data=email_data,
+        conversation_intelligence=intelligence,
+        aws_request_id=aws_request_id,
+        log_outcome=log_outcome,
+    )
+
     return build_profile_gated_reply(
         athlete_id=athlete_id,
         from_email=from_email,
@@ -110,6 +120,7 @@ def get_reply_for_inbound(
         inbound_message_id=inbound_message_id,
         inbound_subject=inbound_subject,
         selected_model_name=route["selected_model"],
+        rule_engine_decision=rule_engine_decision,
         aws_request_id=aws_request_id,
         log_outcome=log_outcome,
     )

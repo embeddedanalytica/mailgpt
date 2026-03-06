@@ -266,14 +266,14 @@ class TestConnectorDataModels(unittest.TestCase):
                 message_id="msg-1",
                 intent="question",
                 complexity_score=3,
-                model_name="gpt-4o-mini-2024-07-18",
+                model_name="gpt-5-mini",
             )
             second = dynamodb_models.put_message_intelligence(
                 athlete_id="ath_9",
                 message_id="msg-1",
                 intent="question",
                 complexity_score=3,
-                model_name="gpt-4o-mini-2024-07-18",
+                model_name="gpt-5-mini",
             )
 
         self.assertTrue(first)

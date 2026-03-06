@@ -1,80 +1,153 @@
 # Rule Engine Implementation Epics and User Stories
 
 ## Context and Scope Boundaries
-- Epic 1 and Epic 2 in [BACKLOG.md](/Users/levonsh/Projects/smartmail/BACKLOG.md) are treated as already implemented foundations.
-- This document starts at deterministic rule-engine + AI-assisted planning integration.
-- Stories are intentionally atomic and designed to minimize net-new code per story.
-- If a story grows, it should be split before implementation.
-- LLM-as-a-judge is intentionally deferred (placeholder only).
+- Epic 1 and Epic 2 in [BACKLOG.md](/Users/levonsh/Projects/smartmail/BACKLOG.md) are treated as implemented foundations.
+- [spec.md](/Users/levonsh/Projects/smartmail/spec.md) is the source of truth for rule behavior.
+- RE1 in this file is intentionally clean and complete (no follow-up split).
+- Stories remain atomic; if a story expands, split it before implementation.
+- LLM-as-a-judge remains deferred.
 
 ---
 
-## Epic RE1 — Deterministic State Machine Core
+## Epic RE1 — Deterministic State Machine Core (Clean)
 
 ### Goal
-Implement the core state machine decisions (phase, risk, track) from [spec.md](/Users/levonsh/Projects/smartmail/spec.md) with deterministic outputs.
+Implement and stabilize deterministic rule-engine foundations: contracts, derivation rules, trend state, safety gates, and compatibility normalization.
 
 ### Stories
 
-#### Story RE1.1 — Add Rule-Engine Enums and Output Contract
-As a developer, I need a single canonical type/enum contract for phase, risk, track, and plan update status so the engine cannot emit invalid states.
+#### Story RE1.1 — Canonical Enums and Output Contract
+As a developer, I need a canonical contract for phase, risk, track, plan status, and payload shape so engine outputs are valid and deterministic.
 
 Story DoD:
-- [ ] Canonical constants/types added for `phase`, `risk_flag`, `track`, `plan_update_status`.
-- [ ] Engine output contract includes required fields only (no speculative fields).
-- [ ] Unit test validates enum membership and output schema shape.
+- [x] Canonical constants/types exist for `phase`, `risk_flag`, `track`, `plan_update_status`.
+- [x] Output contract validates required fields and rejects unknown fields.
+- [x] Contract tests cover enum membership, schema round-trip, and strict validation.
 
 #### Story RE1.2 — Event Date Validation + Clarification Status
-As a coach system, I need invalid/missing/past event dates to be ignored for routing and flagged for clarification so phase logic stays safe.
+As a coaching engine, I need safe handling for missing/invalid/past event dates so phase routing does not misfire.
 
 Story DoD:
-- [ ] Validation function returns `valid | invalid_missing | invalid_format | invalid_past`.
-- [ ] Invalid date paths set `plan_update_status=unchanged_clarification_needed` and avoid re-phasing.
-- [ ] Unit tests cover all validation outcomes.
+- [x] Event date validator returns `valid | invalid_missing | invalid_format | invalid_past`.
+- [x] Invalid date paths preserve prior phase and set clarification status.
+- [x] Tests cover all date statuses and guard behavior.
 
-#### Story RE1.3 — Phase Derivation with Priority-Based Conservative Override
-As a coaching engine, I need calendar phase + override priority (`red_b > red_a > return-context > yellow > new`) so transitions are deterministic.
-
-Story DoD:
-- [ ] Base calendar windows implemented: `base >12w`, `build 4-12w`, `peak_taper 0-3w`.
-- [ ] Override caps applied with exact priority and cap behavior.
-- [ ] Tests cover boundary weeks (`12/4/3`) and precedence collisions.
-
-#### Story RE1.4 — Inconsistent-Training Stabilization
-As a coaching engine, I need phase-upgrade hysteresis so week-to-week oscillation does not cause noisy plan shifts.
+#### Story RE1.3 — Performance Intent Contract + Resolver
+As a planner, I need explicit performance-intent fields and fallback resolution so intensity gating is deterministic.
 
 Story DoD:
-- [ ] Detect flip conditions without red-tier trigger.
-- [ ] Require 2 consecutive qualifying check-ins before phase upgrade.
-- [ ] Downgrades on safety triggers remain immediate.
+- [x] `performance_intent_default` and `performance_intent_this_week` are in contract.
+- [x] Resolver implements fallback chain (`this_week -> profile -> false`).
+- [x] Tests cover all fallback permutations and invalid inputs.
 
-#### Story RE1.5 — Risk Derivation (`green/yellow/red_a/red_b`)
-As a safety layer, I need risk tiering from check-in signals so downstream planning follows coaching boundaries.
-
-Story DoD:
-- [ ] `red_b` and `red_a` criteria implemented exactly per spec.
-- [ ] `yellow` fallback logic excludes red-tier cases.
-- [ ] Tests verify mutually exclusive tier assignment.
-
-#### Story RE1.6 — Track Selection + Risk-Managed Override
-As a planner, I need stable track routing with risk override so recommendations stay coherent with safety state.
+#### Story RE1.4 — Rule State Contract (Rolling History)
+As a rules engine, I need a minimal persisted `rule_state` model to support trend logic and hysteresis.
 
 Story DoD:
-- [ ] Track selection works for general and main-sport paths.
-- [ ] `return_or_risk_managed` override applied for `return_to_training` or red-tier risk.
-- [ ] Tests verify precedence and expected track per scenario.
+- [x] `rule_state` schema defined (`last_4`, `last_6`, deload counter, upgrade streak, switch state).
+- [x] `load_rule_state()` and `update_rule_state()` contracts defined.
+- [x] Tests cover empty bootstrap and rolling-window capping.
+
+#### Story RE1.5 — Phase Derivation with Ordered Overrides
+As a phase engine, I need deterministic phase derivation with explicit precedence rules.
+
+Story DoD:
+- [x] Calendar windows implemented (`base`, `build`, `peak_taper`).
+- [x] Hard return context precedence implemented.
+- [x] Conservative override order implemented (`red_b > red_a > return-context > yellow > new`).
+- [x] `derive_phase` consumes derived `risk_flag` and `effective_performance_intent`.
+- [x] Boundary tests and precedence collision tests pass.
+
+#### Story RE1.6 — Return Context Inputs + Event Expectation Rules
+As a phase engine, I need explicit return/event inputs to avoid ambiguous text inference.
+
+Story DoD:
+- [x] Added `has_upcoming_event`, `returning_from_break`, `recent_illness`, optional `break_days`.
+- [x] Hard return triggers: `returning_from_break` OR `recent_illness=significant` OR `break_days>=10`.
+- [x] Event expectation uses `has_upcoming_event`; null falls back to profile `goal_category`, never free text.
+- [x] Tests cover explicit and derived paths.
+
+#### Story RE1.7 — Risk Derivation + Deterministic Worsening
+As a safety layer, I need unambiguous risk classification including trend escalation.
+
+Story DoD:
+- [x] `green/yellow/red_a/red_b` derivation implemented.
+- [x] Yellow thresholds are explicit (`energy<=4`, `stress>=8`, `sleep<=4`, `stress>=7 && energy<=5`).
+- [x] Deterministic worsening definition implemented for red escalation.
+- [x] Red-tier precedence over yellow verified by tests.
+
+#### Story RE1.8 — Inconsistent-Training Stabilization
+As a coaching engine, I need anti-oscillation behavior so phases do not churn week-to-week.
+
+Story DoD:
+- [x] Flip detection without red-tier trigger implemented.
+- [x] Upgrades require 2 consecutive qualifying check-ins.
+- [x] Safety downgrades apply immediately.
+- [x] Tests validate hysteresis and immediate downgrade behavior.
+
+#### Story RE1.9 — Track Selection + Risk-Managed Override
+As a planner, I need stable track routing with explicit safety override precedence.
+
+Story DoD:
+- [x] Track routing for general/main-sport paths implemented.
+- [x] `return_or_risk_managed` override applied for return-to-training and red-tier risk.
+- [x] Precedence and fallback tests pass.
+
+#### Story RE1.10 — Main Sport Switching Guardrails
+As a planner, I need anti-churn switching policy for hybrid athletes.
+
+Story DoD:
+- [x] Switch only on explicit request or `>=60%` alternate sport over 2 weeks with `>=120` minutes.
+- [x] Transition guard enforces `<=1` quality session/week and `<=10%` weekly volume increase.
+- [x] Post-switch freeze for 2 weeks except explicit request or `red_b` safety override.
+- [x] Tests validate thresholds, freeze, and transition limits.
+
+#### Story RE1.11 — Main-Sport Deload Trigger Rules
+As a training engine, I need explicit deload logic for main-sport paths.
+
+Story DoD:
+- [x] Deload triggers at 3-5 week cadence and on sustained yellow (`2 consecutive` or `3 of last 4`).
+- [x] Deload adjustments reduce volume and remove one quality session.
+- [x] Taper precedence over standard deload verified by tests.
+
+#### Story RE1.12 — Experience-Based Quality Archetypes
+As a planner, I need deterministic quality templates by athlete experience.
+
+Story DoD:
+- [x] Archetypes exist for `new`, `intermediate`, `advanced`.
+- [x] Risk/schedule gates applied to archetype selection.
+- [x] Tests verify selection and suppression behavior.
+
+#### Story RE1.13 — Payload Required Components + Hard Session Tags
+As a message layer, I need stable output quality and enforceable intensity semantics.
+
+Story DoD:
+- [x] Required payload fields enforced (`plan_focus_line`, `technique_cue`, `recovery_target`, `if_then_rules`, `disclaimer_short`).
+- [x] `red_b` requires non-empty disclaimer.
+- [x] Hard-session tags are defined and validated for intensity budgeting.
+- [x] Contract tests fail on missing required fields.
+
+#### Story RE1.14 — Naming Canonicalization + Backward Compatibility
+As a platform maintainer, I need canonical names with legacy normalization.
+
+Story DoD:
+- [x] Canonical track names enforced (`main_base`, `main_build`, `main_peak_taper`, etc.).
+- [x] Goal field semantics standardized around `goal_category`.
+- [x] Legacy aliases normalize correctly at contract boundary.
+- [x] Compatibility tests pass.
 
 ### Epic RE1 Lightweight DoD
-- [ ] All RE1 stories merged with passing unit tests for phase/risk/track/status.
-- [ ] Deterministic same-input/same-output behavior verified.
-- [ ] No regression to existing onboarding/profile/plan persistence behavior.
+- [x] Deterministic same-input/same-output behavior validated.
+- [x] Safety precedence and fallback behavior covered by automated tests.
+- [x] Backward compatibility for legacy payloads/names is preserved.
+- [x] No regressions in existing profile/plan/persistence flows.
 
 ---
 
 ## Epic RE2 — Weekly Skeleton Builder (Deterministic)
 
 ### Goal
-Generate weekly session skeletons that obey time bucket, risk rules, and feasibility constraints.
+Generate weekly skeletons that obey time bucket, risk constraints, intent gating, and feasibility rules.
 
 ### Stories
 
@@ -82,38 +155,48 @@ Generate weekly session skeletons that obey time bucket, risk rules, and feasibi
 As a planner, I need deterministic general-fitness templates (`2_3h`, `4_6h`, `7_10h`, `10h_plus`) so outputs are predictable.
 
 Story DoD:
-- [ ] Templates implemented per spec including `10h_plus` controlled add-ons.
-- [ ] Intensity in general fitness allowed only with green + explicit performance intent.
-- [ ] Tests verify session mix/count per bucket.
+- [x] Templates implemented per spec including `10h_plus` controlled add-ons.
+- [x] Intensity in general fitness allowed only with green + `effective_performance_intent`.
+- [x] Tests verify session mix/count per bucket.
 
 #### Story RE2.2 — Main Sport Skeleton Templates by Time Bucket
 As a planner, I need main-sport templates mapped by time bucket and risk rules so sessions align with phase and constraints.
 
 Story DoD:
-- [ ] Templates implemented for `2_3h`, `4_6h`, `7_10h`, `10h_plus`.
-- [ ] `10h_plus` second quality session guarded by experience + green + stable schedule.
-- [ ] Tests verify quality-session gating.
+- [x] Templates implemented for `2_3h`, `4_6h`, `7_10h`, `10h_plus`.
+- [x] `10h_plus` second quality session guarded by experience + green + stable schedule.
+- [x] Tests verify quality-session gating.
 
 #### Story RE2.3 — Risk-Based Skeleton Overrides
 As a safety layer, I need red/yellow/green override application on any skeleton so unsafe intensity is removed.
 
 Story DoD:
-- [ ] `red_a/red_b`: remove intensity, low-impact swap, volume reduction.
-- [ ] `yellow`: intensity reduction without full collapse.
-- [ ] Safety regression test proves red-tier never emits intensity.
+- [x] `red_a/red_b`: remove intensity, low-impact swap, volume reduction.
+- [x] `yellow`: intensity reduction without full collapse.
+- [x] Safety regression test proves red-tier never emits intensity.
 
 #### Story RE2.4 — Infeasible Week Handling (No Plan Replacement)
 As a planner, I need infeasible weeks to keep existing plan unchanged so the system avoids generating non-viable plans.
 
 Story DoD:
-- [ ] Infeasible condition detection implemented (`days_available<=1` or no viable sessions).
-- [ ] Output sets `plan_update_status=unchanged_infeasible_week`.
-- [ ] Existing plan object remains unchanged in this path.
+- [x] Infeasible condition detection implemented (`days_available<=1` or no viable sessions).
+- [x] Output sets `plan_update_status=unchanged_infeasible_week`.
+- [x] Existing plan object remains unchanged in this path.
+
+#### Story RE2.5 — Integrate RE1 Decisions Into Skeleton Assembly
+As a planner, I need RE1 switching, deload, and archetype decisions consumed by skeleton assembly so helper logic affects emitted plans.
+
+Story DoD:
+- [x] `should_switch_main_sport` is consumed during plan assembly.
+- [x] Deload decisions are applied before final session mix emission.
+- [x] Quality archetypes are selected via RE1 helpers/contracts (not ad-hoc logic).
+- [x] Integration tests verify RE1 decision outputs are reflected in emitted skeletons.
 
 ### Epic RE2 Lightweight DoD
-- [ ] Weekly skeleton generation is deterministic and risk-compliant.
-- [ ] Infeasible and clarification paths never overwrite active plan.
-- [ ] Existing plan history/versioning behavior remains intact.
+- [x] Weekly skeleton generation is deterministic and risk-compliant.
+- [x] Infeasible and clarification paths never overwrite active plan.
+- [x] Existing plan history/versioning behavior remains intact.
+- [x] RE1 decisions are consumed by the orchestrator path.
 
 ---
 
@@ -148,10 +231,20 @@ Story DoD:
 - [ ] Email payload includes safety/consistency framing.
 - [ ] Tests assert no contradictory language tokens in risk-managed path.
 
+#### Story RE3.4 — Integrate RE1 Payload + Naming Contracts Into Final Emission
+As a messaging layer, I need RE1 payload requirements and canonical naming enforced in the final response path.
+
+Story DoD:
+- [ ] Payload validator enforces required output fields before send.
+- [ ] `red_b` path always includes mandatory `disclaimer_short`.
+- [ ] Canonical naming is applied before serialization and logging.
+- [ ] Integration tests verify end-to-end payload compliance and legacy-name compatibility.
+
 ### Epic RE3 Lightweight DoD
 - [ ] Session routing produces one clear `today_action` per check-in.
 - [ ] Safety-first ordering is enforced.
 - [ ] Messaging consistency checks pass for risk-managed scenarios.
+- [ ] RE1 payload/naming contracts are enforced in final payload emission.
 
 ---
 
@@ -231,10 +324,9 @@ Story DoD:
 ---
 
 ## Suggested Implementation Sequence (Low Risk)
-1. Epic RE1
-2. Epic RE2
-3. Epic RE3
-4. Epic RE4
-5. Epic RE5 (documentation placeholders only)
+1. Epic RE2
+2. Epic RE3
+3. Epic RE4
+4. Epic RE5 (documentation placeholders only)
 
 This order keeps deterministic safety/state logic in place before any AI planning behavior is expanded.

@@ -99,6 +99,16 @@ class EmailCopy:
     REPLY_WRAPPER_SUBJECT = "Subject"
 
     FALLBACK_AI_ERROR_REPLY = "I'm sorry, but I couldn't generate a response at this time."
+    SAFETY_CONCERN_REPLY = (
+        "Thanks for sharing this. Based on what you described, pause training for now and get "
+        "medical guidance before doing another hard session. If symptoms worsen or feel severe, "
+        "seek urgent care. Once you have clearance, reply with what your clinician advised and "
+        "your available training days so I can adjust your plan safely."
+    )
+    OFF_TOPIC_REDIRECT_REPLY = (
+        "I can help with training, recovery, and plan adjustments. "
+        "Share your latest workout update or coaching question and I'll help."
+    )
 
     @staticmethod
     def render_verify_email(
@@ -199,22 +209,89 @@ class AICopy:
     )
 
     CONVERSATION_INTELLIGENCE_SYSTEM_PROMPT = (
-        "You classify one inbound coaching email message. Return only JSON.\n\n"
-        "Schema:\n"
+        "Classify inbound athlete coaching message into exactly one primary intent.\n\n"
+        "Return only data that matches the provided JSON schema.\n\n"
+        "JSON schema:\n"
         "{\n"
-        '  "intent": "check_in" | "question" | "plan_change_request" | "milestone_update" | "off_topic",\n'
+        '  "intent": "check_in" | "question" | "plan_change_request" | "milestone_update" | "off_topic" | "safety_concern" | "availability_update",\n'
         '  "complexity_score": integer 1-5\n'
         "}\n\n"
-        "Rules:\n"
-        "- intent must be exactly one allowed enum value.\n"
-        "- complexity_score must be an integer from 1 to 5.\n"
-        "- Nutrition, sleep, soreness, energy, stress, and recovery updates are check_in when relevant to training readiness/performance.\n"
-        "- Intent precedence: if the message indicates inability or intent to stop/majorly change training (injury, cannot run, quitting), choose plan_change_request even if phrased as a question.\n"
-        '- Example: "I\'m ready to quit." -> {"intent":"plan_change_request","complexity_score":4}\n'
-        '- Example: "I broke my leg, I can\'t run anymore. what should I do?" -> {"intent":"plan_change_request","complexity_score":5}\n'
-        '- Example: "I ate a cake today and it felt weird." -> {"intent":"check_in","complexity_score":2}\n'
-        "- If uncertain, choose the closest valid label and score.\n"
-        "- Output valid JSON only. No extra keys, markdown, or explanation."
+        "Allowed intents:\n"
+        "- check_in\n"
+        "- question\n"
+        "- plan_change_request\n"
+        "- milestone_update\n"
+        "- off_topic\n"
+        "- safety_concern\n"
+        "- availability_update\n\n"
+        "Choose exactly one primary intent.\n\n"
+        "Priority order for tie-breaking:\n"
+        "off_topic > safety_concern > milestone_update > check_in > availability_update > plan_change_request > question\n\n"
+        "Definitions:\n"
+        "- off_topic: not meaningfully about training, recovery, health, or coaching logistics.\n"
+        "- safety_concern: injury or illness concern where safe participation may be in question, especially limping, swelling, numbness, tingling, worsening pain, night pain, inability to bear weight, or a go/no-go training question with concerning symptoms.\n"
+        "- milestone_update: mainly reports a result, race, test, PR, completed event, or objective performance change.\n"
+        "- check_in: mainly reports how recent training or recovery went, without primarily asking for a new or modified plan.\n"
+        "- availability_update: the main driver is schedule, travel, time, equipment, or access constraints that force reshaping the training week.\n"
+        "- plan_change_request: asks to create or modify a workout, week, phase, focus, or intensity direction, when availability constraints are not the main driver.\n"
+        "- question: primarily asks for explanation, clarification, or advice without requesting a plan rewrite and without safety escalation.\n\n"
+        "- complexity_score must be an integer from 1 to 5, where 1 is very simple and 5 is highly nuanced, safety-sensitive, or requires more reasoning.\n"
+        "Additional rules:\n"
+        "- Classify based on the athlete's primary communicative goal, not every possible interpretation.\n"
+        "- If the message contains both a report and a request, choose the intent that best reflects what the athlete wants the coach to do next.\n"
+        "- If both availability_update and plan_change_request are present, choose availability_update when time, travel, equipment, or schedule constraints are the main reason for replanning.\n"
+        "- If both check_in and plan_change_request are present, choose check_in only when the message is mostly a status report and the request is minor; otherwise choose the replan-related label.\n"
+        "- Mild stable soreness or tightness without red-flag symptoms is not safety_concern by itself.\n"
+        "- If the message asks whether it is safe to train and also includes red-flag symptoms, choose safety_concern.\n"
+        "- Never invent labels outside the allowed intent list.\n"
+        "- Output valid JSON only. No markdown, no prose, no extra keys."
+    )
+
+    SESSION_CHECKIN_EXTRACTION_SYSTEM_PROMPT = (
+        "You extract structured regular check-in fields for a deterministic coaching rule engine.\n\n"
+        "Output JSON only (no markdown, no prose).\n"
+        "Use null for unknown values; do not invent facts.\n"
+        "Use exact enum tokens for categorical fields.\n\n"
+        "Expected fields may include:\n"
+        "- risk_candidate\n"
+        "- event_date\n"
+        "- hard_return_context\n"
+        "- return_context\n"
+        "- has_upcoming_event\n"
+        "- performance_intent_this_week\n"
+        "- returning_from_break\n"
+        "- recent_illness\n"
+        "- break_days\n"
+        "- explicit_main_sport_switch_request\n"
+        "- performance_chase_active\n"
+        "- experience_level\n"
+        "- time_bucket\n"
+        "- main_sport_current\n"
+        "- days_available\n"
+        "- week_chaotic\n"
+        "- missed_sessions_count\n"
+        "- pain_score\n"
+        "- pain_sharp\n"
+        "- pain_sudden_onset\n"
+        "- swelling_present\n"
+        "- numbness_or_tingling\n"
+        "- pain_affects_form\n"
+        "- night_pain\n"
+        "- pain_worsening\n"
+        "- energy_score\n"
+        "- stress_score\n"
+        "- sleep_score\n"
+        "- heavy_fatigue\n"
+        "- structure_preference\n"
+        "- schedule_variability\n"
+        "- equipment_access\n"
+        "- suppress_performance_language\n"
+        "- track_hint\n"
+        "- hard_limits\n"
+        "- field_confidence\n"
+        "- free_text_summary\n\n"
+        "Safety rule: if severe acute risk is present, set risk_candidate=red_b.\n"
+        "The response MUST be valid JSON object."
     )
 
     RESPONSE_SIGNATURE_HTML = (

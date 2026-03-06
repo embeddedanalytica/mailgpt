@@ -23,13 +23,17 @@ class TestGetReplyForInbound(unittest.TestCase):
             return_value={
                 "intent": "question",
                 "complexity_score": 3,
-                "model_name": "gpt-4o-mini-2024-07-18",
+                "model_name": "gpt-5-mini",
             },
         ) as analyze, mock.patch.object(
             business,
             "put_message_intelligence",
             return_value=True,
-        ) as persist, mock.patch.object(business, "build_profile_gated_reply") as build:
+        ) as persist, mock.patch.object(
+            business,
+            "route_inbound_with_rule_engine",
+            return_value={"intent": "question", "mode": "read_only"},
+        ) as route_re, mock.patch.object(business, "build_profile_gated_reply") as build:
             build.return_value = "Ready for coaching!"
             email_data = {
                 "sender": "u@example.com",
@@ -47,13 +51,15 @@ class TestGetReplyForInbound(unittest.TestCase):
             self.assertEqual(call_kw["inbound_message_id"], "msg-1")
             self.assertEqual(call_kw["inbound_subject"], "Hi")
             self.assertEqual(call_kw["selected_model_name"], business.ADVANCED_RESPONSE_MODEL)
+            self.assertEqual(call_kw["rule_engine_decision"], {"intent": "question", "mode": "read_only"})
             analyze.assert_called_once_with("Hello")
+            route_re.assert_called_once()
             persist.assert_called_once_with(
                 athlete_id="ath_1",
                 message_id="msg-1",
                 intent="question",
                 complexity_score=3,
-                model_name="gpt-4o-mini-2024-07-18",
+                model_name="gpt-5-mini",
                 routing_decision="advanced",
                 selected_model=business.ADVANCED_RESPONSE_MODEL,
             )
@@ -65,13 +71,17 @@ class TestGetReplyForInbound(unittest.TestCase):
             return_value={
                 "intent": "question",
                 "complexity_score": 2,
-                "model_name": "gpt-4o-mini-2024-07-18",
+                "model_name": "gpt-5-mini",
             },
         ), mock.patch.object(
             business,
             "put_message_intelligence",
             return_value=True,
-        ) as persist, mock.patch.object(business, "build_profile_gated_reply") as build:
+        ) as persist, mock.patch.object(
+            business,
+            "route_inbound_with_rule_engine",
+            return_value={"intent": "question", "mode": "read_only"},
+        ), mock.patch.object(business, "build_profile_gated_reply") as build:
             build.return_value = "Ok"
             email_data = {"body": "Hi"}
             log_outcome = lambda **kw: None
@@ -87,7 +97,7 @@ class TestGetReplyForInbound(unittest.TestCase):
                 message_id=mock.ANY,
                 intent="question",
                 complexity_score=2,
-                model_name="gpt-4o-mini-2024-07-18",
+                model_name="gpt-5-mini",
                 routing_decision="lightweight",
                 selected_model=business.LIGHTWEIGHT_RESPONSE_MODEL,
             )
@@ -98,6 +108,7 @@ class TestGetReplyForInbound(unittest.TestCase):
                 inbound_message_id=None,
                 inbound_subject="",
                 selected_model_name=business.LIGHTWEIGHT_RESPONSE_MODEL,
+                rule_engine_decision={"intent": "question", "mode": "read_only"},
                 aws_request_id="req-123",
                 log_outcome=log_outcome,
             )
@@ -127,7 +138,7 @@ class TestGetReplyForInbound(unittest.TestCase):
             return_value={
                 "intent": "question",
                 "complexity_score": 2,
-                "model_name": "gpt-4o-mini-2024-07-18",
+                "model_name": "gpt-5-mini",
             },
         ), mock.patch.object(
             business,
@@ -142,6 +153,46 @@ class TestGetReplyForInbound(unittest.TestCase):
             self.assertEqual(reply, business.EmailCopy.FALLBACK_AI_ERROR_REPLY)
             persist.assert_called_once()
             build.assert_not_called()
+
+    def test_persists_intelligence_before_rule_engine_router(self):
+        call_order = []
+
+        def _persist(*args, **kwargs):
+            call_order.append("persist")
+            return True
+
+        def _route(*args, **kwargs):
+            call_order.append("router")
+            return {"intent": "question", "mode": "read_only"}
+
+        with mock.patch.object(
+            business,
+            "analyze_conversation_intelligence",
+            return_value={
+                "intent": "question",
+                "complexity_score": 2,
+                "model_name": "gpt-5-mini",
+            },
+        ), mock.patch.object(
+            business,
+            "put_message_intelligence",
+            side_effect=_persist,
+        ), mock.patch.object(
+            business,
+            "route_inbound_with_rule_engine",
+            side_effect=_route,
+        ), mock.patch.object(
+            business,
+            "build_profile_gated_reply",
+            return_value="Ok",
+        ):
+            business.get_reply_for_inbound(
+                "ath_1",
+                "u@example.com",
+                {"body": "Hi"},
+            )
+
+        self.assertEqual(call_order, ["persist", "router"])
 
 
 if __name__ == "__main__":

@@ -18,14 +18,24 @@ from dynamodb_models import (
 from config import ACTION_BASE_URL
 from activity_snapshot import parse_manual_activity_snapshot_from_email
 from openai_responder import OpenAIResponder
+from openai_responder import SessionCheckinExtractor, SessionCheckinExtractionError
+from ai_extraction_contract import (
+    list_missing_or_low_confidence_critical_fields,
+    should_request_clarification,
+)
 from profile import (
     parse_profile_updates_from_email,
     get_missing_required_profile_fields,
     build_profile_collection_reply,
 )
 from email_copy import EmailCopy
+from config import ENABLE_SESSION_CHECKIN_EXTRACTION
 
 logger = logging.getLogger(__name__)
+
+
+def _type_map(payload: Dict[str, Any]) -> Dict[str, str]:
+    return {key: type(value).__name__ for key, value in payload.items()}
 
 
 def _build_connect_strava_link(from_email: str) -> Optional[str]:
@@ -50,6 +60,7 @@ def build_profile_gated_reply(
     inbound_message_id: Optional[str] = None,
     inbound_subject: Optional[str] = None,
     selected_model_name: Optional[str] = None,
+    rule_engine_decision: Optional[Dict[str, Any]] = None,
     *,
     aws_request_id: Optional[str] = None,
     log_outcome: Optional[Callable[..., None]] = None,
@@ -81,6 +92,43 @@ def build_profile_gated_reply(
                 from_email,
                 f", aws_request_id={aws_request_id}" if aws_request_id else "",
             )
+
+    if ENABLE_SESSION_CHECKIN_EXTRACTION:
+        logger.info(
+            "Session check-in extraction starting in profile gate: athlete_id=%s body_chars=%s",
+            athlete_id,
+            len(str(inbound_body or "")),
+        )
+        try:
+            extracted_checkin = SessionCheckinExtractor.extract_session_checkin_fields(inbound_body)
+            if extracted_checkin:
+                needs_clarification = should_request_clarification(extracted_checkin)
+                missing_fields = list_missing_or_low_confidence_critical_fields(extracted_checkin)
+                logger.info(
+                    "Session check-in extraction completed in profile gate: athlete_id=%s keys=%s field_types=%s clarification_needed=%s missing_or_low=%s",
+                    athlete_id,
+                    sorted(extracted_checkin.keys()),
+                    _type_map(extracted_checkin),
+                    needs_clarification,
+                    missing_fields,
+                )
+                log(
+                    result="session_checkin_extracted",
+                    extracted_fields="|".join(sorted(extracted_checkin.keys())),
+                    clarification_needed=needs_clarification,
+                )
+                if needs_clarification:
+                    log(
+                        result="session_checkin_clarification_needed",
+                        missing_or_low_confidence="|".join(missing_fields),
+                    )
+        except SessionCheckinExtractionError as exc:
+            logger.error(
+                "Session check-in extraction failed in profile gate: athlete_id=%s error=%s",
+                athlete_id,
+                exc,
+            )
+            log(result="session_checkin_extraction_failed")
 
     manual_snapshot = parse_manual_activity_snapshot_from_email(
         inbound_body, now_epoch=int(time.time())
@@ -150,6 +198,29 @@ def build_profile_gated_reply(
     if plan_summary:
         reply += f"\n\n{plan_summary}"
 
+    if isinstance(rule_engine_decision, dict):
+        reply_strategy = str(rule_engine_decision.get("reply_strategy", "")).strip()
+        if reply_strategy == "safety_concern":
+            return EmailCopy.SAFETY_CONCERN_REPLY
+        if reply_strategy == "off_topic":
+            return EmailCopy.OFF_TOPIC_REDIRECT_REPLY
+        if rule_engine_decision.get("clarification_needed"):
+            reply += (
+                "\n\nBefore I change your plan, I need a clearer weekly check-in "
+                "(event date, available days, and pain score)."
+            )
+        engine_output = rule_engine_decision.get("engine_output")
+        if isinstance(engine_output, dict):
+            track = str(engine_output.get("track", "")).strip()
+            risk_flag = str(engine_output.get("risk_flag", "")).strip()
+            plan_update_status = str(engine_output.get("plan_update_status", "")).strip()
+            if track or risk_flag or plan_update_status:
+                reply += (
+                    "\n\nRule-engine context: "
+                    f"track={track or 'n/a'}, risk={risk_flag or 'n/a'}, "
+                    f"plan_update_status={plan_update_status or 'n/a'}."
+                )
+
     # LLM-first path: when routing selected a response model, generate coaching reply
     # with current inbound context plus plan summary.
     if selected_model_name:
@@ -157,6 +228,8 @@ def build_profile_gated_reply(
         llm_body = inbound_body
         if plan_summary:
             llm_body = f"{llm_body}\n\nCurrent plan context:\n{plan_summary}"
+        if isinstance(rule_engine_decision, dict):
+            llm_body = f"{llm_body}\n\nRule engine decision context:\n{rule_engine_decision}"
         generated = OpenAIResponder.generate_response(
             subject=llm_subject,
             body=llm_body,

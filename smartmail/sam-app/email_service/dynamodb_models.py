@@ -1195,6 +1195,7 @@ def put_message_intelligence(
 
 _PLAN_PHASES = {"base", "build", "peak", "recovery", "unknown"}
 _PLAN_STATUSES = {"active", "adjusting", "recovery"}
+_PLAN_UPDATE_STATUSES = {"updated", "unchanged_clarification_needed", "unchanged_infeasible_week"}
 
 
 def _default_plan_start_date(now_epoch: Optional[int] = None) -> str:
@@ -1214,6 +1215,17 @@ def _normalize_next_recommended_session(value: Any, fallback_date: str) -> Dict[
     type_value = str(value.get("type", "")).strip() or "easy"
     target_value = str(value.get("target", "")).strip() or "30 minutes easy effort"
     return {"date": date_value, "type": type_value, "target": target_value}
+
+
+def _normalize_string_list(value: Any) -> List[str]:
+    if not isinstance(value, list):
+        return []
+    normalized: List[str] = []
+    for item in value:
+        text = str(item).strip()
+        if text:
+            normalized.append(text)
+    return normalized
 
 
 def normalize_current_plan(plan: Optional[Dict[str, Any]], fallback_goal: Optional[str] = None) -> Dict[str, Any]:
@@ -1248,6 +1260,11 @@ def normalize_current_plan(plan: Optional[Dict[str, Any]], fallback_goal: Option
     next_session = _normalize_next_recommended_session(
         plan.get("next_recommended_session"), fallback_date=start_date
     )
+    weekly_skeleton = _normalize_string_list(plan.get("weekly_skeleton"))
+    plan_adjustments = _normalize_string_list(plan.get("plan_adjustments"))
+    plan_update_status = str(plan.get("plan_update_status", "updated")).strip().lower()
+    if plan_update_status not in _PLAN_UPDATE_STATUSES:
+        plan_update_status = "updated"
     return {
         "primary_goal": primary_goal,
         "plan_version": plan_version,
@@ -1255,6 +1272,9 @@ def normalize_current_plan(plan: Optional[Dict[str, Any]], fallback_goal: Option
         "current_focus": focus,
         "next_recommended_session": next_session,
         "plan_status": status,
+        "weekly_skeleton": weekly_skeleton,
+        "plan_adjustments": plan_adjustments,
+        "plan_update_status": plan_update_status,
         "updated_at": updated_at,
     }
 
@@ -1309,6 +1329,14 @@ def _normalize_plan_updates(updates: Dict[str, Any]) -> Dict[str, Any]:
         value = updates.get(key)
         if isinstance(value, str) and value.strip():
             normalized[key] = value.strip()
+    if "weekly_skeleton" in updates:
+        normalized["weekly_skeleton"] = _normalize_string_list(updates.get("weekly_skeleton"))
+    if "plan_adjustments" in updates:
+        normalized["plan_adjustments"] = _normalize_string_list(updates.get("plan_adjustments"))
+    if "plan_update_status" in updates:
+        status = str(updates.get("plan_update_status", "")).strip().lower()
+        if status in _PLAN_UPDATE_STATUSES:
+            normalized["plan_update_status"] = status
     if "next_recommended_session" in updates:
         normalized["next_recommended_session"] = _normalize_next_recommended_session(
             updates.get("next_recommended_session"),

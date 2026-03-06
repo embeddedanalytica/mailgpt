@@ -30,6 +30,7 @@ Out of scope (for v1):
 - Risk flag: `green | yellow | red_a | red_b`
 - Time bucket: `2_3h | 4_6h | 7_10h | 10h_plus`
 - Experience: `new | intermediate | advanced`
+- Goal category: intake-level classification, distinct from weekly phase windows
 
 ## 4. Data Model
 
@@ -37,7 +38,7 @@ Out of scope (for v1):
 ```json
 {
   "athlete_id": "string",
-  "primary_goal_timeframe": "general_consistency | event_8_16w | performance_16w_plus",
+  "goal_category": "general_consistency | event_8_16w | performance_16w_plus",
   "event_date": "YYYY-MM-DD | null",
   "training_identity": "casual_multi | single_discipline | hybrid_seasonal",
   "main_sport_current": "run | bike | swim | other | null",
@@ -45,6 +46,7 @@ Out of scope (for v1):
   "time_bucket": "2_3h | 4_6h | 7_10h | 10h_plus",
   "injury_baseline": "none | recurring_niggles | current_pain",
   "schedule_variability": "low | medium | high",
+  "performance_intent_default": false,
   "equipment_access": {
     "gym": true,
     "pool": true,
@@ -60,7 +62,9 @@ Out of scope (for v1):
 {
   "week_start": "YYYY-MM-DD",
   "goal_now": "string",
+  "has_upcoming_event": null,
   "event_date": "YYYY-MM-DD | null",
+  "performance_intent_this_week": null,
   "sports_last_week": [
     {"sport": "run", "minutes": 120}
   ],
@@ -71,17 +75,62 @@ Out of scope (for v1):
   "energy_score": 6,
   "stress_score": 7,
   "sleep_score": 5,
+  "returning_from_break": false,
+  "recent_illness": "none",
+  "break_days": null,
   "free_note": "string",
   "missed_sessions_count": 1,
   "week_chaotic": false
 }
 ```
 
-### 4.3 Engine Output (deterministic)
+Field constraints:
+- `recent_illness` enum is fixed: `none | mild | significant`
+- `has_upcoming_event`: `true | false | null` (null allows profile-based fallback)
+
+### 4.3 Rule State (persistent, separate from profile)
+```json
+{
+  "athlete_id": "string",
+  "weekly_signals_last_4": [
+    {
+      "week_start": "YYYY-MM-DD",
+      "pain_score": 2,
+      "energy_score": 6,
+      "sleep_score": 5,
+      "stress_score": 7
+    }
+  ],
+  "compliance_last_4": [
+    {
+      "week_start": "YYYY-MM-DD",
+      "planned_sessions_count": 4,
+      "completed_sessions_count": 3
+    }
+  ],
+  "phase_risk_time_last_6": [
+    {
+      "week_start": "YYYY-MM-DD",
+      "phase": "build",
+      "risk_flag": "yellow",
+      "time_bucket": "4_6h"
+    }
+  ],
+  "weeks_since_deload": 2,
+  "phase_upgrade_streak": 1,
+  "last_updated_week_start": "YYYY-MM-DD"
+}
+```
+
+Note:
+- `rule_state` is a separate persisted contract.
+- RE1-FU may initially define interface + in-memory fallback when persistence is not yet wired.
+
+### 4.4 Engine Output (deterministic)
 ```json
 {
   "classification_label": "event_8_16w / hybrid_seasonal / intermediate / 4_6h / recurring_niggles / high_variability",
-  "track": "main_sport_build",
+  "track": "main_build",
   "phase": "build",
   "risk_flag": "yellow",
   "weekly_skeleton": [
@@ -100,6 +149,11 @@ Out of scope (for v1):
     "subject_hint": "This week: stay consistent, reduce intensity",
     "summary": "...",
     "sessions": ["..."],
+    "plan_focus_line": "...",
+    "technique_cue": "...",
+    "recovery_target": "...",
+    "if_then_rules": ["..."],
+    "disclaimer_short": "...",
     "safety_note": "..."
   }
 }
@@ -116,10 +170,10 @@ Out of scope (for v1):
 - Schedule variability
 
 ### 5.2 Output label format
-`<goal_timeframe> / <training_identity> / <experience> / <time_bucket> / <injury_baseline> / <schedule_variability>`
+`<goal_category> / <training_identity> / <experience> / <time_bucket> / <injury_baseline> / <schedule_variability>`
 
 ### 5.3 Mapping rules
-- Q1 goal timeframe:
+- Q1 goal timeframe -> `goal_category`:
   - no event date -> `general_consistency`
   - event date within 8-16 weeks -> `event_8_16w`
   - event date >16 weeks OR performance-focused ongoing -> `performance_16w_plus`
@@ -142,7 +196,15 @@ Out of scope (for v1):
 If `main_sport_current != null` -> `main_sport_plan`
 Else -> `general_fitness_plan`
 
-### 6.2 General fitness plan templates
+### 6.2 Performance intent resolution
+`effective_performance_intent` resolution order:
+1. Use `performance_intent_this_week` when not null
+2. Else use `performance_intent_default`
+3. Else default to `false`
+
+Intensity is allowed only when `effective_performance_intent == true` and other risk/safety gates permit it.
+
+### 6.3 General fitness plan templates
 - `2_3h` (3 sessions):
   - 1 easy aerobic (engine)
   - 1 strength/mobility
@@ -150,16 +212,16 @@ Else -> `general_fitness_plan`
 - `4_6h` (4 sessions):
   - 2 aerobic
   - 1 strength
-  - 1 optional intensity OR skills
+  - 1 optional intensity OR skills (intensity only when `effective_performance_intent`)
 - `7_10h` (5-6 sessions base):
   - 3 aerobic
-  - 1 intensity
+  - 1 intensity (only when `effective_performance_intent`)
   - 1 strength
   - 1 optional skills/recovery
 - `10h_plus` (controlled add-ons, not free volume):
   - base structure (same anchors):
     - 3 aerobic
-    - 1 intensity (green + explicit performance intent only)
+    - 1 intensity (green + `effective_performance_intent` only)
     - 1 strength
     - 1 recovery/skills
   - add-ons (choose 1-2 max):
@@ -171,20 +233,26 @@ Else -> `general_fitness_plan`
     - every 3-5 weeks include lighter week (~20% volume reduction)
 
 General fitness global rules:
-- Keep intensity low unless explicit performance intent is provided.
+- Keep intensity low unless `effective_performance_intent` is true.
 - Rotate modalities when possible to reduce overuse risk.
 
-### 6.3 Main sport phase selection
+### 6.4 Main sport phase selection
 Calendar windows:
 - `base`: event >12 weeks away OR no event
 - `build`: event 4-12 weeks away (inclusive)
 - `peak_taper`: event 0-3 weeks away (inclusive)
 
+Hard return context is true when any:
+- `returning_from_break == true`
+- `recent_illness == significant`
+- `break_days >= 10` (explicit or derived)
+
 `phase` derivation order:
 1. Validate event date input:
-   - if goal implies event but `event_date` missing/invalid -> dismiss date from routing, keep existing plan unchanged, emit clarification flag
+   - if `has_upcoming_event == true` and `event_date` missing/invalid -> dismiss date from routing, keep existing plan unchanged, emit clarification flag
+   - if `has_upcoming_event == null`, infer event expectation from `goal_category == event_8_16w` (do not infer from `goal_now` text)
    - if `event_date` is in the past -> dismiss date from routing, keep existing plan unchanged, emit clarification flag
-2. If return context true (injury/illness comeback OR long break) -> `return_to_training`
+2. If hard return context true -> `return_to_training`
    - precedence rule: hard return context always wins over calendar phase
 3. Else derive calendar phase from valid event window
 4. Else if no event and performance chase active -> `build`; otherwise `base`
@@ -202,7 +270,12 @@ Calendar windows:
    - require 2 consecutive qualifying check-ins before upgrading to a later phase
    - downgrades for safety triggers apply immediately
 
-### 6.4 Risk flag derivation
+### 6.5 Risk flag derivation
+Worsening definition (deterministic):
+- pain_score increased by >=2 points vs previous week, OR
+- pain moved from [0-3] to >=4, OR
+- `pain_affects_form` flipped from false to true
+
 - `red_b` (explicit clinician recommendation) if any:
   - sharp pain
   - sudden onset pain
@@ -210,16 +283,30 @@ Calendar windows:
   - numbness/tingling
   - pain affects gait/form
   - night pain
-  - worsening session-to-session
+  - worsening week-to-week (per deterministic worsening definition)
 - `red_a` (modify + monitor) if not `red_b` and:
   - pain score >= 4, non-sharp, does not alter form, not worsening
-- `yellow` if any and not red-tier:
+- `yellow` if not red-tier and any:
   - recurring niggles
-  - heavy fatigue
-  - high stress or poor sleep trend
+  - energy_score <= 4
+  - stress_score >= 8
+  - sleep_score <= 4
+  - stress_score >= 7 and energy_score <= 5
 - `green` otherwise
 
-### 6.5 Main sport skeleton by time bucket
+### 6.6 Main sport switching governance (hybrid safety)
+Switch `main_sport_current` only when:
+- explicit athlete request, OR
+- last 2 weeks show >=60% minutes in another sport AND total minutes across 2 weeks >= 120
+
+Switch transition guard (first 2 weeks after switch):
+- cap intensity to max 1 quality session/week
+- cap weekly volume increase at <=10%
+- freeze `main_sport_current` for 2 weeks post-switch unless:
+  - athlete explicitly requests a change, or
+  - `red_b` safety condition requires immediate change
+
+### 6.7 Main sport skeleton by time bucket
 - `2_3h` (3 sessions):
   - 1 long/easy main-sport
   - 1 short quality OR hills/tempo (green only)
@@ -239,15 +326,35 @@ Calendar windows:
     - risk is `green`
     - schedule variability is not `high`
 
-### 6.6 Risk-based overrides (track-level)
+Main sport deload rule:
+- every 3-5 weeks OR earlier when sustained yellow risk:
+  - reduce weekly volume by ~15-25%
+  - remove one quality session
+- `peak_taper` supersedes standard deload cadence.
+- sustained yellow definition:
+  - yellow for 2 consecutive weeks, OR
+  - yellow in 3 of last 4 weeks
+
+Quality archetypes by experience:
+- `new`:
+  - strides/hills or short tempo blocks
+  - no VO2 prescriptions
+- `intermediate`:
+  - tempo/threshold intervals
+  - occasional VO2 capped at 1 session/week (green only)
+- `advanced`:
+  - event-specific interval sets
+  - still bounded by risk/schedule/intensity-spacing rules
+
+### 6.8 Risk-based overrides (track-level)
 - `red_a`:
   - remove all intensity
   - swap to low-impact modality
   - reduce total volume by 20-50%
-  - include: \"stop intensity, switch to easy/low impact, update coach within 24h\"
+  - include: "stop intensity, switch to easy/low impact, update coach within 24h"
 - `red_b`:
   - all `red_a` rules
-  - include explicit line: \"Please stop training and consult a clinician/physio.\"
+  - include explicit line: "Please stop training and consult a clinician/physio."
 - `yellow`:
   - keep volume approximately stable
   - reduce intensity (or replace quality with easy)
@@ -321,26 +428,34 @@ Track assignment logic:
 
 ### 10.1 Required functions
 - `classify_intake(profile_input) -> profile`
-- `derive_phase(profile, checkin, today_date) -> phase`
-- `derive_risk(profile, checkin) -> risk_flag`
+- `resolve_effective_performance_intent(profile, checkin) -> bool`
+- `derive_phase(profile, checkin, today_date, rule_state, risk_flag, effective_performance_intent) -> phase`
+- `derive_risk(profile, checkin, rule_state) -> risk_flag`
 - `select_track(profile, phase, risk_flag) -> track`
-- `build_weekly_skeleton(profile, track, phase, risk_flag) -> session_template[]`
+- `should_switch_main_sport(profile, rule_state, explicit_request) -> bool`
+- `build_weekly_skeleton(profile, track, phase, risk_flag, effective_performance_intent, rule_state) -> session_template[]`
 - `route_today_action(checkin, risk_flag, track) -> today_action + adjustments[]`
 - `compose_email_payload(profile, checkin, engine_output) -> email_payload`
 - `format_weekly_output_mode(profile.structure_preference, weekly_skeleton) -> ordered_plan | priority_menu`
 - `validate_event_date(checkin, today_date) -> valid | invalid_missing | invalid_format | invalid_past`
+- `load_rule_state(athlete_id) -> rule_state`
+- `update_rule_state(athlete_id, weekly_inputs, decisions) -> rule_state`
 - `detect_inconsistent_training(phase_history, current_phase, risk_flag) -> bool`
+- `derive_yellow_thresholds(checkin, rule_state) -> bool`
 - `enforce_flexible_mode_intensity_budget(plan_menu) -> validated_menu`
 
 ### 10.2 Processing order
 1. Normalize inputs
-2. Update/derive profile fields
-3. Determine phase
-4. Determine risk
-5. Assign track
-6. Build weekly skeleton
-7. Apply session-level routing overrides
-8. Emit email payload
+2. Load rule state
+3. Update/derive profile fields
+4. Resolve `effective_performance_intent`
+5. Determine risk
+6. Determine phase (using derived `risk_flag` and `effective_performance_intent`)
+7. Assign track
+8. Build weekly skeleton
+9. Apply session-level routing overrides
+10. Emit email payload
+11. Update rule state
 
 ## 11. Guardrails
 - Never prescribe intensity on `red_a` or `red_b` risk.
@@ -352,15 +467,25 @@ Track assignment logic:
 - If event date is invalid/missing/past when needed, do not re-phase; keep current plan and request clarification.
 - If no feasible week can be constructed, do not replace existing plan.
 - In flexibility mode, enforce intensity budget: max 2 hard sessions/week and never on adjacent days.
+- Hard session definition (for intensity budget):
+  - hard tags: `quality | intervals | tempo | threshold | vo2 | race_sim | hills_hard`
+  - not hard: `easy_aerobic | recovery | skills | mobility | strength`
 - When in risk-managed track, never emit conflicting peak/performance wording.
+- `disclaimer_short` is mandatory for `red_b` payloads.
 
 ## 12. Minimal Test Matrix (must-have)
 - Intake mapping tests for each Q1-Q4 bucket
+- `effective_performance_intent` fallback tests (`this_week` -> profile -> default false)
+- Rule-state bootstrap/rolling-window tests (`last_4`/`last_6` behavior)
+- Event-intent validation tests for `has_upcoming_event` true/null behavior
 - Phase derivation tests (`base/build/peak_taper/return_to_training`) including inclusive boundary checks at weeks 12/4/3 and conservative override behavior
 - Conservative-override priority tests confirming precedence: `red_b > red_a > return-context > yellow > new`
-- Risk derivation tests (`green/yellow/red_a/red_b`)
+- Risk derivation tests (`green/yellow/red_a/red_b`) including yellow threshold boundaries and deterministic worsening checks
 - Track assignment tests including override precedence
+- Main-sport switch governance tests (explicit request, 60%/2-week + 120 min floor, anti-churn freeze behavior)
 - Skeleton generation by time bucket + plan type, including 10h+ add-on caps
+- Main-sport deload cadence tests + sustained-yellow trigger tests + taper-supersedes-deload tests
+- Quality archetype mapping tests by experience + risk gates
 - Session routing tests for pain/energy/missed/chaotic branches
 - Flexibility output tests: anchor/filler/optional menu and no back-to-back hard day recommendation
 - Flexible-mode intensity budget tests (max hard-session count and spacing)
@@ -370,11 +495,12 @@ Track assignment logic:
 - Infeasible-week tests: no new plan emitted; existing plan unchanged
 - Track/message consistency tests: risk-managed track suppresses performance language
 - Inconsistent-training stabilization tests: requires 2 consecutive check-ins for phase upgrade
+- Email payload contract tests for required fields and mandatory red_b disclaimer
 
 ## 13. Example Mappings
 
 ### 13.1 Intermediate runner, hybrid seasonal, 4-6h
-Input: main sport run, event in 9 weeks, intermediate, 4_6h, recurring niggles
+Input: main sport run, event in 9 weeks, intermediate, 4_6h, recurring niggles, `performance_intent_this_week=true`
 Output:
 - phase: `build`
 - risk: `yellow`
@@ -382,7 +508,7 @@ Output:
 - skeleton: easy run, easy run, reduced quality/easy, strength or easy swim
 
 ### 13.2 Casual mixed athlete, 2-3h
-Input: no main sport, general consistency goal, new, 2_3h
+Input: no main sport, general consistency goal, new, 2_3h, `performance_intent_this_week=null`, `performance_intent_default=false`
 Output:
 - phase: n/a (general)
 - risk: typically `green` unless symptoms reported

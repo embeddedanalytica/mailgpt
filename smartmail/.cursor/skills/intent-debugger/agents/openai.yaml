@@ -1,0 +1,4 @@
+interface:
+  display_name: "Intent Debugger"
+  short_description: "Run the real local intent classifier and summarize the result"
+  default_prompt: "Use $intent-debugger to classify the message in my prompt with the real local SmartMail intent debugger, then summarize the detected intent, signals, resolution source, and overall behavior."

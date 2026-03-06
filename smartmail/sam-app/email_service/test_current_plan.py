@@ -133,6 +133,32 @@ class TestCurrentPlanHelpers(unittest.TestCase):
         self.assertEqual(plan["current_phase"], "base")
         self.assertEqual(plan["current_focus"], "Build consistency")
         self.assertEqual(plan["plan_status"], "active")
+        self.assertEqual(plan["weekly_skeleton"], [])
+        self.assertEqual(plan["plan_adjustments"], [])
+        self.assertEqual(plan["plan_update_status"], "updated")
+
+    def test_normalize_current_plan_keeps_optional_re2_fields(self):
+        normalized = dynamodb_models.normalize_current_plan(
+            {
+                "primary_goal": "Marathon",
+                "plan_version": 3,
+                "current_phase": "build",
+                "current_focus": "threshold",
+                "next_recommended_session": {
+                    "date": "2026-03-15",
+                    "type": "easy",
+                    "target": "45 minutes",
+                },
+                "plan_status": "adjusting",
+                "weekly_skeleton": ["easy_aerobic", "tempo", "strength"],
+                "plan_adjustments": ["reduce_intensity"],
+                "plan_update_status": "updated",
+                "updated_at": 1735732800,
+            }
+        )
+        self.assertEqual(normalized["weekly_skeleton"], ["easy_aerobic", "tempo", "strength"])
+        self.assertEqual(normalized["plan_adjustments"], ["reduce_intensity"])
+        self.assertEqual(normalized["plan_update_status"], "updated")
 
     def test_ensure_current_plan_writes_default_once(self):
         profile_table = _CapturingTable()
@@ -213,6 +239,49 @@ class TestCurrentPlanHelpers(unittest.TestCase):
 
         self.assertEqual(result["status"], "applied")
         self.assertEqual(result["plan_version"], 2)
+        self.assertIsNotNone(dynamo.last_transact)
+
+    def test_update_current_plan_accepts_re2_optional_fields(self):
+        profile_table = _CapturingTable()
+        request_table = _CapturingTable()
+        history_table = _CapturingTable()
+        dynamo = _RoutingDynamo(
+            {
+                dynamodb_models.COACH_PROFILES_TABLE: profile_table,
+                dynamodb_models.PLAN_UPDATE_REQUESTS_TABLE: request_table,
+                dynamodb_models.PLAN_HISTORY_TABLE: history_table,
+            }
+        )
+
+        with mock.patch.object(dynamodb_models, "dynamodb", dynamo), mock.patch.object(
+            dynamodb_models,
+            "get_current_plan",
+            return_value={
+                "primary_goal": "Marathon",
+                "plan_version": 1,
+                "current_phase": "base",
+                "current_focus": "consistency",
+                "next_recommended_session": {
+                    "date": "2026-03-10",
+                    "type": "easy",
+                    "target": "40 minutes",
+                },
+                "plan_status": "active",
+                "updated_at": 1735732800,
+            },
+        ):
+            result = dynamodb_models.update_current_plan(
+                "ath_1",
+                {
+                    "current_phase": "build",
+                    "weekly_skeleton": ["easy_aerobic", "tempo", "strength"],
+                    "plan_adjustments": ["reduce_intensity"],
+                    "plan_update_status": "updated",
+                },
+                logical_request_id="req-re2-fields",
+            )
+
+        self.assertEqual(result["status"], "applied")
         self.assertIsNotNone(dynamo.last_transact)
 
     def test_update_current_plan_returns_idempotent_replay_for_same_payload(self):

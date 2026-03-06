@@ -1,0 +1,4 @@
+interface:
+  display_name: "Deslop"
+  short_description: "Audit and trim AI-style code bloat"
+  default_prompt: "Use $deslop to audit the changed Python, JS, or HTML files for verbose comments, over-engineering, bad naming, and other AI-style code slop, then apply lean cleanup."
