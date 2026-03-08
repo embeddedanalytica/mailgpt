@@ -43,6 +43,90 @@ class TestApplyRuleEnginePlanUpdate(unittest.TestCase):
 
 
 class TestRunRuleEngineForWeek(unittest.TestCase):
+    def test_phase_upgrade_requires_two_consecutive_qualifying_checkins(self):
+        with mock.patch.object(
+            rule_engine_orchestrator,
+            "load_rule_state",
+            return_value={
+                "phase_risk_time_last_6": [{"week_start": "2026-03-01", "phase": "base", "risk_flag": "green"}],
+                "phase_upgrade_streak": 0,
+            },
+        ), mock.patch.object(
+            rule_engine_orchestrator,
+            "update_rule_state",
+            return_value={},
+        ) as update_state:
+            output = rule_engine_orchestrator.run_rule_engine_for_week(
+                athlete_id="ath_1",
+                profile={"goal_category": "general_consistency", "main_sport_current": "run", "time_bucket": "4_6h"},
+                checkin={
+                    "has_upcoming_event": False,
+                    "days_available": 4,
+                    "performance_intent_this_week": True,
+                },
+                today_date=date(2026, 3, 4),
+            )
+
+        self.assertEqual(output.phase, "base")
+        decisions = update_state.call_args.args[2]
+        self.assertEqual(decisions["phase_upgrade_streak"], 1)
+
+    def test_second_consecutive_upgrade_allows_phase_advance(self):
+        with mock.patch.object(
+            rule_engine_orchestrator,
+            "load_rule_state",
+            return_value={
+                "phase_risk_time_last_6": [{"week_start": "2026-03-01", "phase": "base", "risk_flag": "green"}],
+                "phase_upgrade_streak": 1,
+            },
+        ), mock.patch.object(
+            rule_engine_orchestrator,
+            "update_rule_state",
+            return_value={},
+        ) as update_state:
+            output = rule_engine_orchestrator.run_rule_engine_for_week(
+                athlete_id="ath_1",
+                profile={"goal_category": "general_consistency", "main_sport_current": "run", "time_bucket": "4_6h"},
+                checkin={
+                    "has_upcoming_event": False,
+                    "days_available": 4,
+                    "performance_intent_this_week": True,
+                },
+                today_date=date(2026, 3, 4),
+            )
+
+        self.assertEqual(output.phase, "build")
+        decisions = update_state.call_args.args[2]
+        self.assertEqual(decisions["phase_upgrade_streak"], 0)
+
+    def test_red_tier_downgrade_applies_immediately(self):
+        with mock.patch.object(
+            rule_engine_orchestrator,
+            "load_rule_state",
+            return_value={
+                "phase_risk_time_last_6": [{"week_start": "2026-03-01", "phase": "peak_taper", "risk_flag": "green"}],
+                "phase_upgrade_streak": 1,
+            },
+        ), mock.patch.object(
+            rule_engine_orchestrator,
+            "update_rule_state",
+            return_value={},
+        ):
+            output = rule_engine_orchestrator.run_rule_engine_for_week(
+                athlete_id="ath_1",
+                profile={"goal_category": "event_8_16w", "main_sport_current": "run", "time_bucket": "4_6h"},
+                checkin={
+                    "has_upcoming_event": True,
+                    "event_date": "2026-03-18",
+                    "days_available": 4,
+                    "pain_score": 5,
+                },
+                today_date=date(2026, 3, 4),
+            )
+
+        self.assertEqual(output.phase, "build")
+        self.assertEqual(output.risk_flag, "red_a")
+
     def test_clarification_sets_unchanged_status(self):
         with mock.patch.object(rule_engine_orchestrator, "load_rule_state", return_value={}), mock.patch.object(
             rule_engine_orchestrator,
@@ -134,3 +218,79 @@ class TestRunRuleEngineForWeek(unittest.TestCase):
 
         self.assertEqual(output.plan_update_status, "unchanged_infeasible_week")
         self.assertEqual(output.weekly_skeleton, [])
+
+    def test_routing_and_payload_use_re3_logic(self):
+        with mock.patch.object(rule_engine_orchestrator, "load_rule_state", return_value={}), mock.patch.object(
+            rule_engine_orchestrator,
+            "update_rule_state",
+            return_value={},
+        ):
+            output = rule_engine_orchestrator.run_rule_engine_for_week(
+                athlete_id="ath_1",
+                profile={"goal_category": "general_consistency", "time_bucket": "4_6h"},
+                checkin={
+                    "has_upcoming_event": False,
+                    "days_available": 4,
+                    "week_chaotic": True,
+                    "energy_score": 9,
+                },
+                today_date=date(2026, 3, 4),
+            )
+
+        self.assertEqual(output.today_action, "prioritize_big_2_anchors")
+        self.assertTrue(any(item.startswith("Priority: ") for item in output.next_email_payload["sessions"]))
+
+    def test_re4_planner_validated_plan_is_used(self):
+        rendered_payload = valid_engine_output_payload()["next_email_payload"]
+        with mock.patch.object(rule_engine_orchestrator, "load_rule_state", return_value={}), mock.patch.object(
+            rule_engine_orchestrator,
+            "update_rule_state",
+            return_value={},
+        ), mock.patch.object(
+            rule_engine_orchestrator.PlanningLLM,
+            "propose_plan",
+            return_value={
+                "plan_proposal": {"weekly_skeleton": ["easy_aerobic", "strength", "easy_aerobic"]},
+                "rationale": "valid plan",
+                "non_binding_state_suggestions": ["advisory_only"],
+            },
+        ), mock.patch.object(
+            rule_engine_orchestrator.LanguageReplyRenderer,
+            "render_reply",
+            return_value=rendered_payload,
+        ):
+            output = rule_engine_orchestrator.run_rule_engine_for_week(
+                athlete_id="ath_1",
+                profile={"goal_category": "general_consistency", "time_bucket": "4_6h"},
+                checkin={"has_upcoming_event": False, "days_available": 4},
+                today_date=date(2026, 3, 4),
+            )
+        self.assertEqual(output.classification_label, "deterministic_re4")
+        self.assertEqual(output.weekly_skeleton, ["easy_aerobic", "strength", "easy_aerobic"])
+
+    def test_re4_language_renderer_invalid_payload_falls_back_to_deterministic_payload(self):
+        with mock.patch.object(rule_engine_orchestrator, "load_rule_state", return_value={}), mock.patch.object(
+            rule_engine_orchestrator,
+            "update_rule_state",
+            return_value={},
+        ), mock.patch.object(
+            rule_engine_orchestrator.PlanningLLM,
+            "propose_plan",
+            return_value={
+                "plan_proposal": {"weekly_skeleton": ["easy_aerobic", "strength"]},
+                "rationale": "valid plan",
+                "non_binding_state_suggestions": [],
+            },
+        ), mock.patch.object(
+            rule_engine_orchestrator.LanguageReplyRenderer,
+            "render_reply",
+            return_value={"subject_hint": "missing required fields"},
+        ):
+            output = rule_engine_orchestrator.run_rule_engine_for_week(
+                athlete_id="ath_1",
+                profile={"goal_category": "general_consistency", "time_bucket": "4_6h"},
+                checkin={"has_upcoming_event": False, "days_available": 4, "week_chaotic": True},
+                today_date=date(2026, 3, 4),
+            )
+        self.assertIn("subject_hint", output.next_email_payload)
+        self.assertIn("sessions", output.next_email_payload)

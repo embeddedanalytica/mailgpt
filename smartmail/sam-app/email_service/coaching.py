@@ -30,6 +30,7 @@ from profile import (
 )
 from email_copy import EmailCopy
 from config import ENABLE_SESSION_CHECKIN_EXTRACTION
+from rule_engine import RuleEngineContractError, validate_rule_engine_output
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,55 @@ def _build_connect_strava_link(from_email: str) -> Optional[str]:
     if not token_id:
         return None
     return f"{ACTION_BASE_URL}{token_id}"
+
+
+def _render_rule_engine_payload_reply(
+    next_email_payload: Dict[str, Any],
+    *,
+    include_plan_summary: Optional[str] = None,
+) -> str:
+    subject_hint = str(next_email_payload.get("subject_hint", "")).strip()
+    summary = str(next_email_payload.get("summary", "")).strip()
+    sessions = [
+        str(item).strip()
+        for item in next_email_payload.get("sessions", [])
+        if str(item).strip()
+    ]
+    plan_focus_line = str(next_email_payload.get("plan_focus_line", "")).strip()
+    technique_cue = str(next_email_payload.get("technique_cue", "")).strip()
+    recovery_target = str(next_email_payload.get("recovery_target", "")).strip()
+    if_then_rules = [
+        str(item).strip()
+        for item in next_email_payload.get("if_then_rules", [])
+        if str(item).strip()
+    ]
+    disclaimer_short = str(next_email_payload.get("disclaimer_short", "")).strip()
+    safety_note = str(next_email_payload.get("safety_note", "")).strip()
+
+    lines = []
+    if subject_hint:
+        lines.append(subject_hint)
+    if summary:
+        lines.append(summary)
+    if include_plan_summary:
+        lines.append(include_plan_summary)
+    if sessions:
+        lines.append("Sessions:")
+        lines.extend(f"- {session}" for session in sessions)
+    if plan_focus_line:
+        lines.append(f"Plan focus: {plan_focus_line}")
+    if technique_cue:
+        lines.append(f"Technique cue: {technique_cue}")
+    if recovery_target:
+        lines.append(f"Recovery target: {recovery_target}")
+    if if_then_rules:
+        lines.append("If-then rules:")
+        lines.extend(f"- {rule}" for rule in if_then_rules)
+    if safety_note:
+        lines.append(f"Safety note: {safety_note}")
+    if disclaimer_short:
+        lines.append(disclaimer_short)
+    return "\n\n".join(lines)
 
 
 def build_profile_gated_reply(
@@ -214,6 +264,16 @@ def build_profile_gated_reply(
             track = str(engine_output.get("track", "")).strip()
             risk_flag = str(engine_output.get("risk_flag", "")).strip()
             plan_update_status = str(engine_output.get("plan_update_status", "")).strip()
+            next_email_payload = engine_output.get("next_email_payload")
+            if reply_strategy == "rule_engine_guided" and isinstance(next_email_payload, dict):
+                try:
+                    validate_rule_engine_output(engine_output)
+                    return _render_rule_engine_payload_reply(
+                        next_email_payload,
+                        include_plan_summary=plan_summary,
+                    )
+                except RuleEngineContractError:
+                    logger.error("Invalid rule_engine output supplied to final reply path")
             if track or risk_flag or plan_update_status:
                 reply += (
                     "\n\nRule-engine context: "

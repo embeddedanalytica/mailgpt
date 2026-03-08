@@ -28,7 +28,8 @@ This is the code-accurate state as of the current repository:
 - Rule engine:
   - RE1 is implemented
   - RE2 is implemented
-  - RE3 and later epics are not fully shipped
+  - RE3 is implemented
+  - RE4 and later epics are not fully shipped
 
 ## Runtime Architecture
 
@@ -150,7 +151,6 @@ The deterministic rule engine in `sam-app/email_service` currently covers the RE
 
 What is not fully shipped yet:
 
-- RE3 session-routing / email-ready action layer
 - RE4 AI-assisted constrained planning
 - connector-driven activity sync feeding the rule engine
 

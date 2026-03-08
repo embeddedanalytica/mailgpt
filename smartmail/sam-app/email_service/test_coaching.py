@@ -258,6 +258,64 @@ class TestBuildProfileGatedReply(unittest.TestCase):
             self.assertIn("need a clearer weekly check-in", reply)
             self.assertIn("Rule-engine context:", reply)
 
+    def test_rule_engine_guided_reply_uses_deterministic_payload_and_bypasses_llm(self):
+        with mock.patch.object(coaching, "get_coach_profile") as get_profile, \
+             mock.patch.object(coaching, "parse_profile_updates_from_email") as parse_updates, \
+             mock.patch.object(coaching, "parse_manual_activity_snapshot_from_email", return_value=None), \
+             mock.patch.object(coaching, "put_manual_activity_snapshot", return_value=True), \
+             mock.patch.object(coaching, "get_progress_snapshot", return_value={"data_quality": "low"}), \
+             mock.patch.object(coaching, "merge_coach_profile_fields") as merge, \
+             mock.patch.object(coaching, "ensure_current_plan") as ensure_plan, \
+             mock.patch.object(coaching, "fetch_current_plan_summary", return_value="Current plan - Goal: 10k."), \
+             mock.patch.object(coaching, "create_action_token", return_value=None), \
+             mock.patch.object(coaching, "OpenAIResponder") as responder:
+            get_profile.return_value = {
+                "primary_goal": "10k",
+                "time_availability": {"hours_per_week": 2.0},
+                "experience_level": "unknown",
+                "constraints": [],
+            }
+            parse_updates.return_value = {}
+            merge.return_value = True
+            ensure_plan.return_value = True
+
+            reply = coaching.build_profile_gated_reply(
+                "ath_1",
+                "user@example.com",
+                "Hi",
+                selected_model_name="gpt-5-nano",
+                rule_engine_decision={
+                    "reply_strategy": "rule_engine_guided",
+                    "engine_output": {
+                        "classification_label": "deterministic_re3_transition",
+                        "track": "return_or_risk_managed",
+                        "phase": "build",
+                        "risk_flag": "yellow",
+                        "weekly_skeleton": ["easy_aerobic", "strength"],
+                        "today_action": "prioritize_big_2_anchors",
+                        "plan_update_status": "updated",
+                        "adjustments": ["prioritize_big_2_anchors"],
+                        "next_email_payload": {
+                            "subject_hint": "This week: stay safe and keep it steady",
+                            "summary": "This is a risk-managed week.",
+                            "sessions": ["Priority: long easy aerobic session", "Priority: strength session"],
+                            "plan_focus_line": "Use safety and consistency as the primary filter.",
+                            "technique_cue": "Keep cadence light and posture tall.",
+                            "recovery_target": "Prioritize recovery basics before adding any load.",
+                            "if_then_rules": ["If symptoms rise, remove intensity immediately."],
+                            "disclaimer_short": "",
+                            "safety_note": "No hard sessions when risk is red-tier.",
+                        },
+                    },
+                },
+                log_outcome=None,
+            )
+
+            self.assertIn("This week: stay safe and keep it steady", reply)
+            self.assertIn("Current plan - Goal: 10k.", reply)
+            self.assertIn("Priority: long easy aerobic session", reply)
+            responder.generate_response.assert_not_called()
+
     def test_safety_reply_strategy_bypasses_llm_generation(self):
         with mock.patch.object(coaching, "get_coach_profile") as get_profile, \
              mock.patch.object(coaching, "parse_profile_updates_from_email") as parse_updates, \

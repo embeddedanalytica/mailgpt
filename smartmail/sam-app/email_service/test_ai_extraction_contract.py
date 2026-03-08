@@ -46,15 +46,6 @@ def _valid_payload():
         "structure_preference": "mixed",
         "schedule_variability": "medium",
         "equipment_access": {"gym": True, "pool": False, "bike": True, "trainer": False},
-        "suppress_performance_language": True,
-        "track_hint": "return_or_risk_managed",
-        "hard_limits": {
-            "max_hard_sessions_per_week": 1,
-            "allow_back_to_back_hard_days": False,
-            "volume_adjustment_pct": -20,
-            "intensity_allowed": False,
-            "max_sessions_per_week": 5,
-        },
         "field_confidence": {
             "risk_candidate": 0.95,
             "event_date": 0.93,
@@ -96,12 +87,6 @@ class TestAIExtractionValidation(unittest.TestCase):
     def test_invalid_explicit_switch_request_type_fails(self):
         payload = _valid_payload()
         payload["explicit_main_sport_switch_request"] = "yes"
-        with self.assertRaises(AIExtractionContractError):
-            validate_ai_extraction_payload(payload)
-
-    def test_invalid_hard_limits_type_fails(self):
-        payload = _valid_payload()
-        payload["hard_limits"]["max_hard_sessions_per_week"] = "2"
         with self.assertRaises(AIExtractionContractError):
             validate_ai_extraction_payload(payload)
 

@@ -4,9 +4,9 @@
 Translate weekly athlete check-in inputs into:
 1. Athlete classification (stable profile + weekly risk state)
 2. Plan track selection
-3. Weekly skeleton (session mix)
+3. Deterministic decision envelope for weekly planning
 4. Session-level "today" recommendation
-5. Next email response payload
+5. Validated plan artifact + next email response payload
 
 This spec is intentionally concrete and implementation-first (YAGNI).
 
@@ -15,7 +15,7 @@ In scope:
 - Onboarding/intake classification
 - Weekly check-in routing
 - Risk-based auto-adjustments
-- Deterministic decision outputs for coaching email generation
+- Deterministic decision outputs, bounded planner briefs, and validated coaching payload generation
 
 Out of scope (for v1):
 - Adaptive ML scoring
@@ -31,6 +31,10 @@ Out of scope (for v1):
 - Time bucket: `2_3h | 4_6h | 7_10h | 10h_plus`
 - Experience: `new | intermediate | advanced`
 - Goal category: intake-level classification, distinct from weekly phase windows
+- Decision envelope: deterministic state, safety, and planning constraints emitted by the rule engine
+- Plan artifact: validated weekly plan emitted either by a planning LLM or deterministic fallback logic
+- Language LLM: extraction, clarification, intent/language generation; never final state authority
+- Planning LLM: bounded weekly plan proposal generator; never final state or validation authority
 
 ## 4. Data Model
 
@@ -126,24 +130,76 @@ Note:
 - `rule_state` is a separate persisted contract.
 - RE1-FU may initially define interface + in-memory fallback when persistence is not yet wired.
 
-### 4.4 Engine Output (deterministic)
+### 4.4 Decision Envelope (deterministic)
 ```json
 {
   "classification_label": "event_8_16w / hybrid_seasonal / intermediate / 4_6h / recurring_niggles / high_variability",
   "track": "main_build",
   "phase": "build",
   "risk_flag": "yellow",
-  "weekly_skeleton": [
-    "easy_aerobic_main",
-    "easy_aerobic_main",
-    "reduced_intensity_or_easy",
-    "strength_or_cross_train"
-  ],
   "today_action": "do planned but conservative",
   "plan_update_status": "updated | unchanged_clarification_needed | unchanged_infeasible_week",
   "adjustments": [
     "reduce intensity",
     "no make-up intensity"
+  ],
+  "hard_limits": {
+    "max_hard_sessions_per_week": 1,
+    "allow_back_to_back_hard_days": false,
+    "volume_adjustment_pct": -10,
+    "intensity_allowed": true,
+    "max_sessions_per_week": 4
+  },
+  "weekly_targets": {
+    "session_mix": [
+      "easy_aerobic_main",
+      "easy_aerobic_main",
+      "reduced_intensity_or_easy",
+      "strength_or_cross_train"
+    ],
+    "track_objective": "maintain consistency while reducing intensity",
+    "priority_sessions": [
+      "easy_aerobic_main",
+      "strength_or_cross_train"
+    ],
+    "disallowed_patterns": [
+      "back_to_back_hard_days",
+      "make_up_intensity"
+    ]
+  },
+  "messaging_guardrails": {
+    "suppress_peak_language": false,
+    "tone": "steady_consistent",
+    "required_safety_note": null
+  },
+  "fallback_skeleton": [
+    "easy_aerobic_main",
+    "easy_aerobic_main",
+    "reduced_intensity_or_easy",
+    "strength_or_cross_train"
+  ]
+}
+```
+
+Notes:
+- The decision envelope is the deterministic contract. Same inputs must yield the same state, constraints, validation expectations, and fallback behavior.
+- In AI-assisted flows, the rule engine does not need to emit the final slot-by-slot weekly plan so long as it emits a complete envelope plus deterministic fallback.
+
+### 4.5 Plan Artifact (validated downstream output)
+```json
+{
+  "source": "validated_planner_plan | deterministic_fallback",
+  "sessions": [
+    {
+      "label": "easy aerobic main",
+      "hard_session": false,
+      "duration_minutes": 45,
+      "notes": "keep effort conversational"
+    }
+  ],
+  "planner_rationale": "keep one lighter quality substitute and preserve consistency",
+  "non_binding_state_suggestions": [
+    "athlete may be ready for more bike emphasis next block"
   ],
   "next_email_payload": {
     "subject_hint": "This week: stay consistent, reduce intensity",
@@ -158,6 +214,10 @@ Note:
   }
 }
 ```
+
+Notes:
+- `validated_planner_plan` may vary across runs while remaining valid if it stays inside the deterministic envelope.
+- `non_binding_state_suggestions` are advisory only and cannot change `phase`, `risk_flag`, `track`, `plan_update_status`, or persisted `rule_state`.
 
 ## 5. Intake Classification Logic (Layer 1)
 
@@ -190,7 +250,11 @@ Note:
   - injury -> `none | recurring_niggles | current_pain`
   - variability -> `low | medium | high`
 
-## 6. Weekly Plan Selection Logic (Layer 2)
+## 6. Weekly Plan Decision Logic (Layer 2)
+
+Layer 2 is owned by the deterministic rule engine.
+
+It must always emit a complete decision envelope. In AI-assisted flows, the envelope is then used to build a planner brief for the planning LLM. The planner may choose exact session phrasing, modality mix, and weekly ordering within the envelope, but it does not control state, safety, or validation outcomes.
 
 ### 6.1 Main branch
 If `main_sport_current != null` -> `main_sport_plan`
@@ -204,7 +268,10 @@ Else -> `general_fitness_plan`
 
 Intensity is allowed only when `effective_performance_intent == true` and other risk/safety gates permit it.
 
-### 6.3 General fitness plan templates
+### 6.3 General fitness targets, fallback templates, and planner constraints
+These templates define the deterministic session mix, weekly targets, and fallback skeleton for general-fitness athletes.
+They are also the shape constraints for AI-assisted planning, not a requirement that every valid planner output match the template exactly.
+
 - `2_3h` (3 sessions):
   - 1 easy aerobic (engine)
   - 1 strength/mobility
@@ -306,7 +373,9 @@ Switch transition guard (first 2 weeks after switch):
   - athlete explicitly requests a change, or
   - `red_b` safety condition requires immediate change
 
-### 6.7 Main sport skeleton by time bucket
+### 6.7 Main sport targets, fallback templates, and planner constraints by time bucket
+These templates define deterministic fallback structure and planner bounds for main-sport paths.
+
 - `2_3h` (3 sessions):
   - 1 long/easy main-sport
   - 1 short quality OR hills/tempo (green only)
@@ -360,6 +429,26 @@ Quality archetypes by experience:
   - reduce intensity (or replace quality with easy)
 - `green`:
   - proceed as planned
+
+### 6.9 Planner brief contents
+The deterministic engine builds a `planner_brief` from the decision envelope when AI-assisted planning is enabled.
+
+`planner_brief` must include:
+- `phase`, `risk_flag`, `track`, `plan_update_status`
+- `hard_limits`
+- `weekly_targets`
+- allowed session budget and maximum sessions
+- track-specific objective and priority sessions
+- disallowed patterns and risk-driven prohibitions
+- structure preference (`structure | flexibility | mixed`)
+- messaging guardrails
+- deterministic `fallback_skeleton`
+
+`planner_brief` must not delegate:
+- risk/phase/track selection
+- clarification status
+- persisted state updates
+- validator pass/fail policy
 
 ## 7. Session-Level Routing (Layer 3)
 Evaluate these signals each email/check-in, in this order:
@@ -426,17 +515,38 @@ Track assignment logic:
 
 ## 10. API/Function Boundaries (implementation contract)
 
-### 10.1 Required functions
+### 10.1 Module contracts
+- Deterministic rule engine:
+  - owns state derivation, safety gates, constraints, validation, repair policy, and deterministic fallback behavior
+- Language LLM:
+  - extracts weekly signals from free text
+  - triggers clarification when confidence is too low
+  - renders athlete-facing reply language from validated plan + deterministic guardrails
+- Planning LLM:
+  - proposes a structured weekly plan from `planner_brief`
+  - may emit rationale and non-binding state suggestions
+  - cannot mutate deterministic state, bypass validation, or define fallback policy
+
+### 10.2 Required functions
+- `language_llm.extract_weekly_signals(email_text) -> structured_inputs + field_confidence + clarification_flags`
 - `classify_intake(profile_input) -> profile`
 - `resolve_effective_performance_intent(profile, checkin) -> bool`
 - `derive_phase(profile, checkin, today_date, rule_state, risk_flag, effective_performance_intent) -> phase`
 - `derive_risk(profile, checkin, rule_state) -> risk_flag`
 - `select_track(profile, phase, risk_flag) -> track`
 - `should_switch_main_sport(profile, rule_state, explicit_request) -> bool`
+- `build_decision_envelope(profile, checkin, phase, risk_flag, track, effective_performance_intent, rule_state) -> decision_envelope`
 - `build_weekly_skeleton(profile, track, phase, risk_flag, effective_performance_intent, rule_state) -> session_template[]`
+  - deterministic fallback/reference implementation; no longer the only plan-construction path
+- `build_planner_brief(profile, checkin, decision_envelope, rule_state) -> planner_brief`
+- `planning_llm.propose_plan(planner_brief) -> plan_proposal + rationale + non_binding_state_suggestions`
+- `validate_planner_output(planner_brief, plan_proposal) -> validation_result`
+- `repair_or_fallback_plan(validation_result, planner_brief) -> final_plan`
+- `validate_and_repair_plan(decision_envelope, plan_proposal) -> accepted | repaired | fallback`
 - `route_today_action(checkin, risk_flag, track) -> today_action + adjustments[]`
-- `compose_email_payload(profile, checkin, engine_output) -> email_payload`
-- `format_weekly_output_mode(profile.structure_preference, weekly_skeleton) -> ordered_plan | priority_menu`
+- `format_weekly_output_mode(profile.structure_preference, final_plan) -> ordered_plan | priority_menu`
+- `language_llm.render_reply(validated_plan, decision_envelope) -> email_payload`
+- `compose_email_payload(profile, checkin, final_plan, decision_envelope) -> email_payload`
 - `validate_event_date(checkin, today_date) -> valid | invalid_missing | invalid_format | invalid_past`
 - `load_rule_state(athlete_id) -> rule_state`
 - `update_rule_state(athlete_id, weekly_inputs, decisions) -> rule_state`
@@ -444,25 +554,33 @@ Track assignment logic:
 - `derive_yellow_thresholds(checkin, rule_state) -> bool`
 - `enforce_flexible_mode_intensity_budget(plan_menu) -> validated_menu`
 
-### 10.2 Processing order
+### 10.3 Processing order
 1. Normalize inputs
-2. Load rule state
-3. Update/derive profile fields
-4. Resolve `effective_performance_intent`
-5. Determine risk
-6. Determine phase (using derived `risk_flag` and `effective_performance_intent`)
-7. Assign track
-8. Build weekly skeleton
-9. Apply session-level routing overrides
-10. Emit email payload
-11. Update rule state
+2. `language_llm.extract_weekly_signals(...)`
+3. Apply clarification gating from confidence/critical-field checks
+4. Load rule state
+5. Update/derive profile fields
+6. Resolve `effective_performance_intent`
+7. Determine risk
+8. Determine phase (using derived `risk_flag` and `effective_performance_intent`)
+9. Assign track
+10. Build deterministic decision envelope + fallback skeleton
+11. Route `today_action` and adjustments into the envelope
+12. Build `planner_brief`
+13. Optionally call `planning_llm.propose_plan(...)`
+14. Validate planner output, repair if possible, or use deterministic fallback
+15. `language_llm.render_reply(validated_plan, decision_envelope)`
+16. Persist/update rule state
 
 ## 11. Guardrails
 - Never prescribe intensity on `red_a` or `red_b` risk.
 - Never "make up" missed intensity sessions.
 - If pain worsens week-to-week, auto-escalate to `red_b`.
 - If constraints conflict (e.g., no equipment), choose feasible alternatives.
-- Deterministic output: same input must produce same plan output.
+- Deterministic envelope: same input must produce the same decision envelope, validation behavior, and fallback behavior.
+- Planning-LLM output may vary within the envelope, but cannot change deterministic state or validator authority.
+- Planning-LLM state suggestions are advisory only and cannot mutate `phase`, `risk_flag`, `track`, `plan_update_status`, or persisted `rule_state`.
+- Language-LLM extraction cannot bypass clarification gating for low-confidence critical fields.
 - If output mode is flexible, never schedule hard days back-to-back.
 - If event date is invalid/missing/past when needed, do not re-phase; keep current plan and request clarification.
 - If no feasible week can be constructed, do not replace existing plan.
@@ -483,39 +601,54 @@ Track assignment logic:
 - Risk derivation tests (`green/yellow/red_a/red_b`) including yellow threshold boundaries and deterministic worsening checks
 - Track assignment tests including override precedence
 - Main-sport switch governance tests (explicit request, 60%/2-week + 120 min floor, anti-churn freeze behavior)
-- Skeleton generation by time bucket + plan type, including 10h+ add-on caps
+- Deterministic fallback skeleton generation by time bucket + plan type, including 10h+ add-on caps
+- Planner-brief contract tests for `hard_limits`, `weekly_targets`, allowed session budget, disallowed patterns, structure preference, and messaging guardrails
 - Main-sport deload cadence tests + sustained-yellow trigger tests + taper-supersedes-deload tests
 - Quality archetype mapping tests by experience + risk gates
 - Session routing tests for pain/energy/missed/chaotic branches
 - Flexibility output tests: anchor/filler/optional menu and no back-to-back hard day recommendation
 - Flexible-mode intensity budget tests (max hard-session count and spacing)
 - Safety regression test: red-tier risk never emits quality/intensity session
+- Planner suggestions cannot change `phase`, `risk_flag`, `track`, clarification status, or persisted state
+- Multiple planner outputs may differ while still validating against the same deterministic envelope
+- Invalid planner outputs are deterministically repaired or replaced by fallback when they violate hard-session budget, spacing, risk rules, or track compatibility
+- Low-confidence extraction tests: clarification path blocks unsafe state transitions
 - Event-date validation tests: missing/invalid/past date keep prior plan and emit clarification status
 - Return-context precedence tests over calendar-derived phase
 - Infeasible-week tests: no new plan emitted; existing plan unchanged
 - Track/message consistency tests: risk-managed track suppresses performance language
 - Inconsistent-training stabilization tests: requires 2 consecutive check-ins for phase upgrade
 - Email payload contract tests for required fields and mandatory red_b disclaimer
+- Fallback-path tests: missing/invalid planner output still produces a safe validated plan + compliant email payload
 
 ## 13. Example Mappings
 
 ### 13.1 Intermediate runner, hybrid seasonal, 4-6h
 Input: main sport run, event in 9 weeks, intermediate, 4_6h, recurring niggles, `performance_intent_this_week=true`
 Output:
-- phase: `build`
-- risk: `yellow`
-- track: `main_build`
-- skeleton: easy run, easy run, reduced quality/easy, strength or easy swim
+- decision envelope:
+  - phase: `build`
+  - risk: `yellow`
+  - track: `main_build`
+  - `weekly_targets.session_mix`: easy run, easy run, reduced quality/easy, strength or easy swim
+  - `fallback_skeleton`: easy run, easy run, reduced quality/easy, strength or easy swim
+- one valid plan artifact:
+  - easy run, aerobic bike, reduced quality/easy run, strength
 
 ### 13.2 Casual mixed athlete, 2-3h
 Input: no main sport, general consistency goal, new, 2_3h, `performance_intent_this_week=null`, `performance_intent_default=false`
 Output:
-- phase: n/a (general)
-- risk: typically `green` unless symptoms reported
-- track: `general_low_time`
-- skeleton: easy aerobic, strength/mobility, fun/variety
+- decision envelope:
+  - phase: n/a (general)
+  - risk: typically `green` unless symptoms reported
+  - track: `general_low_time`
+  - `weekly_targets.session_mix`: easy aerobic, strength/mobility, fun/variety
+- one valid plan artifact:
+  - easy aerobic, strength/mobility, fun/variety
 
 ## 14. Output Mode Rules (structure vs flexibility)
+Output mode is part of the deterministic envelope and planner brief. The planner may choose exact wording/order within these rules; fallback formatting must obey them exactly.
+
 - If `structure_preference == structure`:
   - emit ordered weekly plan
 - If `structure_preference == flexibility`:

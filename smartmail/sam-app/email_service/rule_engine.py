@@ -50,6 +50,7 @@ NON_HARD_SESSION_TAGS = {
     "mobility",
     "strength",
 }
+ALLOWED_SESSION_TAGS = HARD_SESSION_TAGS | NON_HARD_SESSION_TAGS
 
 _TRACK_ALIASES = {
     "main_sport_base": "main_base",
@@ -300,6 +301,18 @@ def validate_hard_session_tags(tags: List[str]) -> None:
             raise RuleEngineContractError(f"session_tags[{idx}] must be a string")
         if tag.strip().lower() not in allowed:
             raise RuleEngineContractError(f"session_tags[{idx}] must be one of {sorted(allowed)}")
+
+
+def _dedupe_preserving_order(items: List[str]) -> List[str]:
+    seen: set[str] = set()
+    ordered: List[str] = []
+    for item in items:
+        token = str(item).strip()
+        if not token or token in seen:
+            continue
+        seen.add(token)
+        ordered.append(token)
+    return ordered
 
 
 @dataclass(frozen=True)
@@ -1243,6 +1256,613 @@ def build_weekly_skeleton(
     }
 
 
+def _main_anchor_label(track: str, weekly_skeleton: List[str]) -> str:
+    for token in weekly_skeleton:
+        normalized = str(token).strip().lower()
+        if normalized in {"easy_aerobic", "recovery"}:
+            if track in _MAIN_TRACKS or track == "return_or_risk_managed":
+                return "long easy main-sport session"
+            return "long easy aerobic session"
+    if track in _MAIN_TRACKS or track == "return_or_risk_managed":
+        return "long easy main-sport session"
+    return "long easy aerobic session"
+
+
+def _secondary_anchor_label(weekly_skeleton: List[str]) -> str:
+    for token in weekly_skeleton:
+        normalized = str(token).strip().lower()
+        if normalized in {"strength", "mobility"}:
+            return "strength session"
+    return "short mobility session"
+
+
+def route_today_action(
+    checkin: Dict[str, Any],
+    risk_flag: str,
+    track: str,
+    weekly_skeleton: List[str],
+) -> Dict[str, Any]:
+    if not isinstance(checkin, dict):
+        raise RuleEngineSkeletonError("checkin must be a dict")
+    if not isinstance(weekly_skeleton, list):
+        raise RuleEngineSkeletonError("weekly_skeleton must be a list")
+
+    normalized_risk = str(risk_flag or "").strip().lower() or "green"
+    if normalized_risk not in RISK_FLAGS:
+        raise RuleEngineSkeletonError(f"risk_flag must be one of {sorted(RISK_FLAGS)}")
+
+    pain_score = _coerce_float(checkin.get("pain_score"), default=0.0)
+    raw_energy_score = checkin.get("energy_score")
+    energy_score: Optional[float]
+    if raw_energy_score is None or (isinstance(raw_energy_score, str) and not raw_energy_score.strip()):
+        energy_score = None
+    else:
+        energy_score = _coerce_float(raw_energy_score, default=0.0)
+    missed_sessions = max(0, _coerce_int(checkin.get("missed_sessions_count"), default=0))
+    chaotic_week = _coerce_bool(checkin.get("week_chaotic"))
+    infeasible = _days_available(checkin) <= 1 or len(weekly_skeleton) == 0
+    anchor_sessions = [_main_anchor_label(track, weekly_skeleton), _secondary_anchor_label(weekly_skeleton)]
+
+    if infeasible:
+        return {
+            "today_action": "optional_short_mobility_or_recovery_only",
+            "adjustments": [
+                "keep_existing_plan_unchanged",
+                "fallback_optional_short_mobility_recovery_touch",
+            ],
+            "routing_context": {
+                "winning_signal": "chaos",
+                "anchor_sessions": anchor_sessions,
+                "infeasible": True,
+                "safety_focus": track == "return_or_risk_managed",
+            },
+        }
+
+    if normalized_risk == "red_b":
+        return {
+            "today_action": "stop_training_intensity_low_impact_only_if_pain_free",
+            "adjustments": [
+                "stop_training_intensity_immediately",
+                "consult_clinician",
+                "apply_adjustment_window_3_7_days",
+            ],
+            "routing_context": {
+                "winning_signal": "pain",
+                "anchor_sessions": [],
+                "infeasible": False,
+                "safety_focus": True,
+            },
+        }
+
+    if normalized_risk == "red_a":
+        return {
+            "today_action": "stop_intensity_easy_cross_train_and_update_coach",
+            "adjustments": [
+                "stop_intensity",
+                "easy_cross_train_only",
+                "update_coach_within_24h",
+                "apply_adjustment_window_3_7_days",
+            ],
+            "routing_context": {
+                "winning_signal": "pain",
+                "anchor_sessions": [],
+                "infeasible": False,
+                "safety_focus": True,
+            },
+        }
+
+    if 1.0 <= pain_score <= 3.0:
+        return {
+            "today_action": "easy_only_monitor_pain",
+            "adjustments": ["easy_only", "no_intensity", "monitor_pain"],
+            "routing_context": {
+                "winning_signal": "pain",
+                "anchor_sessions": [],
+                "infeasible": False,
+                "safety_focus": track == "return_or_risk_managed",
+            },
+        }
+
+    if energy_score is not None and energy_score <= 4.0:
+        return {
+            "today_action": "minimum_effective_dose_session",
+            "adjustments": ["minimum_effective_dose"],
+            "routing_context": {
+                "winning_signal": "energy",
+                "anchor_sessions": [],
+                "infeasible": False,
+                "safety_focus": track == "return_or_risk_managed",
+            },
+        }
+
+    if energy_score is not None and 5.0 <= energy_score <= 7.0:
+        return {
+            "today_action": "do_planned_but_conservative",
+            "adjustments": ["planned_but_conservative"],
+            "routing_context": {
+                "winning_signal": "energy",
+                "anchor_sessions": [],
+                "infeasible": False,
+                "safety_focus": track == "return_or_risk_managed",
+            },
+        }
+
+    if missed_sessions >= 2:
+        return {
+            "today_action": "rebuild_week_easy_volume_first_delay_intensity",
+            "adjustments": ["rebuild_week_easy_volume_first", "delay_intensity", "no_make_up_intensity"],
+            "routing_context": {
+                "winning_signal": "missed_sessions",
+                "anchor_sessions": [],
+                "infeasible": False,
+                "safety_focus": track == "return_or_risk_managed",
+            },
+        }
+
+    if missed_sessions == 1:
+        return {
+            "today_action": "resume_plan_no_make_up_intensity",
+            "adjustments": ["resume_plan", "no_make_up_intensity"],
+            "routing_context": {
+                "winning_signal": "missed_sessions",
+                "anchor_sessions": [],
+                "infeasible": False,
+                "safety_focus": track == "return_or_risk_managed",
+            },
+        }
+
+    if chaotic_week:
+        return {
+            "today_action": "prioritize_big_2_anchors",
+            "adjustments": ["prioritize_big_2_anchors"],
+            "routing_context": {
+                "winning_signal": "chaos",
+                "anchor_sessions": anchor_sessions,
+                "infeasible": False,
+                "safety_focus": track == "return_or_risk_managed",
+            },
+        }
+
+    return {
+        "today_action": "optional_slight_upgrade_if_green",
+        "adjustments": [],
+        "routing_context": {
+            "winning_signal": "default",
+            "anchor_sessions": [],
+            "infeasible": False,
+            "safety_focus": track == "return_or_risk_managed",
+        },
+    }
+
+
+def build_decision_envelope(
+    profile: Dict[str, Any],
+    checkin: Dict[str, Any],
+    phase: str,
+    risk_flag: str,
+    track: str,
+    effective_performance_intent: bool,
+    rule_state: Dict[str, Any],
+    *,
+    fallback_skeleton: Optional[List[str]] = None,
+    adjustments: Optional[List[str]] = None,
+    plan_update_status: str = "updated",
+    today_action: str = "",
+    routing_context: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    if not isinstance(profile, dict):
+        raise RuleEngineContractError("profile must be a dict")
+    if not isinstance(checkin, dict):
+        raise RuleEngineContractError("checkin must be a dict")
+    if not isinstance(rule_state, dict):
+        raise RuleEngineContractError("rule_state must be a dict")
+
+    skeleton = [str(item).strip().lower() for item in (fallback_skeleton or []) if str(item).strip()]
+    normalized_risk = str(risk_flag or "").strip().lower() or "green"
+    normalized_track = normalize_track_name(track)
+    hard_session_budget = sum(1 for token in skeleton if token in HARD_SESSION_TAGS)
+    if normalized_risk in _RED_TIER_FLAGS:
+        hard_session_budget = 0
+    elif normalized_risk == "yellow":
+        hard_session_budget = min(1, hard_session_budget)
+
+    if "volume_reduce_50pct" in (adjustments or []):
+        volume_adjustment_pct = -50
+    elif "volume_reduce_30pct" in (adjustments or []):
+        volume_adjustment_pct = -30
+    elif any(token.startswith("deload_volume_reduce_") for token in (adjustments or []) + skeleton):
+        volume_adjustment_pct = -20
+    else:
+        volume_adjustment_pct = 0
+
+    suppress_peak_language = normalized_track == "return_or_risk_managed"
+    required_safety_note = None
+    if normalized_risk == "red_b":
+        required_safety_note = "Please stop training and consult a clinician/physio."
+
+    disallowed_patterns = ["back_to_back_hard_days", "make_up_intensity"]
+    if normalized_risk in _RED_TIER_FLAGS:
+        disallowed_patterns.append("all_intensity")
+
+    priority_sessions = skeleton[:2]
+    if routing_context and routing_context.get("anchor_sessions"):
+        priority_sessions = [str(item) for item in routing_context.get("anchor_sessions", [])]
+
+    return {
+        "classification_label": "deterministic_re3_transition",
+        "phase": phase,
+        "risk_flag": normalized_risk,
+        "track": normalized_track,
+        "plan_update_status": plan_update_status,
+        "today_action": today_action,
+        "adjustments": _dedupe_preserving_order([str(item) for item in (adjustments or [])]),
+        "hard_limits": {
+            "max_hard_sessions_per_week": hard_session_budget,
+            "allow_back_to_back_hard_days": False,
+            "volume_adjustment_pct": volume_adjustment_pct,
+            "intensity_allowed": normalized_risk not in _RED_TIER_FLAGS and effective_performance_intent,
+            "max_sessions_per_week": min(
+                len(skeleton),
+                max(len(skeleton), _days_available(checkin) or len(skeleton)),
+            ) if skeleton else max(1, _days_available(checkin)),
+        },
+        "weekly_targets": {
+            "session_mix": list(skeleton),
+            "track_objective": (
+                "protect consistency and reduce load"
+                if suppress_peak_language
+                else "progress with controlled load"
+            ),
+            "priority_sessions": priority_sessions,
+            "disallowed_patterns": _dedupe_preserving_order(disallowed_patterns),
+        },
+        "messaging_guardrails": {
+            "suppress_peak_language": suppress_peak_language,
+            "tone": "safety_consistency" if suppress_peak_language else "structured_progress",
+            "required_safety_note": required_safety_note,
+        },
+        "fallback_skeleton": list(skeleton),
+        "routing_context": dict(routing_context or {}),
+    }
+
+
+def build_planner_brief(
+    profile: Dict[str, Any],
+    checkin: Dict[str, Any],
+    decision_envelope: Dict[str, Any],
+    rule_state: Dict[str, Any],
+) -> Dict[str, Any]:
+    if not isinstance(profile, dict):
+        raise RuleEngineContractError("profile must be a dict")
+    if not isinstance(checkin, dict):
+        raise RuleEngineContractError("checkin must be a dict")
+    if not isinstance(decision_envelope, dict):
+        raise RuleEngineContractError("decision_envelope must be a dict")
+    if not isinstance(rule_state, dict):
+        raise RuleEngineContractError("rule_state must be a dict")
+
+    output_mode = str(
+        checkin.get("structure_preference", profile.get("structure_preference", "structure"))
+    ).strip().lower()
+    if output_mode not in {"structure", "flexibility", "mixed"}:
+        output_mode = "structure"
+
+    hard_limits = dict(decision_envelope.get("hard_limits", {}))
+    weekly_targets = dict(decision_envelope.get("weekly_targets", {}))
+    fallback_skeleton = [
+        str(item).strip().lower()
+        for item in decision_envelope.get("fallback_skeleton", [])
+        if str(item).strip()
+    ]
+    if not fallback_skeleton:
+        fallback_skeleton = ["easy_aerobic"]
+
+    max_sessions = int(hard_limits.get("max_sessions_per_week", len(fallback_skeleton)) or len(fallback_skeleton))
+    max_sessions = max(1, max_sessions)
+    allowed_session_budget = min(max_sessions, max(1, _days_available(checkin)))
+
+    return {
+        "phase": str(decision_envelope.get("phase", "base")).strip().lower() or "base",
+        "risk_flag": str(decision_envelope.get("risk_flag", "green")).strip().lower() or "green",
+        "track": str(decision_envelope.get("track", "general_low_time")).strip().lower() or "general_low_time",
+        "plan_update_status": str(decision_envelope.get("plan_update_status", "updated")).strip().lower() or "updated",
+        "hard_limits": hard_limits,
+        "weekly_targets": weekly_targets,
+        "allowed_session_budget": allowed_session_budget,
+        "max_sessions_per_week": max_sessions,
+        "track_specific_objective": str(weekly_targets.get("track_objective", "")).strip(),
+        "priority_sessions": [str(item) for item in weekly_targets.get("priority_sessions", []) if str(item).strip()],
+        "disallowed_patterns": [
+            str(item).strip().lower()
+            for item in weekly_targets.get("disallowed_patterns", [])
+            if str(item).strip()
+        ],
+        "structure_preference": output_mode,
+        "messaging_guardrails": dict(decision_envelope.get("messaging_guardrails", {})),
+        "fallback_skeleton": fallback_skeleton,
+    }
+
+
+def validate_planner_output(
+    planner_brief: Dict[str, Any],
+    plan_proposal: Dict[str, Any],
+) -> Dict[str, Any]:
+    if not isinstance(planner_brief, dict):
+        raise RuleEngineContractError("planner_brief must be a dict")
+    if not isinstance(plan_proposal, dict):
+        raise RuleEngineContractError("plan_proposal must be a dict")
+
+    proposed = [str(item).strip().lower() for item in plan_proposal.get("weekly_skeleton", []) if str(item).strip()]
+    errors: List[str] = []
+    if not proposed:
+        errors.append("weekly_skeleton_missing")
+    if any(token not in ALLOWED_SESSION_TAGS for token in proposed):
+        errors.append("unknown_session_tag")
+
+    max_sessions = max(1, int(planner_brief.get("max_sessions_per_week", len(proposed) or 1) or 1))
+    if len(proposed) > max_sessions:
+        errors.append("session_count_exceeds_max")
+
+    hard_budget = max(
+        0,
+        int(planner_brief.get("hard_limits", {}).get("max_hard_sessions_per_week", 0) or 0),
+    )
+    hard_count = sum(1 for token in proposed if token in HARD_SESSION_TAGS)
+    if hard_count > hard_budget:
+        errors.append("hard_session_budget_exceeded")
+
+    risk_flag = str(planner_brief.get("risk_flag", "green")).strip().lower()
+    if risk_flag in _RED_TIER_FLAGS and hard_count > 0:
+        errors.append("red_tier_intensity_forbidden")
+
+    disallowed_patterns = set(str(token).strip().lower() for token in planner_brief.get("disallowed_patterns", []))
+    if "back_to_back_hard_days" in disallowed_patterns:
+        for idx in range(1, len(proposed)):
+            if proposed[idx] in HARD_SESSION_TAGS and proposed[idx - 1] in HARD_SESSION_TAGS:
+                errors.append("back_to_back_hard_days")
+                break
+    if "make_up_intensity" in disallowed_patterns and "make_up_intensity" in proposed:
+        errors.append("make_up_intensity_forbidden")
+
+    return {
+        "is_valid": not errors,
+        "errors": errors,
+        "normalized_plan_proposal": {
+            "weekly_skeleton": proposed,
+        },
+    }
+
+
+def repair_or_fallback_plan(
+    validation_result: Dict[str, Any],
+    planner_brief: Dict[str, Any],
+) -> Dict[str, Any]:
+    if not isinstance(validation_result, dict):
+        raise RuleEngineContractError("validation_result must be a dict")
+    if not isinstance(planner_brief, dict):
+        raise RuleEngineContractError("planner_brief must be a dict")
+
+    normalized = dict(validation_result.get("normalized_plan_proposal", {}))
+    proposed = [str(item).strip().lower() for item in normalized.get("weekly_skeleton", []) if str(item).strip()]
+    fallback_skeleton = [
+        str(item).strip().lower()
+        for item in planner_brief.get("fallback_skeleton", [])
+        if str(item).strip()
+    ]
+    if not fallback_skeleton:
+        fallback_skeleton = ["easy_aerobic"]
+    if not proposed:
+        return {
+            "source": "deterministic_fallback",
+            "weekly_skeleton": fallback_skeleton,
+            "output_mode": planner_brief.get("structure_preference", "structure"),
+            "planner_rationale": "fallback_due_to_missing_plan",
+            "planner_state_suggestions": [],
+        }
+
+    repaired = [token for token in proposed if token in ALLOWED_SESSION_TAGS]
+    if not repaired:
+        repaired = list(fallback_skeleton)
+
+    max_sessions = max(1, int(planner_brief.get("max_sessions_per_week", len(repaired)) or len(repaired)))
+    repaired = repaired[:max_sessions]
+
+    hard_budget = max(
+        0,
+        int(planner_brief.get("hard_limits", {}).get("max_hard_sessions_per_week", 0) or 0),
+    )
+    risk_flag = str(planner_brief.get("risk_flag", "green")).strip().lower()
+    hard_used = 0
+    for idx, token in enumerate(list(repaired)):
+        if token in HARD_SESSION_TAGS:
+            if risk_flag in _RED_TIER_FLAGS or hard_used >= hard_budget:
+                repaired[idx] = "easy_aerobic"
+            else:
+                hard_used += 1
+
+    disallowed_patterns = set(str(token).strip().lower() for token in planner_brief.get("disallowed_patterns", []))
+    if "back_to_back_hard_days" in disallowed_patterns:
+        for idx in range(1, len(repaired)):
+            if repaired[idx] in HARD_SESSION_TAGS and repaired[idx - 1] in HARD_SESSION_TAGS:
+                repaired[idx] = "easy_aerobic"
+
+    revalidated = validate_planner_output(planner_brief, {"weekly_skeleton": repaired})
+    if not revalidated["is_valid"]:
+        return {
+            "source": "deterministic_fallback",
+            "weekly_skeleton": fallback_skeleton,
+            "output_mode": planner_brief.get("structure_preference", "structure"),
+            "planner_rationale": "fallback_due_to_unrepairable_plan",
+            "planner_state_suggestions": [],
+        }
+    return {
+        "source": "repaired_planner_plan",
+        "weekly_skeleton": repaired,
+        "output_mode": planner_brief.get("structure_preference", "structure"),
+        "planner_rationale": "deterministic_repair_applied",
+        "planner_state_suggestions": [],
+    }
+
+
+def validate_and_repair_plan(
+    decision_envelope: Dict[str, Any],
+    plan_proposal: Dict[str, Any],
+) -> Dict[str, Any]:
+    if not isinstance(decision_envelope, dict):
+        raise RuleEngineContractError("decision_envelope must be a dict")
+    planner_brief = {
+        "risk_flag": decision_envelope.get("risk_flag", "green"),
+        "hard_limits": decision_envelope.get("hard_limits", {}),
+        "disallowed_patterns": decision_envelope.get("weekly_targets", {}).get("disallowed_patterns", []),
+        "max_sessions_per_week": decision_envelope.get("hard_limits", {}).get("max_sessions_per_week", 1),
+        "structure_preference": "structure",
+        "fallback_skeleton": decision_envelope.get("fallback_skeleton", ["easy_aerobic"]),
+    }
+    validation_result = validate_planner_output(planner_brief, plan_proposal)
+    if validation_result["is_valid"]:
+        return {"status": "accepted", "final_plan": validation_result["normalized_plan_proposal"]}
+    return {"status": "repaired_or_fallback", "final_plan": repair_or_fallback_plan(validation_result, planner_brief)}
+
+
+def compose_email_payload(
+    profile: Dict[str, Any],
+    checkin: Dict[str, Any],
+    final_plan: Dict[str, Any],
+    decision_envelope: Dict[str, Any],
+) -> Dict[str, Any]:
+    if not isinstance(profile, dict):
+        raise RuleEngineContractError("profile must be a dict")
+    if not isinstance(checkin, dict):
+        raise RuleEngineContractError("checkin must be a dict")
+    if not isinstance(final_plan, dict):
+        raise RuleEngineContractError("final_plan must be a dict")
+    if not isinstance(decision_envelope, dict):
+        raise RuleEngineContractError("decision_envelope must be a dict")
+
+    risk_flag = str(decision_envelope.get("risk_flag", "")).strip().lower()
+    track = str(decision_envelope.get("track", "")).strip().lower()
+    plan_update_status = str(decision_envelope.get("plan_update_status", "")).strip().lower()
+    messaging_guardrails = decision_envelope.get("messaging_guardrails", {})
+    routing_context = final_plan.get("routing_context", {})
+    safety_focus = bool(track == "return_or_risk_managed" or messaging_guardrails.get("suppress_peak_language"))
+    winning_signal = str(routing_context.get("winning_signal", "default")).strip().lower()
+    weekly_skeleton = [str(item) for item in final_plan.get("weekly_skeleton", [])]
+    anchor_sessions = [str(item) for item in routing_context.get("anchor_sessions", []) if str(item).strip()]
+
+    if plan_update_status == "unchanged_infeasible_week":
+        sessions = ["Optional short mobility/recovery touch only."]
+    elif winning_signal == "chaos" and anchor_sessions:
+        sessions = [f"Priority: {anchor}" for anchor in anchor_sessions]
+        sessions.append("Optional filler only if time remains: easy recovery session.")
+    else:
+        sessions = [f"session_{idx + 1}: {token}" for idx, token in enumerate(weekly_skeleton)]
+
+    if not sessions:
+        sessions = ["Optional short mobility/recovery touch only."]
+
+    if risk_flag == "red_b":
+        subject_hint = "This week: stop intensity and get assessed"
+        summary = "Pain is the highest-priority signal. Stop training intensity and get clinical input."
+        plan_focus_line = "Protect health first. Training progression is paused."
+        recovery_target = "Rest, reduce load, and seek clinical guidance before resuming training."
+        if_then_rules = [
+            "If pain is present at rest or walking, stop training completely.",
+            "If symptoms persist or worsen, contact a clinician/physio immediately.",
+        ]
+    elif risk_flag == "red_a":
+        subject_hint = "This week: back off and monitor symptoms"
+        summary = "Modify training now: no intensity, low-impact only, and reassess within 24 hours."
+        plan_focus_line = "Keep movement easy and symptom-led."
+        recovery_target = "Prioritize low-impact movement, sleep, and symptom monitoring."
+        if_then_rules = [
+            "If pain worsens or alters form, stop training and escalate to a clinician.",
+            "If symptoms settle, resume only easy work first.",
+        ]
+    elif winning_signal == "energy":
+        subject_hint = "This week: conserve energy and keep the dose minimal"
+        summary = "Energy is the limiting signal, so today stays conservative."
+        plan_focus_line = "Protect consistency with the minimum effective dose."
+        recovery_target = "Focus on sleep, food, and downshifting overall stress."
+        if_then_rules = [
+            "If energy drops further, cut the session short rather than forcing completion.",
+            "If you rebound tomorrow, resume with caution rather than making up work.",
+        ]
+    elif winning_signal == "missed_sessions":
+        subject_hint = "This week: reset without making up intensity"
+        summary = "Missed sessions do not get made up. Rebuild the week around easy work first."
+        plan_focus_line = "Resume momentum without chasing missed training."
+        recovery_target = "Keep recovery steady while re-establishing rhythm."
+        if_then_rules = [
+            "If time opens up later, add easy volume only.",
+            "Do not stack hard sessions to compensate for missed days.",
+        ]
+    elif winning_signal == "chaos":
+        subject_hint = "This week: protect the two anchors"
+        summary = "Schedule reality wins. Keep the week alive by protecting the two anchor sessions."
+        plan_focus_line = "Anchor the week with one easy aerobic session and one strength/mobility touch."
+        recovery_target = "Keep recovery simple: sleep, hydration, and low-friction routines."
+        if_then_rules = [
+            "If the week gets tighter, keep only the anchors.",
+            "Any extra session should stay easy and optional.",
+        ]
+    elif safety_focus:
+        subject_hint = "This week: stay safe and keep it steady"
+        summary = "This is a risk-managed week: consistency and symptom control matter more than progression."
+        plan_focus_line = "Use safety and consistency as the primary filter."
+        recovery_target = "Prioritize recovery basics before adding any load."
+        if_then_rules = [
+            "If symptoms rise, remove intensity immediately.",
+            "If the week destabilizes, keep only the easiest anchor sessions.",
+        ]
+    else:
+        subject_hint = "This week: execute with control"
+        summary = "Training can continue, but keep execution controlled and responsive to the week."
+        plan_focus_line = "Hit the key sessions without forcing extra load."
+        recovery_target = "Support the work with steady sleep and simple recovery habits."
+        if_then_rules = [
+            "If pain or fatigue rises meaningfully, downgrade the session to easy.",
+            "Do not make up missed intensity later in the week.",
+        ]
+
+    safety_note = str(
+        messaging_guardrails.get("required_safety_note")
+        or "No hard sessions when risk is red-tier."
+    ).strip()
+    disclaimer_short = ""
+    if risk_flag == "red_b":
+        disclaimer_short = "Please stop training and consult a clinician/physio."
+
+    technique_cue = "Keep effort smooth, relaxed, and technically tidy."
+    if str(profile.get("main_sport_current", "")).strip().lower() == "run":
+        technique_cue = "Keep cadence light and posture tall."
+
+    payload = {
+        "subject_hint": subject_hint,
+        "summary": summary,
+        "sessions": sessions,
+        "plan_focus_line": plan_focus_line,
+        "technique_cue": technique_cue,
+        "recovery_target": recovery_target,
+        "if_then_rules": if_then_rules,
+        "disclaimer_short": disclaimer_short,
+        "safety_note": safety_note,
+    }
+    validate_rule_engine_output(
+        {
+            "classification_label": "compatibility_check",
+            "track": decision_envelope.get("track", "general_low_time"),
+            "phase": decision_envelope.get("phase", "base"),
+            "risk_flag": risk_flag or "green",
+            "weekly_skeleton": weekly_skeleton,
+            "today_action": final_plan.get("today_action", "proceed_as_planned"),
+            "plan_update_status": decision_envelope.get("plan_update_status", "updated"),
+            "adjustments": final_plan.get("adjustments", []),
+            "next_email_payload": payload,
+        }
+    )
+    return payload
+
+
 def _count_trailing_matches(phases: List[str], target_phase: str) -> int:
     count = 0
     for phase in reversed(phases):
@@ -1275,6 +1895,8 @@ def apply_phase_upgrade_hysteresis(
     phase_history: List[str],
     current_phase: str,
     risk_flag: str,
+    *,
+    prior_upgrade_streak: int = 0,
 ) -> str:
     if not isinstance(phase_history, list):
         raise RuleEngineStabilizationError("phase_history must be a list")
@@ -1292,6 +1914,6 @@ def apply_phase_upgrade_hysteresis(
         return normalized_current
     if _PHASE_ORDER[normalized_current] <= _PHASE_ORDER[last_phase]:
         return normalized_current
-    if _count_trailing_matches(normalized_history, normalized_current) + 1 >= _REQUIRED_CONSECUTIVE_UPGRADE_CHECKINS:
+    if max(0, _coerce_int(prior_upgrade_streak, default=0)) + 1 >= _REQUIRED_CONSECUTIVE_UPGRADE_CHECKINS:
         return normalized_current
     return last_phase

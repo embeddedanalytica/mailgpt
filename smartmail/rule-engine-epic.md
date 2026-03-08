@@ -211,86 +211,114 @@ Route daily/weekly adjustments from check-in signals and produce coherent coachi
 As a coach engine, I need ordered signal routing so the highest-safety signal always wins first.
 
 Story DoD:
-- [ ] Routing order enforced exactly: pain, energy, missed sessions, schedule chaos.
-- [ ] `red_b` emits clinician guidance; `red_a` emits monitor/update guidance.
-- [ ] Tests verify branch precedence and action output.
+- [x] Routing order enforced exactly: pain, energy, missed sessions, schedule chaos.
+- [x] `red_b` emits clinician guidance; `red_a` emits monitor/update guidance.
+- [x] Tests verify branch precedence and action output.
 
 #### Story RE3.2 — Big-2 Anchor Prioritization for Chaotic Weeks
 As an athlete, I need minimal viable priorities in chaotic weeks so I can stay consistent without overload.
 
 Story DoD:
-- [ ] Big-2 anchor logic implemented (long easy + strength/mobility fallback).
-- [ ] Output clearly marks anchors as top priority.
-- [ ] Tests verify chaotic-week output downgrades correctly.
+- [x] Big-2 anchor logic implemented (long easy + strength/mobility fallback).
+- [x] Output clearly marks anchors as top priority.
+- [x] Tests verify chaotic-week output downgrades correctly.
 
 #### Story RE3.3 — Track/Message Consistency Guard
 As a user, I need message language consistent with safety track so coaching advice is not contradictory.
 
 Story DoD:
-- [ ] `return_or_risk_managed` suppresses peak/performance phrasing.
-- [ ] Email payload includes safety/consistency framing.
-- [ ] Tests assert no contradictory language tokens in risk-managed path.
+- [x] `return_or_risk_managed` suppresses peak/performance phrasing.
+- [x] Email payload includes safety/consistency framing.
+- [x] Tests assert no contradictory language tokens in risk-managed path.
 
 #### Story RE3.4 — Integrate RE1 Payload + Naming Contracts Into Final Emission
 As a messaging layer, I need RE1 payload requirements and canonical naming enforced in the final response path.
 
 Story DoD:
-- [ ] Payload validator enforces required output fields before send.
-- [ ] `red_b` path always includes mandatory `disclaimer_short`.
-- [ ] Canonical naming is applied before serialization and logging.
-- [ ] Integration tests verify end-to-end payload compliance and legacy-name compatibility.
+- [x] Payload validator enforces required output fields before send.
+- [x] `red_b` path always includes mandatory `disclaimer_short`.
+- [x] Canonical naming is applied before serialization and logging.
+- [x] Integration tests verify end-to-end payload compliance and legacy-name compatibility.
 
 ### Epic RE3 Lightweight DoD
-- [ ] Session routing produces one clear `today_action` per check-in.
-- [ ] Safety-first ordering is enforced.
-- [ ] Messaging consistency checks pass for risk-managed scenarios.
-- [ ] RE1 payload/naming contracts are enforced in final payload emission.
+- [x] Session routing produces one clear `today_action` per check-in.
+- [x] Safety-first ordering is enforced.
+- [x] Messaging consistency checks pass for risk-managed scenarios.
+- [x] RE1 payload/naming contracts are enforced in final payload emission.
 
 ---
 
-## Epic RE4 — AI-Assisted Planning (Constrained by Rules)
+## Epic RE4 — AI-Assisted Planning (Bounded by Deterministic Rules)
 
 ### Goal
-Use AI for plan construction/adaptation quality while keeping deterministic rule engine as final authority.
+Use separate language-LLM and planning-LLM modules to improve extraction, plan quality, and reply quality while keeping the deterministic rule engine as final authority for state, safety, validation, and fallback.
 
 ### Stories
 
-#### Story RE4.1 — Structured Input Extractor with Confidence
-As a system, I need AI to parse free-text check-ins into structured signals with confidence so rule inputs are usable.
+#### Story RE4.1 — Language LLM Structured Input Extractor with Confidence
+As a system, I need a language LLM to parse free-text check-ins into structured signals with confidence so rule inputs are usable.
 
 Story DoD:
-- [ ] Extractor returns required weekly fields + per-field confidence.
-- [ ] Low-confidence critical fields trigger clarification path (no unsafe state transition).
-- [ ] Tests include ambiguous pain/event-date examples.
+- [x] Language LLM extractor returns required weekly fields + per-field confidence.
+- [x] Low-confidence critical fields trigger clarification path (no unsafe state transition).
+- [x] Tests include ambiguous pain/event-date examples.
 
-#### Story RE4.2 — Planner Contract from Rule Output (`hard_limits`)
-As a planner, I need AI generation constrained by rule-engine outputs so plans remain compliant.
-
-Story DoD:
-- [ ] Rule engine emits explicit `hard_limits` and weekly targets for planner input.
-- [ ] Planner prompt/context includes only allowed session budget/intensity constraints.
-- [ ] Tests verify planner input contract presence and completeness.
-
-#### Story RE4.3 — Plan Validator and Auto-Repair
-As a safety layer, I need validation of AI-generated plans so non-compliant plans are rejected or repaired before send.
+#### Story RE4.2 — Clarification Gating and Language-LLM Boundary
+As a system, I need extraction confidence and clarification to remain outside planner logic so unsafe state transitions are blocked before plan generation.
 
 Story DoD:
-- [ ] Validator checks intensity budget, spacing, risk constraints, and track compatibility.
-- [ ] Invalid outputs are repaired deterministically or downgraded to fallback template.
-- [ ] Tests verify reject/repair behavior.
+- [x] Low-confidence critical fields trigger clarification before planner execution.
+- [x] Language LLM is documented as extraction/clarification/reply-rendering only, not state authority.
+- [x] Tests verify clarification gating prevents unsafe phase/risk changes.
 
-#### Story RE4.4 — Flexibility Mode Output Formatter
+#### Story RE4.3 — Planner Brief from Decision Envelope
+As a planner, I need a planner brief derived from deterministic rule output so the planning LLM is bounded without being reduced to pure template rendering.
+
+Story DoD:
+- [x] Rule engine emits `hard_limits`, `weekly_targets`, allowed session budget, disallowed patterns, track-specific goals, structure preference, and messaging guardrails for planner input.
+- [x] Planner brief includes deterministic `fallback_skeleton`.
+- [x] Tests verify planner-brief contract presence and completeness.
+
+#### Story RE4.4 — Planning LLM Plan Proposal Inside Bounds
+As a planner, I need a planning LLM to generate structured weekly plan proposals within the planner brief so plans are flexible but still compliant.
+
+Story DoD:
+- [x] Planning LLM consumes only the planner brief, not raw mutable rule-state authority.
+- [x] Planning LLM may emit rationale and non-binding state suggestions.
+- [x] Tests verify multiple valid plan shapes can pass against the same deterministic envelope.
+
+#### Story RE4.5 — Plan Validator and Auto-Repair
+As a safety layer, I need validation of planning-LLM output so non-compliant plans are rejected, repaired, or replaced before send.
+
+Story DoD:
+- [x] Validator checks intensity budget, spacing, risk constraints, track compatibility, and messaging-guardrail compliance.
+- [x] Invalid outputs are repaired deterministically or downgraded to fallback template.
+- [x] Planner suggestions cannot change `phase`, `risk_flag`, `track`, clarification status, or persisted state.
+- [x] Tests verify reject/repair/fallback behavior.
+
+#### Story RE4.6 — Language LLM Reply Renderer with Guardrails
+As a messaging layer, I need a language LLM to render athlete-facing copy from validated plans without reintroducing unsafe or contradictory language.
+
+Story DoD:
+- [x] Language LLM renders from validated plan artifact + deterministic messaging guardrails.
+- [x] `return_or_risk_managed` suppresses peak/performance phrasing in rendered copy.
+- [x] Tests verify render output stays aligned with validated plan and deterministic track framing.
+
+#### Story RE4.7 — Flexibility Mode Output Formatter
 As an athlete preferring flexibility, I need anchor/filler/optional menu output instead of strict sequence.
 
 Story DoD:
-- [ ] Formatter emits 2 anchors, 1-2 fillers, 1 optional session format.
-- [ ] Enforces no back-to-back hard days and max hard-session budget.
-- [ ] Tests verify menu structure and constraints.
+- [x] Formatter emits 2 anchors, 1-2 fillers, 1 optional session format.
+- [x] Enforces no back-to-back hard days and max hard-session budget.
+- [x] Tests verify menu structure and constraints.
 
 ### Epic RE4 Lightweight DoD
-- [ ] AI planner cannot bypass deterministic safety/rule constraints.
-- [ ] Low-confidence parsing cannot trigger unsafe transitions.
-- [ ] Flexible and structured outputs both validate successfully.
+- [x] Language LLM and planning LLM are separate module boundaries even if they share the same vendor/model family.
+- [x] AI planner cannot bypass deterministic safety/rule constraints.
+- [x] Low-confidence parsing cannot trigger unsafe transitions.
+- [x] Deterministic rule engine remains final authority for state, validation, repair, and fallback.
+- [x] Planning-LLM state suggestions are advisory only.
+- [x] Flexible and structured outputs both validate successfully.
 
 ---
 
@@ -314,6 +342,7 @@ As a team, we need a backlog placeholder for judge-scoring so we can defer this 
 
 Story DoD:
 - [ ] Placeholder story exists with "deferred" status.
+- [ ] LLM-as-a-judge is not part of planner validation authority.
 - [ ] Non-goal states judge does not gate deterministic safety decisions.
 - [ ] No code changes required in this epic.
 

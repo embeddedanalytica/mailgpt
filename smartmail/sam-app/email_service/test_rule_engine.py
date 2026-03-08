@@ -30,7 +30,10 @@ from rule_engine import (
     apply_phase_upgrade_hysteresis,
     apply_risk_overrides,
     apply_switch_transition_limits,
+    build_decision_envelope,
+    build_planner_brief,
     build_weekly_skeleton,
+    compose_email_payload,
     derive_calendar_phase,
     derive_phase,
     derive_risk,
@@ -48,12 +51,15 @@ from rule_engine import (
     quality_archetype_for_experience,
     resolve_effective_performance_intent,
     resolve_main_sport_after_guardrails,
+    repair_or_fallback_plan,
+    route_today_action,
     select_quality_archetype,
     select_track,
     should_switch_main_sport,
     should_trigger_main_sport_deload,
     validate_event_date,
     validate_hard_session_tags,
+    validate_planner_output,
     validate_rule_engine_output,
 )
 
@@ -348,6 +354,10 @@ class TestStabilizationAndInvalidInputs(unittest.TestCase):
     def test_stabilization(self):
         self.assertTrue(detect_inconsistent_training(["base"], "build", "green"))
         self.assertEqual(apply_phase_upgrade_hysteresis(["base"], "build", "green"), "base")
+        self.assertEqual(
+            apply_phase_upgrade_hysteresis(["base"], "build", "green", prior_upgrade_streak=1),
+            "build",
+        )
         self.assertEqual(apply_phase_upgrade_hysteresis(["base", "build"], "build", "green"), "build")
         self.assertEqual(
             apply_phase_upgrade_hysteresis(["build"], "return_to_training", "green"),
@@ -373,3 +383,131 @@ class TestStabilizationAndInvalidInputs(unittest.TestCase):
             detect_inconsistent_training("base", "build", "green")
         with self.assertRaises(RuleEngineSwitchingError):
             should_switch_main_sport([], {}, {})
+
+
+class TestRoutingAndPayload(unittest.TestCase):
+    def test_route_today_action_pain_and_chaos(self):
+        red_b = route_today_action(
+            {"pain_score": 7, "days_available": 4},
+            "red_b",
+            "return_or_risk_managed",
+            ["easy_aerobic", "strength"],
+        )
+        self.assertEqual(red_b["routing_context"]["winning_signal"], "pain")
+        self.assertIn("consult_clinician", red_b["adjustments"])
+
+        chaotic = route_today_action(
+            {"week_chaotic": True, "days_available": 4, "energy_score": 9},
+            "green",
+            "main_build",
+            ["easy_aerobic", "tempo", "strength"],
+        )
+        self.assertEqual(chaotic["today_action"], "prioritize_big_2_anchors")
+        self.assertEqual(chaotic["routing_context"]["winning_signal"], "chaos")
+        self.assertEqual(len(chaotic["routing_context"]["anchor_sessions"]), 2)
+
+    def test_route_today_action_energy_and_missed(self):
+        energy = route_today_action(
+            {"energy_score": 3, "days_available": 4},
+            "green",
+            "main_build",
+            ["easy_aerobic", "tempo", "strength"],
+        )
+        self.assertEqual(energy["routing_context"]["winning_signal"], "energy")
+        self.assertEqual(energy["today_action"], "minimum_effective_dose_session")
+
+        missed = route_today_action(
+            {"energy_score": 8, "missed_sessions_count": 2, "days_available": 4},
+            "green",
+            "main_build",
+            ["easy_aerobic", "tempo", "strength"],
+        )
+        self.assertEqual(missed["routing_context"]["winning_signal"], "missed_sessions")
+        self.assertIn("no_make_up_intensity", missed["adjustments"])
+
+    def test_build_decision_envelope_and_payload(self):
+        routed_plan = route_today_action(
+            {"week_chaotic": True, "days_available": 4},
+            "yellow",
+            "return_or_risk_managed",
+            ["easy_aerobic", "strength"],
+        )
+        envelope = build_decision_envelope(
+            {"main_sport_current": "run"},
+            {"week_chaotic": True, "days_available": 4},
+            "build",
+            "yellow",
+            "return_or_risk_managed",
+            False,
+            {},
+            fallback_skeleton=["easy_aerobic", "strength"],
+            adjustments=["reduce_intensity"] + routed_plan["adjustments"],
+            plan_update_status="updated",
+            today_action=routed_plan["today_action"],
+            routing_context=routed_plan["routing_context"],
+        )
+        self.assertTrue(envelope["messaging_guardrails"]["suppress_peak_language"])
+        self.assertIn("back_to_back_hard_days", envelope["weekly_targets"]["disallowed_patterns"])
+
+        payload = compose_email_payload(
+            {"main_sport_current": "run"},
+            {"week_chaotic": True, "days_available": 4},
+            {
+                "weekly_skeleton": ["easy_aerobic", "strength"],
+                "today_action": routed_plan["today_action"],
+                "adjustments": ["reduce_intensity"] + routed_plan["adjustments"],
+                "routing_context": routed_plan["routing_context"],
+            },
+            envelope,
+        )
+        self.assertEqual(payload["subject_hint"], "This week: protect the two anchors")
+        self.assertTrue(any(item.startswith("Priority: ") for item in payload["sessions"]))
+
+
+class TestPlannerContracts(unittest.TestCase):
+    def test_build_planner_brief_contract(self):
+        envelope = build_decision_envelope(
+            {"main_sport_current": "run"},
+            {"days_available": 4, "structure_preference": "flexibility"},
+            "build",
+            "yellow",
+            "return_or_risk_managed",
+            False,
+            {},
+            fallback_skeleton=["easy_aerobic", "strength"],
+            adjustments=["reduce_intensity"],
+            plan_update_status="updated",
+            today_action="prioritize_big_2_anchors",
+            routing_context={"winning_signal": "chaos"},
+        )
+        brief = build_planner_brief(
+            {"structure_preference": "flexibility"},
+            {"days_available": 4, "structure_preference": "flexibility"},
+            envelope,
+            {},
+        )
+        self.assertEqual(brief["risk_flag"], "yellow")
+        self.assertEqual(brief["structure_preference"], "flexibility")
+        self.assertIn("hard_limits", brief)
+        self.assertIn("weekly_targets", brief)
+        self.assertEqual(brief["fallback_skeleton"], ["easy_aerobic", "strength"])
+
+    def test_validate_and_repair_planner_output(self):
+        planner_brief = {
+            "risk_flag": "yellow",
+            "hard_limits": {"max_hard_sessions_per_week": 1, "max_sessions_per_week": 4},
+            "disallowed_patterns": ["back_to_back_hard_days"],
+            "max_sessions_per_week": 4,
+            "structure_preference": "structure",
+            "fallback_skeleton": ["easy_aerobic", "strength"],
+        }
+        invalid = {"weekly_skeleton": ["tempo", "intervals", "unknown_tag"]}
+        validation = validate_planner_output(planner_brief, invalid)
+        self.assertFalse(validation["is_valid"])
+        repaired = repair_or_fallback_plan(validation, planner_brief)
+        self.assertIn(repaired["source"], {"repaired_planner_plan", "deterministic_fallback"})
+        self.assertTrue(all(token in HARD_SESSION_TAGS | NON_HARD_SESSION_TAGS for token in repaired["weekly_skeleton"]))
+        self.assertLessEqual(
+            sum(1 for token in repaired["weekly_skeleton"] if token in HARD_SESSION_TAGS),
+            1,
+        )

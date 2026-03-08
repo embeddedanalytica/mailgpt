@@ -20,15 +20,6 @@ ALLOWED_MAIN_SPORTS = {"run", "bike", "swim", "other"}
 ALLOWED_STRUCTURE_PREFERENCES = {"structure", "flexibility", "mixed"}
 ALLOWED_SCHEDULE_VARIABILITY = {"low", "medium", "high"}
 ALLOWED_RECENT_ILLNESS = {"none", "mild", "significant"}
-ALLOWED_TRACK_HINTS = {
-    "general_low_time",
-    "general_moderate_time",
-    "main_base",
-    "main_build",
-    "main_peak_taper",
-    "return_or_risk_managed",
-}
-
 CRITICAL_WEEKLY_FIELDS = ("risk_candidate", "event_date", "days_available", "pain_score")
 
 _ALLOWED_TOP_LEVEL_FIELDS = {
@@ -64,20 +55,10 @@ _ALLOWED_TOP_LEVEL_FIELDS = {
     "structure_preference",
     "schedule_variability",
     "equipment_access",
-    "suppress_performance_language",
-    "track_hint",
-    "hard_limits",
     "field_confidence",
     "free_text_summary",
 }
 _ALLOWED_EQUIPMENT_KEYS = {"gym", "pool", "bike", "trainer"}
-_ALLOWED_HARD_LIMIT_KEYS = {
-    "max_hard_sessions_per_week",
-    "allow_back_to_back_hard_days",
-    "volume_adjustment_pct",
-    "intensity_allowed",
-    "max_sessions_per_week",
-}
 
 
 class AIExtractionContractError(ValueError):
@@ -150,29 +131,6 @@ def _validate_equipment_access(value: Any) -> None:
         )
     for key, val in equipment.items():
         _require_bool(f"equipment_access.{key}", val)
-
-
-def _validate_hard_limits(value: Any) -> None:
-    limits = _require_dict("hard_limits", value)
-    extra = set(limits.keys()) - _ALLOWED_HARD_LIMIT_KEYS
-    if extra:
-        raise AIExtractionContractError(
-            f"hard_limits has unknown fields: {', '.join(sorted(extra))}"
-        )
-
-    if "max_hard_sessions_per_week" in limits:
-        _require_int_ge("hard_limits.max_hard_sessions_per_week", limits["max_hard_sessions_per_week"], 0)
-    if "allow_back_to_back_hard_days" in limits:
-        _require_bool(
-            "hard_limits.allow_back_to_back_hard_days",
-            limits["allow_back_to_back_hard_days"],
-        )
-    if "volume_adjustment_pct" in limits:
-        _require_number_in_range("hard_limits.volume_adjustment_pct", limits["volume_adjustment_pct"], -100.0, 100.0)
-    if "intensity_allowed" in limits:
-        _require_bool("hard_limits.intensity_allowed", limits["intensity_allowed"])
-    if "max_sessions_per_week" in limits:
-        _require_int_ge("hard_limits.max_sessions_per_week", limits["max_sessions_per_week"], 0)
 
 
 def _validate_field_confidence(value: Any) -> Dict[str, float]:
@@ -263,12 +221,6 @@ def validate_ai_extraction_payload(payload: Dict[str, Any]) -> None:
         _require_string_in("schedule_variability", payload["schedule_variability"], ALLOWED_SCHEDULE_VARIABILITY)
     if "equipment_access" in payload:
         _validate_equipment_access(payload["equipment_access"])
-    if "suppress_performance_language" in payload:
-        _require_bool("suppress_performance_language", payload["suppress_performance_language"])
-    if "track_hint" in payload:
-        _require_string_in("track_hint", payload["track_hint"], ALLOWED_TRACK_HINTS)
-    if "hard_limits" in payload:
-        _validate_hard_limits(payload["hard_limits"])
     if "field_confidence" in payload:
         _validate_field_confidence(payload["field_confidence"])
     if "free_text_summary" in payload:

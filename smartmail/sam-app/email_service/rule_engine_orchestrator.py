@@ -7,40 +7,72 @@ from typing import Any, Dict
 
 try:  # pragma: no cover - import style depends on runner context
     from .dynamodb_models import update_current_plan
+    from .openai_responder import (
+        LanguageRenderError,
+        LanguageReplyRenderer,
+        PlannerProposalError,
+        PlanningLLM,
+    )
     from .rule_engine import (
+        RuleEngineContractError,
         RuleEngineOutput,
         _event_expected,
         _prior_phase_from_rule_state,
         apply_event_date_validation_guard,
+        apply_phase_upgrade_hysteresis,
         apply_main_sport_deload_adjustments,
+        build_planner_brief,
         build_weekly_skeleton,
+        build_decision_envelope,
+        compose_email_payload,
+        detect_inconsistent_training,
         derive_phase,
         derive_risk,
+        is_valid_phase,
         resolve_effective_performance_intent,
         resolve_main_sport_after_guardrails,
+        repair_or_fallback_plan,
+        route_today_action,
         select_track,
         should_trigger_main_sport_deload,
         should_switch_main_sport,
+        validate_planner_output,
         validate_event_date,
         validate_rule_engine_output,
     )
     from .rule_engine_state import load_rule_state, update_rule_state
 except ImportError:  # pragma: no cover
     from dynamodb_models import update_current_plan
+    from openai_responder import (
+        LanguageRenderError,
+        LanguageReplyRenderer,
+        PlannerProposalError,
+        PlanningLLM,
+    )
     from rule_engine import (
+        RuleEngineContractError,
         RuleEngineOutput,
         _event_expected,
         _prior_phase_from_rule_state,
         apply_event_date_validation_guard,
+        apply_phase_upgrade_hysteresis,
         apply_main_sport_deload_adjustments,
+        build_planner_brief,
         build_weekly_skeleton,
+        build_decision_envelope,
+        compose_email_payload,
+        detect_inconsistent_training,
         derive_phase,
         derive_risk,
+        is_valid_phase,
         resolve_effective_performance_intent,
         resolve_main_sport_after_guardrails,
+        repair_or_fallback_plan,
+        route_today_action,
         select_track,
         should_trigger_main_sport_deload,
         should_switch_main_sport,
+        validate_planner_output,
         validate_event_date,
         validate_rule_engine_output,
     )
@@ -75,50 +107,45 @@ def _session_type_from_skeleton(weekly_skeleton: list[str]) -> str:
     return "easy"
 
 
-def _fallback_today_action(risk_flag: str, infeasible: bool) -> str:
-    if infeasible:
-        return "infeasible_week_keep_plan_unchanged"
-    if risk_flag == "red_b":
-        return "stop_intensity_consult_clinician"
-    if risk_flag == "red_a":
-        return "stop_intensity_switch_to_easy_cross_train"
-    if risk_flag == "yellow":
-        return "do_planned_but_conservative"
-    return "proceed_as_planned"
+def _phase_history_from_rule_state(rule_state: Dict[str, Any]) -> list[str]:
+    history = rule_state.get("phase_risk_time_last_6", [])
+    phases: list[str] = []
+    if not isinstance(history, list):
+        return phases
+    for item in history:
+        if not isinstance(item, dict):
+            continue
+        phase = str(item.get("phase", "")).strip().lower()
+        if is_valid_phase(phase):
+            phases.append(phase)
+    return phases
 
 
-def _compose_next_email_payload(
-    *,
+def _next_phase_upgrade_streak(
+    phase_history: list[str],
+    candidate_phase: str,
+    stabilized_phase: str,
     risk_flag: str,
-    track: str,
-    weekly_skeleton: list[str],
-    adjustments: list[str],
-    plan_update_status: str,
-) -> Dict[str, Any]:
-    sessions = [f"session_{idx + 1}: {token}" for idx, token in enumerate(weekly_skeleton)]
-    if plan_update_status == "unchanged_infeasible_week":
-        sessions = ["Optional short mobility/recovery touch only."]
-
-    safety_focus = track == "return_or_risk_managed"
-    summary = "Safety-managed week: protect consistency and reduce load." if safety_focus else "Deterministic weekly skeleton generated."
-    disclaimer_short = ""
-    if risk_flag == "red_b":
-        disclaimer_short = "Please stop training and consult a clinician/physio."
-
-    return {
-        "subject_hint": "This week: safety-first consistency" if safety_focus else "This week: execute the plan",
-        "summary": summary,
-        "sessions": sessions,
-        "plan_focus_line": "Prioritize safety and consistency." if safety_focus else "Progress with controlled load.",
-        "technique_cue": "Keep effort smooth and controlled.",
-        "recovery_target": "Prioritize sleep and low-stress recovery routines.",
-        "if_then_rules": [
-            "If pain worsens, stop intensity and report immediately.",
-            "If schedule collapses, keep only anchor sessions.",
-        ],
-        "disclaimer_short": disclaimer_short,
-        "safety_note": "No hard sessions when risk is red-tier.",
-    }
+    prior_upgrade_streak: int,
+) -> int:
+    if not phase_history:
+        return 0
+    normalized_candidate = str(candidate_phase or "").strip().lower()
+    normalized_stabilized = str(stabilized_phase or "").strip().lower()
+    normalized_risk = str(risk_flag or "").strip().lower()
+    if normalized_risk in {"red_a", "red_b"}:
+        return 0
+    last_phase = str(phase_history[-1]).strip().lower()
+    if normalized_candidate not in {"base", "build", "peak_taper"}:
+        return 0
+    phase_rank = {"base": 0, "build": 1, "peak_taper": 2}
+    if last_phase not in phase_rank:
+        return 0
+    if phase_rank[normalized_candidate] <= phase_rank[last_phase]:
+        return 0
+    if normalized_stabilized == normalized_candidate:
+        return 0
+    return max(1, int(prior_upgrade_streak) + 1)
 
 
 def apply_rule_engine_plan_update(
@@ -187,9 +214,12 @@ def run_rule_engine_for_week(
         raise RuleEngineOrchestratorError("persist_state must be a bool")
 
     rule_state = load_rule_state(athlete_id)
+    phase_history = _phase_history_from_rule_state(rule_state)
+    prior_phase = _prior_phase_from_rule_state(rule_state)
+    prior_upgrade_streak = int(rule_state.get("phase_upgrade_streak", 0) or 0)
     effective_performance_intent = resolve_effective_performance_intent(profile, checkin)
     risk_flag = derive_risk(profile, checkin, rule_state)
-    phase = derive_phase(
+    candidate_phase = derive_phase(
         profile,
         checkin,
         today_date,
@@ -201,12 +231,31 @@ def run_rule_engine_for_week(
     plan_update_status = "updated"
     if _event_expected(profile, checkin):
         validation_status = validate_event_date(checkin, today_date)
-        phase, plan_update_status = apply_event_date_validation_guard(
+        candidate_phase, plan_update_status = apply_event_date_validation_guard(
             validation_status=validation_status,
-            candidate_phase=phase,
-            prior_phase=_prior_phase_from_rule_state(rule_state),
+            candidate_phase=candidate_phase,
+            prior_phase=prior_phase,
             candidate_plan_update_status=plan_update_status,
         )
+
+    inconsistent_training = detect_inconsistent_training(
+        phase_history,
+        candidate_phase,
+        risk_flag,
+    )
+    phase = apply_phase_upgrade_hysteresis(
+        phase_history,
+        candidate_phase,
+        risk_flag,
+        prior_upgrade_streak=prior_upgrade_streak,
+    )
+    phase_upgrade_streak = _next_phase_upgrade_streak(
+        phase_history,
+        candidate_phase,
+        phase,
+        risk_flag,
+        prior_upgrade_streak,
+    )
 
     effective_profile = dict(profile)
     should_switch = should_switch_main_sport(profile, checkin, rule_state)
@@ -245,17 +294,117 @@ def run_rule_engine_for_week(
         weekly_skeleton = []
         adjustments = list(skeleton_data["adjustments"])
 
-    today_action = _fallback_today_action(risk_flag, infeasible)
-    next_email_payload = _compose_next_email_payload(
-        risk_flag=risk_flag,
-        track=track,
-        weekly_skeleton=weekly_skeleton,
+    routed_plan = route_today_action(
+        checkin,
+        risk_flag,
+        track,
+        weekly_skeleton,
+    )
+    today_action = str(routed_plan["today_action"])
+    adjustments = list(dict.fromkeys(adjustments + list(routed_plan["adjustments"])))
+    if inconsistent_training and phase != candidate_phase:
+        adjustments.append("phase_upgrade_requires_two_consecutive_qualifying_checkins")
+
+    decision_envelope = build_decision_envelope(
+        effective_profile,
+        checkin,
+        phase,
+        risk_flag,
+        track,
+        effective_performance_intent,
+        rule_state,
+        fallback_skeleton=weekly_skeleton,
         adjustments=adjustments,
         plan_update_status=plan_update_status,
+        today_action=today_action,
+        routing_context=routed_plan["routing_context"],
     )
+    planner_brief = build_planner_brief(
+        effective_profile,
+        checkin,
+        decision_envelope,
+        rule_state,
+    )
+    final_plan = {
+        "source": "deterministic_fallback",
+        "weekly_skeleton": list(decision_envelope.get("fallback_skeleton", weekly_skeleton)),
+        "output_mode": planner_brief.get("structure_preference", "structure"),
+        "planner_rationale": "deterministic_fallback_default",
+        "planner_state_suggestions": [],
+    }
+    if (
+        plan_update_status not in {"unchanged_clarification_needed", "unchanged_infeasible_week"}
+        and not deload_applied
+    ):
+        try:
+            planner_response = PlanningLLM.propose_plan(planner_brief)
+            plan_proposal = planner_response.get("plan_proposal", {})
+            validation_result = validate_planner_output(planner_brief, plan_proposal)
+            if validation_result.get("is_valid"):
+                final_plan = {
+                    "source": "validated_planner_plan",
+                    "weekly_skeleton": list(
+                        validation_result["normalized_plan_proposal"].get("weekly_skeleton", [])
+                    ),
+                    "output_mode": planner_brief.get("structure_preference", "structure"),
+                    "planner_rationale": str(planner_response.get("rationale", "")).strip(),
+                    "planner_state_suggestions": list(
+                        planner_response.get("non_binding_state_suggestions", [])
+                    ),
+                }
+            else:
+                final_plan = repair_or_fallback_plan(validation_result, planner_brief)
+                final_plan["planner_state_suggestions"] = list(
+                    planner_response.get("non_binding_state_suggestions", [])
+                )
+        except PlannerProposalError:
+            final_plan = {
+                "source": "deterministic_fallback",
+                "weekly_skeleton": list(decision_envelope.get("fallback_skeleton", weekly_skeleton)),
+                "output_mode": planner_brief.get("structure_preference", "structure"),
+                "planner_rationale": "deterministic_fallback_planner_unavailable",
+                "planner_state_suggestions": [],
+            }
+
+    final_plan.update(
+        {
+            "today_action": today_action,
+            "adjustments": list(adjustments),
+            "routing_context": dict(routed_plan["routing_context"]),
+            "plan_update_status": plan_update_status,
+        }
+    )
+    weekly_skeleton = [str(item) for item in final_plan.get("weekly_skeleton", [])]
+
+    deterministic_payload = compose_email_payload(
+        effective_profile,
+        checkin,
+        final_plan,
+        decision_envelope,
+    )
+    next_email_payload = dict(deterministic_payload)
+    if plan_update_status == "updated":
+        try:
+            rendered_payload = LanguageReplyRenderer.render_reply(final_plan, decision_envelope)
+            validate_rule_engine_output(
+                {
+                    "classification_label": "compatibility_check",
+                    "track": track,
+                    "phase": phase,
+                    "risk_flag": risk_flag,
+                    "weekly_skeleton": weekly_skeleton,
+                    "today_action": today_action,
+                    "plan_update_status": plan_update_status,
+                    "adjustments": adjustments,
+                    "next_email_payload": rendered_payload,
+                }
+            )
+            next_email_payload = dict(rendered_payload)
+        except (LanguageRenderError, RuleEngineContractError):
+            next_email_payload = dict(deterministic_payload)
 
     output_payload = {
-        "classification_label": "deterministic_re2",
+        "classification_label": "deterministic_re4",
         "track": track,
         "phase": phase,
         "risk_flag": risk_flag,
@@ -280,6 +429,7 @@ def run_rule_engine_for_week(
                 "phase": phase,
                 "risk_flag": risk_flag,
                 "weeks_since_deload": next_weeks_since_deload,
+                "phase_upgrade_streak": phase_upgrade_streak,
                 "main_sport_switched": bool(
                     should_switch and resolved_main_sport and resolved_main_sport != profile.get("main_sport_current")
                 ),

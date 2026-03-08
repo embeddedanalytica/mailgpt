@@ -10,3 +10,4 @@ python3 -m unittest -v sam-app/e2e/test_live_endpoints.py
 ## Implementation Discipline
 - YAGNI: build only what’s needed now.
 - Prefer concrete implementations until a pattern repeats.
+- Do not preserve backward compatibility for its own sake; prefer the simplest, cleanest implementation over historical behavior whenever there is a tradeoff.

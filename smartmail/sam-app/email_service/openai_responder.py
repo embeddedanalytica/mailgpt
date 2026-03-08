@@ -12,7 +12,13 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - exercised indirectly via tests
     openai = None  # type: ignore
 
-from config import OPENAI_GENERIC_MODEL, NO_RESPONSE_MODEL, PROFILE_EXTRACTION_MODEL
+from config import (
+    OPENAI_GENERIC_MODEL,
+    NO_RESPONSE_MODEL,
+    PROFILE_EXTRACTION_MODEL,
+    PLANNING_LLM_MODEL,
+    LANGUAGE_RENDER_MODEL,
+)
 from email_copy import AICopy, EmailCopy
 from ai_extraction_contract import (
     ALLOWED_EXPERIENCE_LEVELS,
@@ -37,6 +43,10 @@ _SESSION_CHECKIN_NULLABLE_FIELDS = {
     "break_days",
     "main_sport_current",
 }
+
+
+def _live_llm_enabled() -> bool:
+    return os.getenv("ENABLE_LIVE_LLM_CALLS", "false").strip().lower() == "true"
 
 
 def _preview_text(value: Any, *, limit: int = 240) -> str:
@@ -151,6 +161,14 @@ class ProfileExtractionError(Exception):
 
 class SessionCheckinExtractionError(Exception):
     """Raised when the LLM-based session check-in extraction fails."""
+
+
+class PlannerProposalError(Exception):
+    """Raised when planning-LLM proposal generation fails."""
+
+
+class LanguageRenderError(Exception):
+    """Raised when language-LLM rendering fails."""
 
 
 class ProfileExtractor:
@@ -280,3 +298,207 @@ class SessionCheckinExtractor:
             raise SessionCheckinExtractionError(
                 "LLM session check-in extraction failed"
             ) from e
+
+
+class PlanningLLM:
+    """
+    Planning LLM boundary for RE4.
+    Input is bounded planner_brief only; no raw state authority.
+    """
+
+    SYSTEM_PROMPT = (
+        "You are an expert endurance coach that builds a high-quality weekly training skeleton.\n"
+        "\n"
+        "The user message is a planner_brief JSON object. Treat it as the authoritative planning contract for this week.\n"
+        "Return strict JSON only.\n"
+        "\n"
+        "Your job:\n"
+        "- Produce the strongest realistic weekly_skeleton supported by the planner_brief.\n"
+        "- Optimize for quality, coherence, realism, safety posture, and goal fit.\n"
+        "- Use the contract intelligently instead of mirroring it mechanically.\n"
+        "- Do not invent needs, constraints, goals, or session types that are not supported by the planner_brief.\n"
+        "\n"
+        "Priority order:\n"
+        "1. Safety and risk management\n"
+        "2. Feasibility within the available session budget\n"
+        "3. Coherent week structure\n"
+        "4. Goal and track alignment\n"
+        "5. Simplicity and believability\n"
+        "\n"
+        "How to use planner_brief fields:\n"
+        "- phase: shapes the level of progression. Base favors durable consistency, build favors purposeful quality, peak_taper favors specificity with restraint, return_to_training favors re-entry and control.\n"
+        "- track: defines the strategic context. main_build and main_peak_taper support more goal-specific structure; general_* tracks should stay simpler; return_or_risk_managed should be conservative.\n"
+        "- risk_flag: green can support fuller progression, yellow should reduce ambition and complexity, red_a/red_b should strongly favor low-risk simple weeks.\n"
+        "- plan_update_status: if the week is unstable or constrained, prefer a conservative and easy-to-execute shape instead of trying to force progression.\n"
+        "- weekly_targets.session_mix: the intended training flavor for the week. Use it as directional guidance, not as a mandatory copy task.\n"
+        "- track_specific_objective: the main outcome to protect when choosing between plausible weeks.\n"
+        "- priority_sessions: preserve these whenever the session budget is tight, unless doing so would create an implausible or risky week.\n"
+        "- structure_preference: structure means more predictable sequencing, flexibility means simpler interchangeable sessions, mixed is between the two.\n"
+        "- fallback_skeleton: acceptable safe default when the brief does not support a meaningfully better proposal.\n"
+        "\n"
+        "Planning heuristics:\n"
+        "- Prefer one believable coherent week over an ambitious one.\n"
+        "- Keep hard sessions scarce and earned.\n"
+        "- When risk, disruption, or uncertainty is elevated, reduce complexity before reducing usefulness.\n"
+        "- Protect anchor sessions first, then fill the rest with supportive work.\n"
+        "- Use easier supporting sessions to create separation around demanding sessions.\n"
+        "- If multiple good plans are possible, choose the simpler one.\n"
+        "- If the brief is restrictive, close to fallback_skeleton is often the best answer.\n"
+        "\n"
+        "Valid weekly_skeleton session tokens:\n"
+        "- easy_aerobic\n"
+        "- recovery\n"
+        "- skills\n"
+        "- mobility\n"
+        "- strength\n"
+        "- quality\n"
+        "- intervals\n"
+        "- tempo\n"
+        "- threshold\n"
+        "- vo2\n"
+        "- race_sim\n"
+        "- hills_hard\n"
+        "\n"
+        "Output contract:\n"
+        "- Return exactly one JSON object with keys plan_proposal, rationale, non_binding_state_suggestions.\n"
+        "- plan_proposal must contain weekly_skeleton only.\n"
+        "- weekly_skeleton must be an ordered list of valid session tokens.\n"
+        "- rationale must be short, practical, and explain the main planning choice in one sentence.\n"
+        "- non_binding_state_suggestions must be a list of brief optional coaching or state notes, not hard requirements.\n"
+        "- Do not include markdown, prose outside JSON, or extra keys.\n"
+        "\n"
+        "Output example:\n"
+        "{"
+        '"plan_proposal":{"weekly_skeleton":["easy_aerobic","strength"]},'
+        '"rationale":"Short practical reason.",'
+        '"non_binding_state_suggestions":["Optional advisory note."]'
+        "}"
+    )
+
+    @staticmethod
+    def propose_plan(
+        planner_brief: Dict[str, Any],
+        *,
+        model_name: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if not isinstance(planner_brief, dict):
+            raise PlannerProposalError("planner_brief must be a dict")
+        raw_content = ""
+        try:
+            if not _live_llm_enabled():
+                raise RuntimeError("live planner LLM calls are disabled")
+            if not os.getenv("OPENAI_API_KEY"):
+                raise RuntimeError("OPENAI_API_KEY is not configured")
+            if openai is None:
+                raise RuntimeError("openai package is not installed")
+            client = openai.OpenAI()
+            selected_model = str(model_name or PLANNING_LLM_MODEL).strip() or PLANNING_LLM_MODEL
+            response = client.chat.completions.create(
+                model=selected_model,
+                messages=[
+                    {"role": "system", "content": PlanningLLM.SYSTEM_PROMPT},
+                    {
+                        "role": "user",
+                        "content": json.dumps(planner_brief, separators=(",", ":"), ensure_ascii=True),
+                    },
+                ],
+                response_format={"type": "json_object"},
+            )
+            raw_content = response.choices[0].message.content or ""
+            parsed = json.loads(raw_content)
+            if not isinstance(parsed, dict):
+                raise ValueError("planner response must be a JSON object")
+
+            plan_proposal = parsed.get("plan_proposal")
+            if not isinstance(plan_proposal, dict):
+                raise ValueError("plan_proposal must be an object")
+            weekly_skeleton = plan_proposal.get("weekly_skeleton")
+            if not isinstance(weekly_skeleton, list):
+                raise ValueError("plan_proposal.weekly_skeleton must be a list")
+            for idx, token in enumerate(weekly_skeleton):
+                if not isinstance(token, str) or not token.strip():
+                    raise ValueError(f"plan_proposal.weekly_skeleton[{idx}] must be non-empty string")
+
+            rationale = str(parsed.get("rationale", "")).strip()
+            suggestions = parsed.get("non_binding_state_suggestions", [])
+            if suggestions is None:
+                suggestions = []
+            if not isinstance(suggestions, list):
+                raise ValueError("non_binding_state_suggestions must be a list")
+            normalized_suggestions = [str(item).strip() for item in suggestions if str(item).strip()]
+
+            return {
+                "plan_proposal": {
+                    "weekly_skeleton": [str(item).strip().lower() for item in weekly_skeleton if str(item).strip()],
+                },
+                "rationale": rationale,
+                "non_binding_state_suggestions": normalized_suggestions,
+                "model_name": selected_model,
+            }
+        except Exception as e:
+            logger.error(
+                "Planning LLM proposal failed: %s (raw_response_preview=%s)",
+                e,
+                _preview_text(raw_content),
+            )
+            raise PlannerProposalError("planning llm proposal failed") from e
+
+
+class LanguageReplyRenderer:
+    """
+    Language LLM boundary for RE4 athlete-facing payload rendering.
+    """
+
+    SYSTEM_PROMPT = (
+        "Render athlete-facing coaching copy from validated plan and deterministic guardrails.\n"
+        "Return strict JSON only with keys:\n"
+        "subject_hint, summary, sessions, plan_focus_line, technique_cue, "
+        "recovery_target, if_then_rules, disclaimer_short, safety_note.\n"
+        "Never contradict risk constraints or safety notes."
+    )
+
+    @staticmethod
+    def render_reply(
+        validated_plan: Dict[str, Any],
+        decision_envelope: Dict[str, Any],
+        *,
+        model_name: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if not isinstance(validated_plan, dict):
+            raise LanguageRenderError("validated_plan must be a dict")
+        if not isinstance(decision_envelope, dict):
+            raise LanguageRenderError("decision_envelope must be a dict")
+        raw_content = ""
+        try:
+            if not _live_llm_enabled():
+                raise RuntimeError("live language-render LLM calls are disabled")
+            if not os.getenv("OPENAI_API_KEY"):
+                raise RuntimeError("OPENAI_API_KEY is not configured")
+            if openai is None:
+                raise RuntimeError("openai package is not installed")
+            client = openai.OpenAI()
+            selected_model = str(model_name or LANGUAGE_RENDER_MODEL).strip() or LANGUAGE_RENDER_MODEL
+            payload = {
+                "validated_plan": validated_plan,
+                "decision_envelope": decision_envelope,
+            }
+            response = client.chat.completions.create(
+                model=selected_model,
+                messages=[
+                    {"role": "system", "content": LanguageReplyRenderer.SYSTEM_PROMPT},
+                    {"role": "user", "content": json.dumps(payload, separators=(",", ":"), ensure_ascii=True)},
+                ],
+                response_format={"type": "json_object"},
+            )
+            raw_content = response.choices[0].message.content or ""
+            parsed = json.loads(raw_content)
+            if not isinstance(parsed, dict):
+                raise ValueError("rendered payload must be a JSON object")
+            return parsed
+        except Exception as e:
+            logger.error(
+                "Language render failed: %s (raw_response_preview=%s)",
+                e,
+                _preview_text(raw_content),
+            )
+            raise LanguageRenderError("language render failed") from e
