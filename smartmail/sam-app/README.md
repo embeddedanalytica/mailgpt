@@ -8,7 +8,7 @@ The current codebase goes beyond the original verification MVP. It now includes:
 - Cooldowns and verified-user hourly/daily quotas
 - Athlete identity, profile, current-plan, plan-history, and progress-snapshot persistence
 - LLM-driven conversation-intelligence classification and model routing
-- Deterministic rule-engine foundations from `spec.md` / `rule-engine-epic.md` (RE1 and RE2)
+- Deterministic + bounded AI-assisted rule-engine behavior from `spec.md` / `rule-engine-epic.md` (RE1 through RE4)
 - Strava connect flow and OAuth token storage
 
 ## Current Status
@@ -29,7 +29,8 @@ This is the code-accurate state as of the current repository:
   - RE1 is implemented
   - RE2 is implemented
   - RE3 is implemented
-  - RE4 and later epics are not fully shipped
+  - RE4 is implemented
+  - RE5 documentation placeholders are completed (deferred topics only; no production logic changes)
 
 ## Runtime Architecture
 
@@ -132,7 +133,7 @@ ready-for-coaching reply
 
 ## Rule Engine Scope
 
-The deterministic rule engine in `sam-app/email_service` currently covers the RE1/RE2 foundation described in [`/Users/levonsh/Projects/smartmail/rule-engine-epic.md`](/Users/levonsh/Projects/smartmail/rule-engine-epic.md) and [`/Users/levonsh/Projects/smartmail/spec.md`](/Users/levonsh/Projects/smartmail/spec.md):
+The deterministic rule engine in `sam-app/email_service` currently covers RE1-RE4 described in [`/Users/levonsh/Projects/smartmail/rule-engine-epic.md`](/Users/levonsh/Projects/smartmail/rule-engine-epic.md) and [`/Users/levonsh/Projects/smartmail/spec.md`](/Users/levonsh/Projects/smartmail/spec.md):
 
 - canonical contracts and validation
 - event-date guards
@@ -148,11 +149,13 @@ The deterministic rule engine in `sam-app/email_service` currently covers the RE
 - deterministic weekly skeleton generation
 - infeasible-week handling
 - orchestrator integration with plan updates
+- RE3 signal-first daily action routing and email-ready payload framing
+- RE4 planner brief generation, planning-LLM bounded proposals, deterministic validation/repair/fallback, and language rendering guardrails
 
 What is not fully shipped yet:
 
-- RE4 AI-assisted constrained planning
 - connector-driven activity sync feeding the rule engine
+- policy decisions for deferred RE5 placeholders (mixed-signal arbitration and LLM-as-a-judge)
 
 ## API Surface
 
@@ -364,7 +367,7 @@ Useful focused areas already covered by tests:
 - conversation intelligence storage/routing
 - current-plan creation and versioned updates
 - progress snapshots and manual activity snapshots
-- RE1 and RE2 rule-engine behavior
+- RE1-RE4 rule-engine behavior
 
 ## Deployment Notes
 
@@ -390,7 +393,6 @@ Do not rely on committed secrets in `template.yaml`. Production credentials such
 Based on the roadmap and the current implementation, the main unfinished areas are:
 
 - complete connector data ingestion into `activities` / `daily_metrics`
-- RE3 session-routing and email-ready action payloads
-- RE4 constrained AI planning
+- formalize policy for deferred RE5 topics (mixed-signal conflicts, LLM-as-a-judge boundaries if ever adopted)
 - stronger grounding of replies in synced activity data
 - cleanup of historical assumptions in docs and deployment config

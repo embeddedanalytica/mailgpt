@@ -333,22 +333,30 @@ Track deferred items without blocking core implementation.
 As a team, we need a placeholder for wearable-vs-email conflicts so implementation can proceed while policy is undecided.
 
 Story DoD:
-- [ ] Placeholder section added and linked to [follow-up.md](/Users/levonsh/Projects/smartmail/follow-up.md).
-- [ ] No production logic added for mixed-signal arbitration yet.
-- [ ] Open questions documented with examples.
+- [x] Placeholder section added and linked to [follow-up.md](/Users/levonsh/Projects/smartmail/follow-up.md).
+- [x] No production logic added for mixed-signal arbitration yet.
+- [x] Open questions documented with examples.
+
+Status:
+- Deferred placeholder only. See [follow-up.md](/Users/levonsh/Projects/smartmail/follow-up.md), topic `RE5.1`.
+- Non-goal: no mixed-signal arbitration logic in production code in this epic.
 
 #### Story RE5.2 — LLM-as-a-Judge Placeholder (Deferred)
 As a team, we need a backlog placeholder for judge-scoring so we can defer this work explicitly.
 
 Story DoD:
-- [ ] Placeholder story exists with "deferred" status.
-- [ ] LLM-as-a-judge is not part of planner validation authority.
-- [ ] Non-goal states judge does not gate deterministic safety decisions.
-- [ ] No code changes required in this epic.
+- [x] Placeholder story exists with "deferred" status.
+- [x] LLM-as-a-judge is not part of planner validation authority.
+- [x] Non-goal states judge does not gate deterministic safety decisions.
+- [x] No code changes required in this epic.
+
+Status:
+- Deferred placeholder only. See [follow-up.md](/Users/levonsh/Projects/smartmail/follow-up.md), topic `RE5.2`.
+- Non-goal: judge scoring does not gate deterministic `phase`, `risk_flag`, `track`, clarification, or persisted state transitions.
 
 ### Epic RE5 Lightweight DoD
-- [ ] Deferred topics are documented and visible to future implementation passes.
-- [ ] No accidental scope creep into deferred logic.
+- [x] Deferred topics are documented and visible to future implementation passes.
+- [x] No accidental scope creep into deferred logic.
 
 ---
 
