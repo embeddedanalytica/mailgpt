@@ -12,10 +12,11 @@ from _test_support import install_boto_stubs, valid_engine_output_payload
 install_boto_stubs()
 
 import rule_engine_orchestrator
-from openai_responder import PlannerProposalError, PlanningLLM
 from planner_bench_fixture import build_scenario_brief
-from rule_engine import (
-    HARD_SESSION_TAGS,
+from rule_engine import HARD_SESSION_TAGS
+from skills.planner import (
+    PlannerProposalError,
+    PlanningLLM,
     repair_or_fallback_plan,
     validate_planner_output,
 )
@@ -301,12 +302,18 @@ class TestPlannerScenarioIntegration(unittest.TestCase):
                     "update_rule_state",
                     return_value={},
                 ), mock.patch.object(
-                    rule_engine_orchestrator.PlanningLLM,
-                    "propose_plan",
+                    rule_engine_orchestrator,
+                    "run_planner_workflow",
                     return_value={
-                        "plan_proposal": {"weekly_skeleton": list(plan_shape)},
-                        "rationale": "scenario plan",
-                        "non_binding_state_suggestions": ["advisory_only"],
+                        "status": "accepted",
+                        "source": "validated_planner_plan",
+                        "weekly_skeleton": list(plan_shape),
+                        "output_mode": "structure",
+                        "planner_rationale": "scenario plan",
+                        "planner_state_suggestions": ["advisory_only"],
+                        "validation_errors": [],
+                        "failure_reason": "",
+                        "model_name": "",
                     },
                 ), mock.patch.object(
                     rule_engine_orchestrator.LanguageReplyRenderer,

@@ -20,9 +20,8 @@ EMAIL_SERVICE_PATH = REPO_ROOT / "sam-app" / "email_service"
 if str(EMAIL_SERVICE_PATH) not in sys.path:
     sys.path.insert(0, str(EMAIL_SERVICE_PATH))
 
-from openai_responder import PlannerProposalError, PlanningLLM
 from planner_bench_fixture import DEFAULT_BENCH_PATH, build_scenario_brief, load_plan_bench_scenarios
-from rule_engine import repair_or_fallback_plan, validate_planner_output
+from skills.planner import PlannerProposalError, PlanningLLM, repair_or_fallback_plan, validate_planner_output
 
 DEFAULT_OUTPUT_ROOT = REPO_ROOT / "sam-app" / ".cache" / "planner-bench"
 OK_RAW_VALID = "ok_raw_valid"

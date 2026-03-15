@@ -2,11 +2,13 @@
 
 This file records key design decisions so implementation stays consistent.
 Update this only when we make a new decision (avoid noise).
+This is an architectural-decision record, not an implementation-status tracker.
+Current runtime status belongs in [README.md](/Users/levonsh/Projects/smartmail/sam-app/README.md).
 
 ---
 
 ## D1 — Email as UI
-**Decision:** Product is email-first with minimal web surface only for action links and provider OAuth callbacks.
+**Decision:** Product is email-first with minimal web surface for registration, action links, and provider OAuth callbacks.
 **Why:** Lowest friction; aligns with SmartMail architecture.
 **Implications:** Must enforce strict gates to prevent spoofing, spam, and LLM cost abuse.
 
@@ -71,10 +73,10 @@ Update this only when we make a new decision (avoid noise).
 
 ---
 
-## D10 — Verified-User Cost Controls (Planned)
-**Decision:** Once verified, implement per-user rate limiting before LLM calls (hour/day quotas).
+## D10 — Verified-User Cost Controls
+**Decision:** Verified users are rate-limited before LLM calls via per-user hourly and daily quotas.
 **Why:** Protect cost ceiling even for verified accounts or compromised inboxes.
-**Status:** Planned (Story H).
+**Status:** Implemented.
 
 ---
 
@@ -91,3 +93,15 @@ Update this only when we make a new decision (avoid noise).
 **Why:** Prevent field drift between connector ingestion, LLM generation, storage, and reply composition.
 **Compatibility rule:** `v1` changes are additive-only. Existing required fields and meanings must remain stable.
 **Validation rule:** Payloads are validated before use and before persistence; invalid payloads are rejected.
+
+---
+
+## D13 — Athlete Memory Stays Lightweight and Athlete-Scoped
+**Decision:** Athlete memory is persisted only on `coach_profiles` as two bounded artifacts:
+- `memory_notes` for durable or semi-durable athlete context
+- `continuity_summary` for short-lived recent coaching continuity
+**Storage rule:** Memory artifact timestamps use Unix seconds in storage. Human-readable dates are rendered only in LLM-facing prompts when needed.
+**Retrieval rule:** Response-time retrieval is bounded to all active `high` notes plus up to 3 additional recent active notes.
+**Refresh rule:** Memory refresh is LLM-assisted and may run both before reply generation and after a completed interaction, but only when the interaction meaningfully changes durable context, coaching recommendation, or coaching state.
+**Guardrail rule:** At most 7 memory notes may remain active for one athlete.
+**Why:** Preserve continuity without introducing a separate memory subsystem, semantic search, embeddings, or heavyweight history management.

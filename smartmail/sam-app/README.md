@@ -1,12 +1,27 @@
 # SmartMail
 
+Status: current state.
+
 Email-first coaching service built on AWS SAM. Inbound email is the primary UI. A small HTTP surface exists for registration, action links, and the Strava OAuth callback.
+
+## Document Map
+
+Use the repository docs with these roles:
+
+- This README is the current implementation and runtime overview.
+- [`/Users/levonsh/Projects/smartmail/spec.md`](/Users/levonsh/Projects/smartmail/spec.md) is the source of truth for rule behavior.
+- [`/Users/levonsh/Projects/smartmail/sam-app/DECISIONS.md`](/Users/levonsh/Projects/smartmail/sam-app/DECISIONS.md) records durable architectural decisions only.
+- [`/Users/levonsh/Projects/smartmail/rule-engine-epic.md`](/Users/levonsh/Projects/smartmail/rule-engine-epic.md) is the completed implementation record for the rule engine.
+- [`/Users/levonsh/Projects/smartmail/athlete-memory-epic.md`](/Users/levonsh/Projects/smartmail/athlete-memory-epic.md) is the implemented design record for athlete memory and conversation continuity.
+- [`/Users/levonsh/Projects/smartmail/response-generation-epic.md`](/Users/levonsh/Projects/smartmail/response-generation-epic.md) is the planned replacement for the current MVP response-composition path.
+- [`/Users/levonsh/Projects/smartmail/BACKLOG.md`](/Users/levonsh/Projects/smartmail/BACKLOG.md) is the early/foundational backlog and should not be treated as the current product spec.
 
 The current codebase goes beyond the original verification MVP. It now includes:
 
 - Registration and inbox-possession verification gates before any LLM-capable path
 - Cooldowns and verified-user hourly/daily quotas
 - Athlete identity, profile, current-plan, plan-history, and progress-snapshot persistence
+- Athlete memory and continuity persistence on `coach_profiles`
 - LLM-driven conversation-intelligence classification and model routing
 - Deterministic + bounded AI-assisted rule-engine behavior from `spec.md` / `rule-engine-epic.md` (RE1 through RE4)
 - Strava connect flow and OAuth token storage
@@ -15,22 +30,24 @@ The current codebase goes beyond the original verification MVP. It now includes:
 
 This is the code-accurate state as of the current repository:
 
-- Roadmap Phase 0 and Phase 1.5 are implemented through `H2`
-- Roadmap `I` is partially implemented:
-  - Missing-profile prompting is live
-  - Profile field extraction and persistence are live
-  - Profile-based personalization exists in the coaching path, but not as a cleanly isolated roadmap story boundary
-- Roadmap `J/K` are partially implemented in code:
-  - `CONNECT_STRAVA` action links exist
-  - `/oauth/strava/callback` exists
-  - athlete connection metadata and encrypted provider tokens are stored
-  - initial sync into `activities` is not wired as a finished product flow
+- Registration and inbox-possession verification are implemented.
+- Cooldowns and verified-user hourly/daily quotas are implemented.
+- Athlete identity, profile, current plan, plan history, progress snapshots, manual activity snapshots, and rule state persistence are implemented.
+- Athlete memory notes and continuity summaries are implemented.
+- Missing-profile prompting plus profile extraction/persistence are implemented.
+- LLM-driven conversation intelligence and model routing are implemented.
+- Strava connect links, OAuth callback handling, athlete connection metadata, and encrypted provider token storage are implemented.
+- Initial connector sync into `activities` is not yet a finished end-user flow.
 - Rule engine:
   - RE1 is implemented
   - RE2 is implemented
   - RE3 is implemented
   - RE4 is implemented
   - RE5 documentation placeholders are completed (deferred topics only; no production logic changes)
+
+## Next Planned Area
+
+The next major capability under active design is the dedicated response-generation layer. That design lives in [`/Users/levonsh/Projects/smartmail/response-generation-epic.md`](/Users/levonsh/Projects/smartmail/response-generation-epic.md). The current reply path is still MVP scaffolding and is expected to be replaced by RG1.
 
 ## Runtime Architecture
 
@@ -51,6 +68,8 @@ Current responsibilities:
 - Persist current plan updates and immutable plan history for rule-engine plan changes
 - Extract and store profile updates from free-form email
 - Extract and store manual activity snapshots from email
+- Retrieve bounded athlete memory context for LLM-generated replies
+- Refresh athlete memory artifacts before and/or after meaningful interactions
 - Generate final coaching reply via OpenAI-backed responders
 
 ### 2. `mailgptregistration` (`sam-app/email_registration`)
@@ -94,6 +113,9 @@ SES inbound -> SNS -> EmailServiceFunction
   -> conversation intelligence + model routing
   -> optional rule-engine orchestration + current-plan update
   -> profile/manual-activity extraction
+  -> optional pre-reply memory refresh when durable context changed
+  -> bounded athlete-memory retrieval for LLM reply path
+  -> optional post-reply memory refresh for meaningful interactions
   -> final reply via SES
 ```
 
@@ -157,6 +179,29 @@ What is not fully shipped yet:
 - connector-driven activity sync feeding the rule engine
 - policy decisions for deferred RE5 placeholders (mixed-signal arbitration and LLM-as-a-judge)
 
+## Athlete Memory Scope
+
+Athlete memory is now implemented as lightweight continuity state on `coach_profiles`:
+
+- `memory_notes`
+  - durable or semi-durable athlete context
+  - each note has a stable integer `memory_note_id`
+  - stored with Unix timestamps
+- `continuity_summary`
+  - short-lived recent coaching context and follow-up state
+  - stored as one rolling record per athlete
+
+Current behavior:
+
+- at most 7 memory notes may remain active for one athlete
+- retrieval is bounded to all `high` notes plus up to 3 additional recent notes
+- retrieval degrades gracefully on missing or invalid persisted memory artifacts
+- memory refresh is LLM-assisted and runs only for interactions classified as meaningful
+- memory refresh may run before reply generation when newly observed durable context should shape the current reply
+- memory refresh may also run after reply generation so persisted continuity stays current for future exchanges
+- invalid refresh payloads fail closed and do not overwrite stored memory
+- readable date strings are rendered only in LLM-facing prompts; storage remains Unix timestamps
+
 ## API Surface
 
 ### `POST /register`
@@ -213,7 +258,7 @@ Behavior:
 
 - `coach_profiles`
   - PK: `athlete_id`
-  - athlete profile plus `current_plan`
+  - athlete profile plus `current_plan`, `memory_notes`, and `continuity_summary`
 - `athlete_identities`
   - PK: `email`
   - maps email to `athlete_id`
@@ -290,6 +335,8 @@ SAM provisions the Lambdas, API routes, SNS topic, and DynamoDB tables listed ab
 - Rule-engine updates can mutate the stored current plan and append plan history
 - Missing profile fields trigger a profile-collection reply
 - Manual activity snapshots can be extracted from email and roll into progress snapshots
+- Athlete memory survives across threads and can personalize the current LLM reply path
+- Memory refresh updates durable notes and rolling continuity around meaningful interactions when the trigger boundary is met
 - Ready-for-coaching replies can include a Strava connect link
 
 ## Project Layout
@@ -311,9 +358,12 @@ Inside `email_service/`, the most relevant modules are:
 - `rate_limits.py` - verified quota and notice throttling
 - `business.py` - conversation intelligence and routing orchestration
 - `coaching.py` - profile gate, manual snapshots, final reply path
+- `athlete_memory_contract.py` - memory-note and continuity-summary contracts/guardrails
+- `memory_refresh_eligibility.py` - refresh trigger classification
 - `inbound_rule_router.py` - mutate/read-only rule-engine routing
 - `rule_engine_*` - deterministic rule-engine implementation
-- `dynamodb_models.py` - profile, plan, connector, and snapshot persistence helpers
+- `openai_responder.py` - reply generation, extraction, and memory refresh LLM boundaries
+- `dynamodb_models.py` - profile, memory, plan, connector, and snapshot persistence helpers
 
 ## Local Development
 
@@ -365,6 +415,7 @@ Useful focused areas already covered by tests:
 - action-link verification and Strava callback behavior
 - verified-user quota gate
 - conversation intelligence storage/routing
+- athlete memory contracts, persistence, retrieval, and refresh guardrails
 - current-plan creation and versioned updates
 - progress snapshots and manual activity snapshots
 - RE1-RE4 rule-engine behavior
@@ -392,7 +443,8 @@ Do not rely on committed secrets in `template.yaml`. Production credentials such
 
 Based on the roadmap and the current implementation, the main unfinished areas are:
 
+- replace the MVP reply path with the dedicated RG1 response-generation layer
 - complete connector data ingestion into `activities` / `daily_metrics`
 - formalize policy for deferred RE5 topics (mixed-signal conflicts, LLM-as-a-judge boundaries if ever adopted)
-- stronger grounding of replies in synced activity data
+- stronger grounding of replies in synced activity data and the future response brief
 - cleanup of historical assumptions in docs and deployment config

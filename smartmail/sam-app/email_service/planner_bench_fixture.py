@@ -7,7 +7,8 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List
 
-from rule_engine import build_decision_envelope, build_planner_brief
+from rule_engine import build_decision_envelope
+from skills.planner import build_planner_brief
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_BENCH_PATH = REPO_ROOT / "plan_test_bench.md"

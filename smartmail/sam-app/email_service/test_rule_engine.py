@@ -31,7 +31,6 @@ from rule_engine import (
     apply_risk_overrides,
     apply_switch_transition_limits,
     build_decision_envelope,
-    build_planner_brief,
     build_weekly_skeleton,
     compose_email_payload,
     derive_calendar_phase,
@@ -51,7 +50,6 @@ from rule_engine import (
     quality_archetype_for_experience,
     resolve_effective_performance_intent,
     resolve_main_sport_after_guardrails,
-    repair_or_fallback_plan,
     route_today_action,
     select_quality_archetype,
     select_track,
@@ -59,7 +57,6 @@ from rule_engine import (
     should_trigger_main_sport_deload,
     validate_event_date,
     validate_hard_session_tags,
-    validate_planner_output,
     validate_rule_engine_output,
 )
 
@@ -463,51 +460,3 @@ class TestRoutingAndPayload(unittest.TestCase):
         self.assertEqual(payload["subject_hint"], "This week: protect the two anchors")
         self.assertTrue(any(item.startswith("Priority: ") for item in payload["sessions"]))
 
-
-class TestPlannerContracts(unittest.TestCase):
-    def test_build_planner_brief_contract(self):
-        envelope = build_decision_envelope(
-            {"main_sport_current": "run"},
-            {"days_available": 4, "structure_preference": "flexibility"},
-            "build",
-            "yellow",
-            "return_or_risk_managed",
-            False,
-            {},
-            fallback_skeleton=["easy_aerobic", "strength"],
-            adjustments=["reduce_intensity"],
-            plan_update_status="updated",
-            today_action="prioritize_big_2_anchors",
-            routing_context={"winning_signal": "chaos"},
-        )
-        brief = build_planner_brief(
-            {"structure_preference": "flexibility"},
-            {"days_available": 4, "structure_preference": "flexibility"},
-            envelope,
-            {},
-        )
-        self.assertEqual(brief["risk_flag"], "yellow")
-        self.assertEqual(brief["structure_preference"], "flexibility")
-        self.assertIn("hard_limits", brief)
-        self.assertIn("weekly_targets", brief)
-        self.assertEqual(brief["fallback_skeleton"], ["easy_aerobic", "strength"])
-
-    def test_validate_and_repair_planner_output(self):
-        planner_brief = {
-            "risk_flag": "yellow",
-            "hard_limits": {"max_hard_sessions_per_week": 1, "max_sessions_per_week": 4},
-            "disallowed_patterns": ["back_to_back_hard_days"],
-            "max_sessions_per_week": 4,
-            "structure_preference": "structure",
-            "fallback_skeleton": ["easy_aerobic", "strength"],
-        }
-        invalid = {"weekly_skeleton": ["tempo", "intervals", "unknown_tag"]}
-        validation = validate_planner_output(planner_brief, invalid)
-        self.assertFalse(validation["is_valid"])
-        repaired = repair_or_fallback_plan(validation, planner_brief)
-        self.assertIn(repaired["source"], {"repaired_planner_plan", "deterministic_fallback"})
-        self.assertTrue(all(token in HARD_SESSION_TAGS | NON_HARD_SESSION_TAGS for token in repaired["weekly_skeleton"]))
-        self.assertLessEqual(
-            sum(1 for token in repaired["weekly_skeleton"] if token in HARD_SESSION_TAGS),
-            1,
-        )

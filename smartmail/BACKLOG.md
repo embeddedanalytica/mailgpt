@@ -1,8 +1,13 @@
 # AI Coaching App — Implementation Backlog
 
+Status: historical/foundational backlog.
+This file captures the early implementation plan for the project. Large parts are now implemented or superseded by the current runtime described in [sam-app/README.md](/Users/levonsh/Projects/smartmail/sam-app/README.md) and by the completed rule-engine record in [rule-engine-epic.md](/Users/levonsh/Projects/smartmail/rule-engine-epic.md).
+
 ---
 
 # EPIC 1 — Core State Foundation
+
+Status: implemented foundation.
 
 These stories establish persistent structured state.  
 No intelligence logic included yet.
@@ -77,6 +82,8 @@ No analytics required at this stage.
 
 # EPIC 2 — Conversation Intelligence
 
+Status: implemented foundation.
+
 ---
 
 ## Story 2.1 — Intent Classification
@@ -140,6 +147,9 @@ Route response generation to different models based on complexity score.
 ---
 
 # EPIC 3 — MVP Coaching Logic Engine
+
+Status: historical scope; core intent is implemented, but the active coaching system has moved beyond this MVP framing.
+Use this section as background only, not as the current source of truth for coaching behavior.
 
 ---
 
@@ -212,6 +222,8 @@ Generate next recommended action when sufficient information exists.
 
 # EPIC 4 — Progress Awareness
 
+Status: partially implemented / partly superseded by current persistence and rule-engine behavior.
+
 ---
 
 ## Story 4.1 — Update Progress Snapshot
@@ -254,6 +266,9 @@ Detect milestone events and trigger celebration messaging.
 ---
 
 # EPIC 5 — Tier Governance
+
+Status: partially implemented.
+Response-frequency enforcement exists in the current system; this section remains useful only for backlog items not already reflected in README/current code.
 
 ---
 
@@ -299,6 +314,9 @@ Restrict coaching depth based on subscription tier.
 
 # EPIC 6 — Adaptive Plan (Phase 2)
 
+Status: largely superseded by the implemented rule engine and plan-update flow.
+Treat this section as historical framing unless a future item is still not covered elsewhere.
+
 ---
 
 ## Story 6.1 — Off-Track Detection
@@ -342,5 +360,7 @@ Modify structured plan when adjustment is required.
 ---
 
 # Connector Integrations
+
+Status: still relevant future work, but not the current source of truth for connector behavior.
 
 Connector ingestion (e.g., Strava, Garmin) is handled in a separate epic and enriches activity snapshots but is not required for core functionality.

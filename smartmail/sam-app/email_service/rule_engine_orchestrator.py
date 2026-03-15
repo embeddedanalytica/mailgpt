@@ -7,12 +7,7 @@ from typing import Any, Dict
 
 try:  # pragma: no cover - import style depends on runner context
     from .dynamodb_models import update_current_plan
-    from .openai_responder import (
-        LanguageRenderError,
-        LanguageReplyRenderer,
-        PlannerProposalError,
-        PlanningLLM,
-    )
+    from .openai_responder import LanguageRenderError, LanguageReplyRenderer
     from .rule_engine import (
         RuleEngineContractError,
         RuleEngineOutput,
@@ -21,7 +16,6 @@ try:  # pragma: no cover - import style depends on runner context
         apply_event_date_validation_guard,
         apply_phase_upgrade_hysteresis,
         apply_main_sport_deload_adjustments,
-        build_planner_brief,
         build_weekly_skeleton,
         build_decision_envelope,
         compose_email_payload,
@@ -31,24 +25,18 @@ try:  # pragma: no cover - import style depends on runner context
         is_valid_phase,
         resolve_effective_performance_intent,
         resolve_main_sport_after_guardrails,
-        repair_or_fallback_plan,
         route_today_action,
         select_track,
         should_trigger_main_sport_deload,
         should_switch_main_sport,
-        validate_planner_output,
         validate_event_date,
         validate_rule_engine_output,
     )
     from .rule_engine_state import load_rule_state, update_rule_state
+    from .skills.planner import build_planner_brief, run_planner_workflow
 except ImportError:  # pragma: no cover
     from dynamodb_models import update_current_plan
-    from openai_responder import (
-        LanguageRenderError,
-        LanguageReplyRenderer,
-        PlannerProposalError,
-        PlanningLLM,
-    )
+    from openai_responder import LanguageRenderError, LanguageReplyRenderer
     from rule_engine import (
         RuleEngineContractError,
         RuleEngineOutput,
@@ -57,7 +45,6 @@ except ImportError:  # pragma: no cover
         apply_event_date_validation_guard,
         apply_phase_upgrade_hysteresis,
         apply_main_sport_deload_adjustments,
-        build_planner_brief,
         build_weekly_skeleton,
         build_decision_envelope,
         compose_email_payload,
@@ -67,16 +54,15 @@ except ImportError:  # pragma: no cover
         is_valid_phase,
         resolve_effective_performance_intent,
         resolve_main_sport_after_guardrails,
-        repair_or_fallback_plan,
         route_today_action,
         select_track,
         should_trigger_main_sport_deload,
         should_switch_main_sport,
-        validate_planner_output,
         validate_event_date,
         validate_rule_engine_output,
     )
     from rule_engine_state import load_rule_state, update_rule_state
+    from skills.planner import build_planner_brief, run_planner_workflow
 
 
 class RuleEngineOrchestratorError(ValueError):
@@ -336,35 +322,7 @@ def run_rule_engine_for_week(
         plan_update_status not in {"unchanged_clarification_needed", "unchanged_infeasible_week"}
         and not deload_applied
     ):
-        try:
-            planner_response = PlanningLLM.propose_plan(planner_brief)
-            plan_proposal = planner_response.get("plan_proposal", {})
-            validation_result = validate_planner_output(planner_brief, plan_proposal)
-            if validation_result.get("is_valid"):
-                final_plan = {
-                    "source": "validated_planner_plan",
-                    "weekly_skeleton": list(
-                        validation_result["normalized_plan_proposal"].get("weekly_skeleton", [])
-                    ),
-                    "output_mode": planner_brief.get("structure_preference", "structure"),
-                    "planner_rationale": str(planner_response.get("rationale", "")).strip(),
-                    "planner_state_suggestions": list(
-                        planner_response.get("non_binding_state_suggestions", [])
-                    ),
-                }
-            else:
-                final_plan = repair_or_fallback_plan(validation_result, planner_brief)
-                final_plan["planner_state_suggestions"] = list(
-                    planner_response.get("non_binding_state_suggestions", [])
-                )
-        except PlannerProposalError:
-            final_plan = {
-                "source": "deterministic_fallback",
-                "weekly_skeleton": list(decision_envelope.get("fallback_skeleton", weekly_skeleton)),
-                "output_mode": planner_brief.get("structure_preference", "structure"),
-                "planner_rationale": "deterministic_fallback_planner_unavailable",
-                "planner_state_suggestions": [],
-            }
+        final_plan = run_planner_workflow(planner_brief)
 
     final_plan.update(
         {

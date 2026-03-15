@@ -1,0 +1,127 @@
+"""Reply rendering helpers for coaching responses."""
+
+from typing import Any, Callable, Dict, Optional
+
+from athlete_memory_contract import format_unix_timestamp_for_prompt
+
+
+def render_rule_engine_payload_reply(
+    next_email_payload: Dict[str, Any],
+    *,
+    include_plan_summary: Optional[str] = None,
+) -> str:
+    subject_hint = str(next_email_payload.get("subject_hint", "")).strip()
+    summary = str(next_email_payload.get("summary", "")).strip()
+    sessions = [
+        str(item).strip()
+        for item in next_email_payload.get("sessions", [])
+        if str(item).strip()
+    ]
+    plan_focus_line = str(next_email_payload.get("plan_focus_line", "")).strip()
+    technique_cue = str(next_email_payload.get("technique_cue", "")).strip()
+    recovery_target = str(next_email_payload.get("recovery_target", "")).strip()
+    if_then_rules = [
+        str(item).strip()
+        for item in next_email_payload.get("if_then_rules", [])
+        if str(item).strip()
+    ]
+    disclaimer_short = str(next_email_payload.get("disclaimer_short", "")).strip()
+    safety_note = str(next_email_payload.get("safety_note", "")).strip()
+
+    lines = []
+    if subject_hint:
+        lines.append(subject_hint)
+    if summary:
+        lines.append(summary)
+    if include_plan_summary:
+        lines.append(include_plan_summary)
+    if sessions:
+        lines.append("Sessions:")
+        lines.extend(f"- {session}" for session in sessions)
+    if plan_focus_line:
+        lines.append(f"Plan focus: {plan_focus_line}")
+    if technique_cue:
+        lines.append(f"Technique cue: {technique_cue}")
+    if recovery_target:
+        lines.append(f"Recovery target: {recovery_target}")
+    if if_then_rules:
+        lines.append("If-then rules:")
+        lines.extend(f"- {rule}" for rule in if_then_rules)
+    if safety_note:
+        lines.append(f"Safety note: {safety_note}")
+    if disclaimer_short:
+        lines.append(disclaimer_short)
+    return "\n\n".join(lines)
+
+
+def build_memory_context_block(memory_context: Dict[str, Any]) -> str:
+    if not isinstance(memory_context, dict):
+        return ""
+
+    lines = []
+    continuity_summary = memory_context.get("continuity_summary")
+    if isinstance(continuity_summary, dict):
+        summary_text = str(continuity_summary.get("summary", "")).strip()
+        last_recommendation = str(continuity_summary.get("last_recommendation", "")).strip()
+        updated_at = continuity_summary.get("updated_at")
+        open_loops = [
+            str(item).strip()
+            for item in continuity_summary.get("open_loops", [])
+            if str(item).strip()
+        ]
+        if summary_text:
+            lines.append(f"Continuity summary: {summary_text}")
+        if last_recommendation:
+            lines.append(f"Last recommendation: {last_recommendation}")
+        if isinstance(updated_at, int):
+            lines.append(
+                f"Continuity updated: {format_unix_timestamp_for_prompt(updated_at)}"
+            )
+        if open_loops:
+            lines.append("Open loops:")
+            lines.extend(f"- {item}" for item in open_loops)
+
+    memory_notes = memory_context.get("memory_notes")
+    if isinstance(memory_notes, list) and memory_notes:
+        lines.append("Athlete memory notes:")
+        for note in memory_notes:
+            if not isinstance(note, dict):
+                continue
+            note_id = note.get("memory_note_id")
+            fact_type = str(note.get("fact_type", "")).strip()
+            summary = str(note.get("summary", "")).strip()
+            importance = str(note.get("importance", "")).strip()
+            last_confirmed_at = note.get("last_confirmed_at")
+            if summary:
+                recency_suffix = ""
+                if isinstance(last_confirmed_at, int):
+                    recency_suffix = (
+                        f" [last confirmed {format_unix_timestamp_for_prompt(last_confirmed_at)}]"
+                    )
+                lines.append(
+                    f"- [{note_id}] {fact_type} ({importance}): {summary}{recency_suffix}"
+                )
+    return "\n".join(lines)
+
+
+def build_llm_reply_body(
+    *,
+    inbound_body: str,
+    athlete_id: str,
+    plan_summary: Optional[str],
+    rule_engine_decision: Optional[Dict[str, Any]],
+    fetch_memory_context_for_response_generation: Callable[[str], Dict[str, Any]],
+) -> str:
+    llm_body = inbound_body
+    if plan_summary:
+        llm_body = f"{llm_body}\n\nCurrent plan context:\n{plan_summary}"
+
+    memory_context = fetch_memory_context_for_response_generation(athlete_id)
+    memory_context_block = build_memory_context_block(memory_context)
+    if memory_context_block:
+        llm_body = f"{llm_body}\n\nAthlete memory context:\n{memory_context_block}"
+
+    if isinstance(rule_engine_decision, dict):
+        llm_body = f"{llm_body}\n\nRule engine decision context:\n{rule_engine_decision}"
+
+    return llm_body

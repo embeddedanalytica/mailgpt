@@ -253,6 +253,8 @@ Story DoD:
 ### Goal
 Use separate language-LLM and planning-LLM modules to improve extraction, plan quality, and reply quality while keeping the deterministic rule engine as final authority for state, safety, validation, and fallback.
 
+Within this epic, the planning-LLM boundary should be organized as its own dedicated component, analogous to the athlete-memory skill pattern: explicit prompt, runner, validator, and error boundaries around a bounded contract. This componentization applies to planner inputs and outputs only. It does not move response-generation ownership out of RG1, and it does not weaken deterministic validation, repair, or fallback authority.
+
 ### Stories
 
 #### Story RE4.1 — Language LLM Structured Input Extractor with Confidence
@@ -296,7 +298,27 @@ Story DoD:
 - [x] Planner suggestions cannot change `phase`, `risk_flag`, `track`, clarification status, or persisted state.
 - [x] Tests verify reject/repair/fallback behavior.
 
-#### Story RE4.6 — Language LLM Reply Renderer with Guardrails
+#### Story RE4.6 — Planner Component Boundary
+As a platform maintainer, I need the planning-LLM workflow organized as a dedicated planner component so prompt/schema/runner boundaries stay explicit and reusable.
+
+Story DoD:
+- [ ] Planner component boundary is defined with explicit prompt, runner, validator, and error surfaces for plan generation.
+- [ ] Planner component consumes only `planner_brief` and returns only the bounded planner output contract.
+- [ ] Orchestration calls the planner component rather than embedding planner prompt/model/parsing logic inline.
+- [ ] Planner component remains downstream of clarification gating and upstream of deterministic repair/fallback.
+- [ ] Tests verify the planner boundary directly instead of only through broad orchestrator coverage.
+
+#### Story RE4.7 — Planner Schema and Contract Packaging
+As a developer, I need planner-specific input/output contracts packaged separately from the broader rule-engine module so planning boundaries are explicit and easy to validate.
+
+Story DoD:
+- [ ] Planner-specific contract package defines bounded planner input and output shapes without changing `RuleEngineOutput`.
+- [ ] Planner output validation is explicit about accepted keys, normalized session tokens, and failure reasons.
+- [ ] Failure behavior is documented and integrated with deterministic repair/fallback instead of ad hoc planner-call handling.
+- [ ] Contract tests cover valid/invalid planner payloads and schema enforcement.
+- [ ] Direct component-level evals or fixtures cover prompt, parsing, and schema enforcement analogous to the memory skill workflow.
+
+#### Story RE4.8 — Language LLM Reply Renderer with Guardrails
 As a messaging layer, I need a language LLM to render athlete-facing copy from validated plans without reintroducing unsafe or contradictory language.
 
 Story DoD:
@@ -304,7 +326,7 @@ Story DoD:
 - [x] `return_or_risk_managed` suppresses peak/performance phrasing in rendered copy.
 - [x] Tests verify render output stays aligned with validated plan and deterministic track framing.
 
-#### Story RE4.7 — Flexibility Mode Output Formatter
+#### Story RE4.9 — Flexibility Mode Output Formatter
 As an athlete preferring flexibility, I need anchor/filler/optional menu output instead of strict sequence.
 
 Story DoD:
@@ -314,6 +336,7 @@ Story DoD:
 
 ### Epic RE4 Lightweight DoD
 - [x] Language LLM and planning LLM are separate module boundaries even if they share the same vendor/model family.
+- [ ] Planning-LLM prompt/schema/runner boundaries are isolated as a dedicated planner component rather than remaining spread across orchestrator and prompt code.
 - [x] AI planner cannot bypass deterministic safety/rule constraints.
 - [x] Low-confidence parsing cannot trigger unsafe transitions.
 - [x] Deterministic rule engine remains final authority for state, validation, repair, and fallback.
@@ -333,13 +356,22 @@ Track deferred items without blocking core implementation.
 As a team, we need a placeholder for wearable-vs-email conflicts so implementation can proceed while policy is undecided.
 
 Story DoD:
-- [x] Placeholder section added and linked to [follow-up.md](/Users/levonsh/Projects/smartmail/follow-up.md).
+- [x] Placeholder section added inside this completed implementation record.
 - [x] No production logic added for mixed-signal arbitration yet.
 - [x] Open questions documented with examples.
 
 Status:
-- Deferred placeholder only. See [follow-up.md](/Users/levonsh/Projects/smartmail/follow-up.md), topic `RE5.1`.
+- Deferred placeholder only.
 - Non-goal: no mixed-signal arbitration logic in production code in this epic.
+- Deferred question: When wearable/device telemetry conflicts with athlete email self-report, which source should have precedence and under what confidence thresholds?
+- Example conflicts to resolve later:
+  - Wearable shows high HRV/readiness while email reports severe fatigue and poor sleep.
+  - Wearable estimates low load while athlete reports an unrecorded hard session.
+  - Wearable indicates low strain but athlete reports pain flare-up that should trigger conservative routing.
+- Open decisions for later:
+  - Should precedence be static (always safety-first self-report) or dynamic by signal reliability?
+  - What minimum evidence should trigger clarification instead of automatic arbitration?
+  - How should unresolved conflicts be represented in rule inputs/state for downstream planning?
 
 #### Story RE5.2 — LLM-as-a-Judge Placeholder (Deferred)
 As a team, we need a backlog placeholder for judge-scoring so we can defer this work explicitly.
@@ -351,8 +383,40 @@ Story DoD:
 - [x] No code changes required in this epic.
 
 Status:
-- Deferred placeholder only. See [follow-up.md](/Users/levonsh/Projects/smartmail/follow-up.md), topic `RE5.2`.
+- Deferred placeholder only.
 - Non-goal: judge scoring does not gate deterministic `phase`, `risk_flag`, `track`, clarification, or persisted state transitions.
+- Deferred question: Should judge-style scoring be added for plan quality ranking, and if so, where can it be advisory without becoming safety authority?
+- Boundary rules (explicit non-goals):
+  - Judge output is not planner validation authority.
+  - Judge output does not gate deterministic safety decisions.
+  - Judge output does not modify deterministic `phase`, `risk_flag`, `track`, clarification status, or persisted rule state.
+- Potential future use (advisory only): offline evaluation/experimentation of plan readability, preference alignment, or perceived usefulness.
+
+### Additional Deferred Rule Questions
+
+These items were explicitly deferred and are not part of the implementation contract for completed RE1-RE4 work.
+
+#### Risk Trend Requiring History (Deferred)
+- Status: `skip for now`
+- Deferred question: Should worsening-detection depend on rolling 2-3 check-ins, and what minimum history is required before escalating from yellow to red_b?
+- Potential future rule: add confidence levels when history is sparse.
+
+#### Ambiguous Main Sport Tie-Breakers (Deferred)
+- Status: `skip for now`
+- Deferred question: For hybrid athletes with near-equal volume split, should we lock main sport for a fixed window (for example 2-4 weeks) to prevent plan churn?
+- Potential future rule: retain last declared main sport unless athlete explicitly changes it.
+
+#### Idempotency / Concurrency and Double-Session Day Semantics (Deferred)
+- Status: `do not implement yet`
+- User scenario to support later: morning bike + evening swim on the same day is valid and should not be treated as duplication/conflict.
+- Open decisions for later:
+  - Should same-day two-session plans be allowed only when both are easy, or allow one quality + one easy?
+  - How should hard-day spacing treat two sessions in one calendar day?
+  - What storage keying policy distinguishes valid dual sessions from duplicate submissions?
+- Proposed direction for discussion:
+  - treat a day as one "load bucket" for hard-day spacing
+  - allow dual sessions only if total daily intensity budget is respected
+  - preserve modality diversity (for example bike + swim) as valid cross-training pattern
 
 ### Epic RE5 Lightweight DoD
 - [x] Deferred topics are documented and visible to future implementation passes.

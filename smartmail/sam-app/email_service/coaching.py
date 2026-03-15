@@ -11,14 +11,19 @@ from dynamodb_models import (
     merge_coach_profile_fields,
     ensure_current_plan,
     fetch_current_plan_summary,
+    get_memory_notes,
+    get_continuity_summary,
+    get_memory_context_for_response_generation,
+    replace_continuity_summary,
+    replace_memory_notes,
     create_action_token,
     put_manual_activity_snapshot,
     get_progress_snapshot,
 )
 from config import ACTION_BASE_URL
 from activity_snapshot import parse_manual_activity_snapshot_from_email
-from openai_responder import OpenAIResponder
 from openai_responder import SessionCheckinExtractor, SessionCheckinExtractionError
+from openai_responder import OpenAIResponder
 from ai_extraction_contract import (
     list_missing_or_low_confidence_critical_fields,
     should_request_clarification,
@@ -31,6 +36,13 @@ from profile import (
 from email_copy import EmailCopy
 from config import ENABLE_SESSION_CHECKIN_EXTRACTION
 from rule_engine import RuleEngineContractError, validate_rule_engine_output
+from skills.memory import MemoryRefreshError, run_memory_refresh, run_memory_router
+from coaching_memory import (
+    maybe_post_reply_memory_refresh,
+    maybe_pre_reply_memory_refresh,
+    should_attempt_memory_refresh,
+)
+from coaching_reply_rendering import build_llm_reply_body, render_rule_engine_payload_reply
 
 logger = logging.getLogger(__name__)
 
@@ -54,53 +66,202 @@ def _build_connect_strava_link(from_email: str) -> Optional[str]:
     return f"{ACTION_BASE_URL}{token_id}"
 
 
-def _render_rule_engine_payload_reply(
-    next_email_payload: Dict[str, Any],
+def _maybe_pre_refresh(
     *,
-    include_plan_summary: Optional[str] = None,
-) -> str:
-    subject_hint = str(next_email_payload.get("subject_hint", "")).strip()
-    summary = str(next_email_payload.get("summary", "")).strip()
-    sessions = [
-        str(item).strip()
-        for item in next_email_payload.get("sessions", [])
-        if str(item).strip()
-    ]
-    plan_focus_line = str(next_email_payload.get("plan_focus_line", "")).strip()
-    technique_cue = str(next_email_payload.get("technique_cue", "")).strip()
-    recovery_target = str(next_email_payload.get("recovery_target", "")).strip()
-    if_then_rules = [
-        str(item).strip()
-        for item in next_email_payload.get("if_then_rules", [])
-        if str(item).strip()
-    ]
-    disclaimer_short = str(next_email_payload.get("disclaimer_short", "")).strip()
-    safety_note = str(next_email_payload.get("safety_note", "")).strip()
+    athlete_id: str,
+    inbound_body: str,
+    inbound_subject: Optional[str],
+    reply_kind: str,
+    parsed_updates: Dict[str, Any],
+    manual_snapshot: Optional[Dict[str, Any]],
+    selected_model_name: Optional[str],
+    rule_engine_decision: Optional[Dict[str, Any]],
+    log: Callable[..., None],
+) -> None:
+    maybe_pre_reply_memory_refresh(
+        athlete_id=athlete_id,
+        inbound_body=inbound_body,
+        inbound_subject=inbound_subject,
+        reply_kind=reply_kind,
+        parsed_updates=parsed_updates,
+        manual_snapshot=manual_snapshot,
+        selected_model_name=selected_model_name,
+        rule_engine_decision=rule_engine_decision,
+        log=log,
+        run_memory_router_fn=run_memory_router,
+        get_memory_notes_fn=get_memory_notes,
+        get_continuity_summary_fn=get_continuity_summary,
+        run_memory_refresh_fn=run_memory_refresh,
+        replace_memory_notes_fn=replace_memory_notes,
+    )
 
-    lines = []
-    if subject_hint:
-        lines.append(subject_hint)
-    if summary:
-        lines.append(summary)
-    if include_plan_summary:
-        lines.append(include_plan_summary)
-    if sessions:
-        lines.append("Sessions:")
-        lines.extend(f"- {session}" for session in sessions)
-    if plan_focus_line:
-        lines.append(f"Plan focus: {plan_focus_line}")
-    if technique_cue:
-        lines.append(f"Technique cue: {technique_cue}")
-    if recovery_target:
-        lines.append(f"Recovery target: {recovery_target}")
-    if if_then_rules:
-        lines.append("If-then rules:")
-        lines.extend(f"- {rule}" for rule in if_then_rules)
-    if safety_note:
-        lines.append(f"Safety note: {safety_note}")
-    if disclaimer_short:
-        lines.append(disclaimer_short)
-    return "\n\n".join(lines)
+
+def _maybe_post_refresh(
+    *,
+    athlete_id: str,
+    inbound_body: str,
+    inbound_subject: Optional[str],
+    reply_text: str,
+    reply_kind: str,
+    parsed_updates: Dict[str, Any],
+    manual_snapshot: Optional[Dict[str, Any]],
+    selected_model_name: Optional[str],
+    rule_engine_decision: Optional[Dict[str, Any]],
+    log: Callable[..., None],
+) -> None:
+    maybe_post_reply_memory_refresh(
+        athlete_id=athlete_id,
+        inbound_body=inbound_body,
+        inbound_subject=inbound_subject,
+        reply_text=reply_text,
+        reply_kind=reply_kind,
+        parsed_updates=parsed_updates,
+        manual_snapshot=manual_snapshot,
+        selected_model_name=selected_model_name,
+        rule_engine_decision=rule_engine_decision,
+        log=log,
+        run_memory_router_fn=run_memory_router,
+        get_memory_notes_fn=get_memory_notes,
+        get_continuity_summary_fn=get_continuity_summary,
+        run_memory_refresh_fn=run_memory_refresh,
+        replace_continuity_summary_fn=replace_continuity_summary,
+    )
+
+
+def _apply_profile_updates(
+    *,
+    athlete_id: str,
+    inbound_body: str,
+    from_email: str,
+    aws_request_id: Optional[str],
+    log: Callable[..., None],
+) -> tuple[Dict[str, Any], list[str], Dict[str, Any]]:
+    profile_before = get_coach_profile(athlete_id) or {}
+    missing_before = get_missing_required_profile_fields(profile_before)
+    parsed_updates = parse_profile_updates_from_email(inbound_body)
+    if parsed_updates:
+        update_ok = merge_coach_profile_fields(athlete_id, parsed_updates)
+        log(result="profile_updated", fields="|".join(sorted(parsed_updates.keys())))
+        if not update_ok:
+            logger.error(
+                "athlete_id=%s, from_email=%s, verified=true, result=profile_update_failed%s",
+                athlete_id,
+                from_email,
+                f", aws_request_id={aws_request_id}" if aws_request_id else "",
+            )
+    return profile_before, missing_before, parsed_updates
+
+
+def _maybe_extract_profile_gate_checkin(
+    *,
+    athlete_id: str,
+    inbound_body: str,
+    log: Callable[..., None],
+) -> None:
+    if not ENABLE_SESSION_CHECKIN_EXTRACTION:
+        return
+
+    logger.info(
+        "Session check-in extraction starting in profile gate: athlete_id=%s body_chars=%s",
+        athlete_id,
+        len(str(inbound_body or "")),
+    )
+    try:
+        extracted_checkin = SessionCheckinExtractor.extract_session_checkin_fields(inbound_body)
+        if extracted_checkin:
+            needs_clarification = should_request_clarification(extracted_checkin)
+            missing_fields = list_missing_or_low_confidence_critical_fields(extracted_checkin)
+            logger.info(
+                "Session check-in extraction completed in profile gate: athlete_id=%s keys=%s field_types=%s clarification_needed=%s missing_or_low=%s",
+                athlete_id,
+                sorted(extracted_checkin.keys()),
+                _type_map(extracted_checkin),
+                needs_clarification,
+                missing_fields,
+            )
+            log(
+                result="session_checkin_extracted",
+                extracted_fields="|".join(sorted(extracted_checkin.keys())),
+                clarification_needed=needs_clarification,
+            )
+            if needs_clarification:
+                log(
+                    result="session_checkin_clarification_needed",
+                    missing_or_low_confidence="|".join(missing_fields),
+                )
+    except SessionCheckinExtractionError as exc:
+        logger.error(
+            "Session check-in extraction failed in profile gate: athlete_id=%s error=%s",
+            athlete_id,
+            exc,
+        )
+        log(result="session_checkin_extraction_failed")
+
+
+def _maybe_store_manual_snapshot(
+    *,
+    athlete_id: str,
+    inbound_body: str,
+    inbound_message_id: Optional[str],
+    from_email: str,
+    aws_request_id: Optional[str],
+    log: Callable[..., None],
+) -> Optional[Dict[str, Any]]:
+    manual_snapshot = parse_manual_activity_snapshot_from_email(
+        inbound_body, now_epoch=int(time.time())
+    )
+    if not manual_snapshot:
+        return None
+
+    snapshot_ok = put_manual_activity_snapshot(
+        athlete_id=athlete_id,
+        activity_type=manual_snapshot["activity_type"],
+        timestamp=manual_snapshot["timestamp"],
+        snapshot_event_id=inbound_message_id,
+        duration=manual_snapshot.get("duration"),
+        key_metric=manual_snapshot.get("key_metric"),
+        subjective_feedback=manual_snapshot.get("subjective_feedback"),
+        subjective_state=manual_snapshot.get("subjective_state"),
+        source="manual",
+    )
+    if snapshot_ok:
+        log(result="manual_snapshot_stored", activity_type=manual_snapshot["activity_type"])
+    else:
+        logger.error(
+            "athlete_id=%s, from_email=%s, verified=true, result=manual_snapshot_store_failed%s",
+            athlete_id,
+            from_email,
+            f", aws_request_id={aws_request_id}" if aws_request_id else "",
+        )
+    return manual_snapshot
+
+
+def _load_profile_gate_state(
+    *,
+    athlete_id: str,
+    from_email: str,
+    aws_request_id: Optional[str],
+    profile_before: Dict[str, Any],
+    log: Callable[..., None],
+) -> tuple[Dict[str, Any], list[str]]:
+    profile_after = get_coach_profile(athlete_id) or profile_before
+    missing_after = get_missing_required_profile_fields(profile_after)
+    plan_goal = str(profile_after.get("primary_goal", "")).strip() or None
+    ensure_current_plan(athlete_id, fallback_goal=plan_goal)
+    progress_snapshot = get_progress_snapshot(athlete_id)
+    if progress_snapshot is None:
+        logger.error(
+            "athlete_id=%s, from_email=%s, verified=true, result=progress_snapshot_load_failed%s",
+            athlete_id,
+            from_email,
+            f", aws_request_id={aws_request_id}" if aws_request_id else "",
+        )
+    else:
+        log(
+            result="progress_snapshot_loaded",
+            progress_quality=progress_snapshot.get("data_quality"),
+        )
+    return profile_after, missing_after
 
 
 def build_profile_gated_reply(
@@ -128,100 +289,33 @@ def build_profile_gated_reply(
             return
         log_outcome(from_email=from_email, verified=True, result=result, aws_request_id=aws_request_id, **kwargs)
 
-    profile_before = get_coach_profile(athlete_id) or {}
-    missing_before = get_missing_required_profile_fields(profile_before)
-
-    parsed_updates = parse_profile_updates_from_email(inbound_body)
-    if parsed_updates:
-        update_ok = merge_coach_profile_fields(athlete_id, parsed_updates)
-        log(result="profile_updated", fields="|".join(sorted(parsed_updates.keys())))
-        if not update_ok:
-            logger.error(
-                "athlete_id=%s, from_email=%s, verified=true, result=profile_update_failed%s",
-                athlete_id,
-                from_email,
-                f", aws_request_id={aws_request_id}" if aws_request_id else "",
-            )
-
-    if ENABLE_SESSION_CHECKIN_EXTRACTION:
-        logger.info(
-            "Session check-in extraction starting in profile gate: athlete_id=%s body_chars=%s",
-            athlete_id,
-            len(str(inbound_body or "")),
-        )
-        try:
-            extracted_checkin = SessionCheckinExtractor.extract_session_checkin_fields(inbound_body)
-            if extracted_checkin:
-                needs_clarification = should_request_clarification(extracted_checkin)
-                missing_fields = list_missing_or_low_confidence_critical_fields(extracted_checkin)
-                logger.info(
-                    "Session check-in extraction completed in profile gate: athlete_id=%s keys=%s field_types=%s clarification_needed=%s missing_or_low=%s",
-                    athlete_id,
-                    sorted(extracted_checkin.keys()),
-                    _type_map(extracted_checkin),
-                    needs_clarification,
-                    missing_fields,
-                )
-                log(
-                    result="session_checkin_extracted",
-                    extracted_fields="|".join(sorted(extracted_checkin.keys())),
-                    clarification_needed=needs_clarification,
-                )
-                if needs_clarification:
-                    log(
-                        result="session_checkin_clarification_needed",
-                        missing_or_low_confidence="|".join(missing_fields),
-                    )
-        except SessionCheckinExtractionError as exc:
-            logger.error(
-                "Session check-in extraction failed in profile gate: athlete_id=%s error=%s",
-                athlete_id,
-                exc,
-            )
-            log(result="session_checkin_extraction_failed")
-
-    manual_snapshot = parse_manual_activity_snapshot_from_email(
-        inbound_body, now_epoch=int(time.time())
+    profile_before, missing_before, parsed_updates = _apply_profile_updates(
+        athlete_id=athlete_id,
+        inbound_body=inbound_body,
+        from_email=from_email,
+        aws_request_id=aws_request_id,
+        log=log,
     )
-    if manual_snapshot:
-        snapshot_ok = put_manual_activity_snapshot(
-            athlete_id=athlete_id,
-            activity_type=manual_snapshot["activity_type"],
-            timestamp=manual_snapshot["timestamp"],
-            snapshot_event_id=inbound_message_id,
-            duration=manual_snapshot.get("duration"),
-            key_metric=manual_snapshot.get("key_metric"),
-            subjective_feedback=manual_snapshot.get("subjective_feedback"),
-            subjective_state=manual_snapshot.get("subjective_state"),
-            source="manual",
-        )
-        if snapshot_ok:
-            log(result="manual_snapshot_stored", activity_type=manual_snapshot["activity_type"])
-        else:
-            logger.error(
-                "athlete_id=%s, from_email=%s, verified=true, result=manual_snapshot_store_failed%s",
-                athlete_id,
-                from_email,
-                f", aws_request_id={aws_request_id}" if aws_request_id else "",
-            )
-
-    profile_after = get_coach_profile(athlete_id) or profile_before
-    missing_after = get_missing_required_profile_fields(profile_after)
-    plan_goal = str(profile_after.get("primary_goal", "")).strip() or None
-    ensure_current_plan(athlete_id, fallback_goal=plan_goal)
-    progress_snapshot = get_progress_snapshot(athlete_id)
-    if progress_snapshot is None:
-        logger.error(
-            "athlete_id=%s, from_email=%s, verified=true, result=progress_snapshot_load_failed%s",
-            athlete_id,
-            from_email,
-            f", aws_request_id={aws_request_id}" if aws_request_id else "",
-        )
-    else:
-        log(
-            result="progress_snapshot_loaded",
-            progress_quality=progress_snapshot.get("data_quality"),
-        )
+    _maybe_extract_profile_gate_checkin(
+        athlete_id=athlete_id,
+        inbound_body=inbound_body,
+        log=log,
+    )
+    manual_snapshot = _maybe_store_manual_snapshot(
+        athlete_id=athlete_id,
+        inbound_body=inbound_body,
+        inbound_message_id=inbound_message_id,
+        from_email=from_email,
+        aws_request_id=aws_request_id,
+        log=log,
+    )
+    _profile_after, missing_after = _load_profile_gate_state(
+        athlete_id=athlete_id,
+        from_email=from_email,
+        aws_request_id=aws_request_id,
+        profile_before=profile_before,
+        log=log,
+    )
 
     if missing_after:
         log(
@@ -229,7 +323,35 @@ def build_profile_gated_reply(
             missing_fields="|".join(missing_after),
             missing_count=len(missing_after),
         )
-        return build_profile_collection_reply(missing_after)
+        _maybe_pre_refresh(
+            athlete_id=athlete_id,
+            inbound_body=inbound_body,
+            inbound_subject=inbound_subject,
+            reply_kind="profile_incomplete",
+            parsed_updates=parsed_updates,
+            manual_snapshot=manual_snapshot,
+            selected_model_name=selected_model_name,
+            rule_engine_decision=rule_engine_decision,
+            log=log,
+        )
+        reply = build_profile_collection_reply(missing_after)
+        if should_attempt_memory_refresh(
+            reply_kind="profile_incomplete",
+            parsed_updates=parsed_updates,
+        ):
+            _maybe_post_refresh(
+                athlete_id=athlete_id,
+                inbound_body=inbound_body,
+                inbound_subject=inbound_subject,
+                reply_text=reply,
+                reply_kind="profile_incomplete",
+                parsed_updates=parsed_updates,
+                manual_snapshot=manual_snapshot,
+                selected_model_name=selected_model_name,
+                rule_engine_decision=rule_engine_decision,
+                log=log,
+            )
+        return reply
 
     log(result="profile_ready_for_coaching")
     log(
@@ -250,11 +372,12 @@ def build_profile_gated_reply(
 
     if isinstance(rule_engine_decision, dict):
         reply_strategy = str(rule_engine_decision.get("reply_strategy", "")).strip()
+        clarification_needed = bool(rule_engine_decision.get("clarification_needed"))
         if reply_strategy == "safety_concern":
             return EmailCopy.SAFETY_CONCERN_REPLY
         if reply_strategy == "off_topic":
             return EmailCopy.OFF_TOPIC_REDIRECT_REPLY
-        if rule_engine_decision.get("clarification_needed"):
+        if clarification_needed:
             reply += (
                 "\n\nBefore I change your plan, I need a clearer weekly check-in "
                 "(event date, available days, and pain score)."
@@ -268,10 +391,38 @@ def build_profile_gated_reply(
             if reply_strategy == "rule_engine_guided" and isinstance(next_email_payload, dict):
                 try:
                     validate_rule_engine_output(engine_output)
-                    return _render_rule_engine_payload_reply(
+                    _maybe_pre_refresh(
+                        athlete_id=athlete_id,
+                        inbound_body=inbound_body,
+                        inbound_subject=inbound_subject,
+                        reply_kind="rule_engine_guided",
+                        parsed_updates=parsed_updates,
+                        manual_snapshot=manual_snapshot,
+                        selected_model_name=selected_model_name,
+                        rule_engine_decision=rule_engine_decision,
+                        log=log,
+                    )
+                    reply = render_rule_engine_payload_reply(
                         next_email_payload,
                         include_plan_summary=plan_summary,
                     )
+                    if should_attempt_memory_refresh(
+                        reply_kind="rule_engine_guided",
+                        parsed_updates=parsed_updates,
+                    ):
+                        _maybe_post_refresh(
+                            athlete_id=athlete_id,
+                            inbound_body=inbound_body,
+                            inbound_subject=inbound_subject,
+                            reply_text=reply,
+                            reply_kind="rule_engine_guided",
+                            parsed_updates=parsed_updates,
+                            manual_snapshot=manual_snapshot,
+                            selected_model_name=selected_model_name,
+                            rule_engine_decision=rule_engine_decision,
+                            log=log,
+                        )
+                    return reply
                 except RuleEngineContractError:
                     logger.error("Invalid rule_engine output supplied to final reply path")
             if track or risk_flag or plan_update_status:
@@ -280,16 +431,31 @@ def build_profile_gated_reply(
                     f"track={track or 'n/a'}, risk={risk_flag or 'n/a'}, "
                     f"plan_update_status={plan_update_status or 'n/a'}."
                 )
+        if clarification_needed:
+            return reply
 
     # LLM-first path: when routing selected a response model, generate coaching reply
     # with current inbound context plus plan summary.
     if selected_model_name:
+        _maybe_pre_refresh(
+            athlete_id=athlete_id,
+            inbound_body=inbound_body,
+            inbound_subject=inbound_subject,
+            reply_kind="coaching_reply",
+            parsed_updates=parsed_updates,
+            manual_snapshot=manual_snapshot,
+            selected_model_name=selected_model_name,
+            rule_engine_decision=rule_engine_decision,
+            log=log,
+        )
         llm_subject = str(inbound_subject or "").strip() or "Coaching follow-up"
-        llm_body = inbound_body
-        if plan_summary:
-            llm_body = f"{llm_body}\n\nCurrent plan context:\n{plan_summary}"
-        if isinstance(rule_engine_decision, dict):
-            llm_body = f"{llm_body}\n\nRule engine decision context:\n{rule_engine_decision}"
+        llm_body = build_llm_reply_body(
+            inbound_body=inbound_body,
+            athlete_id=athlete_id,
+            plan_summary=plan_summary,
+            rule_engine_decision=rule_engine_decision,
+            fetch_memory_context_for_response_generation=get_memory_context_for_response_generation,
+        )
         generated = OpenAIResponder.generate_response(
             subject=llm_subject,
             body=llm_body,
@@ -298,4 +464,20 @@ def build_profile_gated_reply(
         if generated:
             reply = generated
 
+    if should_attempt_memory_refresh(
+        reply_kind="coaching_reply",
+        parsed_updates=parsed_updates,
+    ):
+        _maybe_post_refresh(
+            athlete_id=athlete_id,
+            inbound_body=inbound_body,
+            inbound_subject=inbound_subject,
+            reply_text=reply,
+            reply_kind="coaching_reply",
+            parsed_updates=parsed_updates,
+            manual_snapshot=manual_snapshot,
+            selected_model_name=selected_model_name,
+            rule_engine_decision=rule_engine_decision,
+            log=log,
+        )
     return reply
