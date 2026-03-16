@@ -158,7 +158,7 @@ class TestGetReplyForInbound(unittest.TestCase):
                 "u@example.com",
                 {"body": "Hi"},
             )
-            self.assertEqual(reply, business.EmailCopy.FALLBACK_AI_ERROR_REPLY)
+            self.assertIsNone(reply)
             persist.assert_not_called()
             build.assert_not_called()
 
@@ -181,7 +181,7 @@ class TestGetReplyForInbound(unittest.TestCase):
                 "u@example.com",
                 {"body": "Hi"},
             )
-            self.assertEqual(reply, business.EmailCopy.FALLBACK_AI_ERROR_REPLY)
+            self.assertIsNone(reply)
             persist.assert_called_once()
             build.assert_not_called()
 
@@ -326,9 +326,17 @@ class TestGetReplyForInbound(unittest.TestCase):
                     return_value=guided_decision,
                 )
             )
-            responder = stack.enter_context(mock.patch.object(coaching, "OpenAIResponder"))
+            stack.enter_context(
+                mock.patch.object(
+                    coaching,
+                    "get_memory_context_for_response_generation",
+                    return_value={"memory_notes": [], "continuity_summary": None},
+                )
+            )
+            runner = stack.enter_context(mock.patch.object(coaching, "run_response_generation_workflow"))
             for patcher in self._profile_ready_patches():
                 stack.enter_context(patcher)
+            runner.return_value = {"final_email_body": "Composed guided reply."}
 
             reply = business.get_reply_for_inbound(
                 "ath_1",
@@ -336,10 +344,19 @@ class TestGetReplyForInbound(unittest.TestCase):
                 {"body": "Hello", "subject": "Hi", "message_id": "msg-1"},
             )
 
-        self.assertIn("This week: stay safe and keep it steady", reply)
-        self.assertIn("Current plan - Goal: 10k.", reply)
-        self.assertIn("Priority: long easy aerobic session", reply)
-        responder.generate_response.assert_not_called()
+        self.assertEqual(reply, "Composed guided reply.")
+        runner.assert_called_once()
+        brief = runner.call_args.args[0]
+        self.assertEqual(brief["reply_mode"], "normal_coaching")
+        self.assertEqual(brief["decision_context"]["track"], "return_or_risk_managed")
+        self.assertEqual(
+            brief["validated_plan"]["session_guidance"],
+            ["Priority: long easy aerobic session", "Priority: strength session"],
+        )
+        self.assertEqual(
+            brief["validated_plan"]["if_then_rules"],
+            ["If symptoms rise, remove intensity immediately."],
+        )
 
     @unittest.skipIf(coaching is None, "coaching module unavailable")
     def test_red_b_guided_reply_includes_disclaimer_and_clinician_guidance_through_business(self):
@@ -391,9 +408,17 @@ class TestGetReplyForInbound(unittest.TestCase):
                     return_value=guided_decision,
                 )
             )
-            responder = stack.enter_context(mock.patch.object(coaching, "OpenAIResponder"))
+            stack.enter_context(
+                mock.patch.object(
+                    coaching,
+                    "get_memory_context_for_response_generation",
+                    return_value={"memory_notes": [], "continuity_summary": None},
+                )
+            )
+            runner = stack.enter_context(mock.patch.object(coaching, "run_response_generation_workflow"))
             for patcher in self._profile_ready_patches():
                 stack.enter_context(patcher)
+            runner.return_value = {"final_email_body": "Safety-composed guided reply."}
 
             reply = business.get_reply_for_inbound(
                 "ath_1",
@@ -401,10 +426,10 @@ class TestGetReplyForInbound(unittest.TestCase):
                 {"body": "Sharp knee pain today", "subject": "Help", "message_id": "msg-2"},
             )
 
-        self.assertIn("This week: stop intensity and get assessed", reply)
-        self.assertIn("Please stop training and consult a clinician/physio.", reply)
-        self.assertIn("Current plan - Goal: 10k.", reply)
-        responder.generate_response.assert_not_called()
+        self.assertEqual(reply, "Safety-composed guided reply.")
+        runner.assert_called_once()
+        brief = runner.call_args.args[0]
+        self.assertEqual(brief["validated_plan"]["safety_note"], "Please stop training and consult a clinician/physio.")
 
 
 if __name__ == "__main__":

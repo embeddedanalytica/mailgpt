@@ -9,9 +9,11 @@ These tests hit deployed infrastructure and require:
 import json
 import secrets
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
+from pathlib import Path
 from typing import Dict, Optional, Tuple
 
 
@@ -19,6 +21,12 @@ BASE_URL = "https://geniml.com"
 AWS_REGION = "us-west-2"
 ACTION_TOKENS_TABLE = "action_tokens"
 VERIFIED_SESSIONS_TABLE = "verified_sessions"
+
+THIS_DIR = Path(__file__).resolve().parent
+if str(THIS_DIR) not in sys.path:
+    sys.path.insert(0, str(THIS_DIR))
+
+from test_live_coaching_workflow import TestLiveCoachingWorkflow  # noqa: E402,F401
 
 
 def _http_request(

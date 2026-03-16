@@ -118,13 +118,13 @@ class EmailReplySenderTests(unittest.TestCase):
         self.assertNotIn("References:", raw_data)
         self.assertNotIn(EmailCopy.REPLY_WRAPPER_SEPARATOR, raw_data)
 
-    def test_format_reply_empty_content_uses_fallback_copy(self):
-        html = EmailReplySender.format_reply(
-            self.email_data,
-            None,
-            include_thread_context=False,
-        )
-        self.assertIn(EmailReplySender._clean_text(EmailCopy.FALLBACK_AI_ERROR_REPLY), html)
+    def test_format_reply_empty_content_raises(self):
+        with self.assertRaises(ValueError):
+            EmailReplySender.format_reply(
+                self.email_data,
+                None,
+                include_thread_context=False,
+            )
 
 
 if __name__ == "__main__":

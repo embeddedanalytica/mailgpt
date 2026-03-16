@@ -28,20 +28,12 @@ This map points to the single source of truth for outbound user-facing email cop
   - `EmailCopy.RATE_LIMIT_HTML`
 - Used by: `email_service/rate_limits.py`
 
-4. Profile collection reply
+4. Profile detail prompts used to guide LLM clarification replies
 - Keys:
-  - `EmailCopy.PROFILE_COLLECTION_INTRO`
-  - `EmailCopy.PROFILE_COLLECTION_UNKNOWN_HINT`
   - `EmailCopy.build_profile_collection_lines(...)`
-- Used by: `email_service/profile.py`
+- Used by: `email_service/response_generation_assembly.py`
 
-5. Ready-for-coaching reply and Strava CTA
-- Keys:
-  - `EmailCopy.READY_FOR_COACHING_BASE`
-  - `EmailCopy.READY_FOR_COACHING_CONNECT_STRAVA`
-- Used by: `email_service/coaching.py`
-
-6. Reply wrapper formatting around outbound thread replies
+5. Reply wrapper formatting around outbound thread replies
 - Keys:
   - `EmailCopy.REPLY_WRAPPER_SEPARATOR`
   - `EmailCopy.REPLY_WRAPPER_FROM`
@@ -51,7 +43,7 @@ This map points to the single source of truth for outbound user-facing email cop
   - `EmailCopy.REPLY_WRAPPER_SUBJECT`
 - Used by: `email_service/email_reply_sender.py`
 
-7. Waitlist/registration welcome email
+6. Waitlist/registration welcome email
 - Keys:
   - `EMAIL_COPY.welcome.subject`
   - `EMAIL_COPY.welcome.text`

@@ -13,7 +13,6 @@ import boto3  # type: ignore
 from config import AWS_REGION
 from response_evaluator import ResponseEvaluation
 from email_copy import EmailCopy
-
 logger = logging.getLogger(__name__)
 ses_client = boto3.client("ses", region_name=AWS_REGION)
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]")
@@ -121,7 +120,7 @@ class EmailReplySender:
             text = reply_content.get("text", reply_content) if isinstance(reply_content, dict) else reply_content
             safe_reply_content = EmailReplySender._clean_text(text).replace(chr(10), "<br>")
             if not safe_reply_content.strip():
-                safe_reply_content = EmailReplySender._clean_text(EmailCopy.FALLBACK_AI_ERROR_REPLY)
+                raise ValueError("reply_content must be non-empty")
         if not include_thread_context:
             return f"<html><body>{safe_reply_content}</body></html>"
 

@@ -105,3 +105,10 @@ Current runtime status belongs in [README.md](/Users/levonsh/Projects/smartmail/
 **Refresh rule:** Memory refresh is LLM-assisted and may run both before reply generation and after a completed interaction, but only when the interaction meaningfully changes durable context, coaching recommendation, or coaching state.
 **Guardrail rule:** At most 7 memory notes may remain active for one athlete.
 **Why:** Preserve continuity without introducing a separate memory subsystem, semantic search, embeddings, or heavyweight history management.
+
+---
+
+## D14 — LLM Workflows Are Implemented as Skill Units
+**Decision:** Implement LLM-powered workflows as separate skill units with dedicated prompts, strict schemas, validators, and eval hooks.
+**Modeling rule:** A skill may use the same model as other skills or a different model; model selection is per-workflow and not the primary contract.
+**Why:** Preserves isolation, testability, and contract stability while allowing flexible model routing by workflow.

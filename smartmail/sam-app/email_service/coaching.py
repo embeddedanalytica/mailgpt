@@ -3,6 +3,7 @@ Profile-gated coaching flow: apply profile updates from email and decide reply.
 Business logic only; auth/verification/rate limits are handled by the handler.
 """
 import logging
+import json
 import time
 from typing import Optional, Dict, Any, Callable
 
@@ -23,7 +24,6 @@ from dynamodb_models import (
 from config import ACTION_BASE_URL
 from activity_snapshot import parse_manual_activity_snapshot_from_email
 from openai_responder import SessionCheckinExtractor, SessionCheckinExtractionError
-from openai_responder import OpenAIResponder
 from ai_extraction_contract import (
     list_missing_or_low_confidence_critical_fields,
     should_request_clarification,
@@ -31,9 +31,7 @@ from ai_extraction_contract import (
 from profile import (
     parse_profile_updates_from_email,
     get_missing_required_profile_fields,
-    build_profile_collection_reply,
 )
-from email_copy import EmailCopy
 from config import ENABLE_SESSION_CHECKIN_EXTRACTION
 from rule_engine import RuleEngineContractError, validate_rule_engine_output
 from skills.memory import MemoryRefreshError, run_memory_refresh, run_memory_router
@@ -42,9 +40,15 @@ from coaching_memory import (
     maybe_pre_reply_memory_refresh,
     should_attempt_memory_refresh,
 )
-from coaching_reply_rendering import build_llm_reply_body, render_rule_engine_payload_reply
+from response_generation_contract import normalize_reply_mode
+from response_generation_assembly import build_response_brief
+from skills.response_generation import (
+    ResponseGenerationProposalError,
+    run_response_generation_workflow,
+)
 
 logger = logging.getLogger(__name__)
+_READ_ONLY_REPLY_INTENTS = {"question", "milestone_update"}
 
 
 def _type_map(payload: Dict[str, Any]) -> Dict[str, str]:
@@ -64,6 +68,154 @@ def _build_connect_strava_link(from_email: str) -> Optional[str]:
     if not token_id:
         return None
     return f"{ACTION_BASE_URL}{token_id}"
+
+
+def _resolve_reply_mode(
+    *,
+    missing_profile_fields: list[str],
+    rule_engine_decision: Optional[Dict[str, Any]],
+) -> str:
+    if missing_profile_fields:
+        return normalize_reply_mode("clarification")
+    if not isinstance(rule_engine_decision, dict):
+        return normalize_reply_mode("normal_coaching")
+
+    reply_strategy = str(rule_engine_decision.get("reply_strategy", "")).strip().lower()
+    if reply_strategy == "safety_concern":
+        return normalize_reply_mode("safety_risk_managed")
+    if reply_strategy == "off_topic":
+        return normalize_reply_mode("off_topic_redirect")
+    if reply_strategy == "clarification" or bool(rule_engine_decision.get("clarification_needed")):
+        return normalize_reply_mode("clarification")
+
+    intent = str(rule_engine_decision.get("intent", "")).strip().lower()
+    if intent in _READ_ONLY_REPLY_INTENTS:
+        return normalize_reply_mode("lightweight_non_planning")
+    return normalize_reply_mode("normal_coaching")
+
+
+def _generate_llm_reply(
+    *,
+    athlete_id: str,
+    inbound_body: str,
+    inbound_subject: Optional[str],
+    selected_model_name: str,
+    profile_after: Dict[str, Any],
+    missing_profile_fields: list[str],
+    plan_summary: Optional[str],
+    rule_engine_decision: Optional[Dict[str, Any]],
+    parsed_updates: Dict[str, Any],
+    manual_snapshot: Optional[Dict[str, Any]],
+    log: Callable[..., None],
+    from_email: str,
+    inbound_message_id: Optional[str],
+    connect_strava_link: Optional[str] = None,
+) -> Optional[str]:
+    reply_mode = _resolve_reply_mode(
+        missing_profile_fields=missing_profile_fields,
+        rule_engine_decision=rule_engine_decision,
+    )
+    memory_refresh_reply_kind = "profile_incomplete" if missing_profile_fields else reply_mode
+    pre_reply_refresh_attempted = should_attempt_memory_refresh(
+        reply_kind=memory_refresh_reply_kind,
+        parsed_updates=parsed_updates,
+    )
+    if pre_reply_refresh_attempted:
+        _maybe_pre_refresh(
+            athlete_id=athlete_id,
+            inbound_body=inbound_body,
+            inbound_subject=inbound_subject,
+            reply_kind=memory_refresh_reply_kind,
+            parsed_updates=parsed_updates,
+            manual_snapshot=manual_snapshot,
+            selected_model_name=selected_model_name,
+            rule_engine_decision=rule_engine_decision,
+            log=log,
+        )
+
+    memory_context = get_memory_context_for_response_generation(athlete_id)
+    post_reply_refresh_eligible = should_attempt_memory_refresh(
+        reply_kind=memory_refresh_reply_kind,
+        parsed_updates=parsed_updates,
+    )
+    response_brief = build_response_brief(
+        athlete_id=athlete_id,
+        reply_kind=reply_mode,
+        inbound_subject=inbound_subject,
+        selected_model_name=selected_model_name,
+        profile_after=profile_after,
+        missing_profile_fields=missing_profile_fields,
+        plan_summary=plan_summary,
+        rule_engine_decision=rule_engine_decision,
+        memory_context=memory_context,
+        pre_reply_refresh_attempted=pre_reply_refresh_attempted,
+        post_reply_refresh_eligible=post_reply_refresh_eligible,
+        connect_strava_link=connect_strava_link,
+    )
+    try:
+        generated_response = run_response_generation_workflow(
+            response_brief.to_dict(),
+            model_name=selected_model_name,
+        )
+        reply = str(generated_response["final_email_body"]).strip()
+        if not reply:
+            raise ResponseGenerationProposalError("empty_final_email_body")
+    except ResponseGenerationProposalError as exc:
+        _log_response_generation_failure(
+            athlete_id=athlete_id,
+            from_email=from_email,
+            inbound_message_id=inbound_message_id,
+            inbound_subject=inbound_subject,
+            selected_model_name=selected_model_name,
+            reply_mode=reply_mode,
+            response_brief=response_brief.to_dict(),
+            error_code="response_generation_failed",
+            error_detail=str(exc),
+        )
+        return None
+
+    if post_reply_refresh_eligible:
+        _maybe_post_refresh(
+            athlete_id=athlete_id,
+            inbound_body=inbound_body,
+            inbound_subject=inbound_subject,
+            reply_text=reply,
+            reply_kind=memory_refresh_reply_kind,
+            parsed_updates=parsed_updates,
+            manual_snapshot=manual_snapshot,
+            selected_model_name=selected_model_name,
+            rule_engine_decision=rule_engine_decision,
+            log=log,
+        )
+    return reply
+
+
+def _log_response_generation_failure(
+    *,
+    athlete_id: str,
+    from_email: str,
+    inbound_message_id: Optional[str],
+    inbound_subject: Optional[str],
+    selected_model_name: Optional[str],
+    reply_mode: str,
+    response_brief: Dict[str, Any],
+    error_code: str,
+    error_detail: str,
+    raw_response_preview: Optional[str] = None,
+) -> None:
+    logger.error(
+        "response_generation_send_suppressed athlete_id=%s from_email=%s inbound_message_id=%s inbound_subject=%s reply_mode=%s selected_model_name=%s error_code=%s error_detail=%s raw_response_preview=%s response_brief=%s",
+        athlete_id,
+        from_email,
+        str(inbound_message_id or "").strip() or "none",
+        str(inbound_subject or "").strip() or "none",
+        reply_mode,
+        str(selected_model_name or "").strip() or "none",
+        error_code,
+        error_detail,
+        str(raw_response_preview or "").strip() or "none",
+        json.dumps(response_brief, separators=(",", ":"), sort_keys=True, ensure_ascii=True),
+    )
 
 
 def _maybe_pre_refresh(
@@ -275,7 +427,7 @@ def build_profile_gated_reply(
     *,
     aws_request_id: Optional[str] = None,
     log_outcome: Optional[Callable[..., None]] = None,
-) -> str:
+) -> Optional[str]:
     """
     Applies profile updates from the email, then returns the reply text:
     - If profile is still incomplete: prompt for missing fields.
@@ -309,13 +461,14 @@ def build_profile_gated_reply(
         aws_request_id=aws_request_id,
         log=log,
     )
-    _profile_after, missing_after = _load_profile_gate_state(
+    profile_after, missing_after = _load_profile_gate_state(
         athlete_id=athlete_id,
         from_email=from_email,
         aws_request_id=aws_request_id,
         profile_before=profile_before,
         log=log,
     )
+    connect_link = _build_connect_strava_link(from_email)
 
     if missing_after:
         log(
@@ -323,35 +476,25 @@ def build_profile_gated_reply(
             missing_fields="|".join(missing_after),
             missing_count=len(missing_after),
         )
-        _maybe_pre_refresh(
+        if not selected_model_name:
+            logger.error("selected_model_name is required for profile-gated athlete replies")
+            return None
+        return _generate_llm_reply(
             athlete_id=athlete_id,
             inbound_body=inbound_body,
             inbound_subject=inbound_subject,
-            reply_kind="profile_incomplete",
+            selected_model_name=selected_model_name,
+            profile_after=profile_after,
+            missing_profile_fields=missing_after,
+            plan_summary=None,
+            rule_engine_decision=rule_engine_decision,
             parsed_updates=parsed_updates,
             manual_snapshot=manual_snapshot,
-            selected_model_name=selected_model_name,
-            rule_engine_decision=rule_engine_decision,
             log=log,
+            from_email=from_email,
+            inbound_message_id=inbound_message_id,
+            connect_strava_link=connect_link,
         )
-        reply = build_profile_collection_reply(missing_after)
-        if should_attempt_memory_refresh(
-            reply_kind="profile_incomplete",
-            parsed_updates=parsed_updates,
-        ):
-            _maybe_post_refresh(
-                athlete_id=athlete_id,
-                inbound_body=inbound_body,
-                inbound_subject=inbound_subject,
-                reply_text=reply,
-                reply_kind="profile_incomplete",
-                parsed_updates=parsed_updates,
-                manual_snapshot=manual_snapshot,
-                selected_model_name=selected_model_name,
-                rule_engine_decision=rule_engine_decision,
-                log=log,
-            )
-        return reply
 
     log(result="profile_ready_for_coaching")
     log(
@@ -359,125 +502,31 @@ def build_profile_gated_reply(
         missing_before=len(missing_before),
         missing_after=len(missing_after),
     )
-    reply = EmailCopy.READY_FOR_COACHING_BASE
-    connect_link = _build_connect_strava_link(from_email)
-    if connect_link:
-        reply += EmailCopy.READY_FOR_COACHING_CONNECT_STRAVA.format(
-            connect_link=connect_link
-        )
-
     plan_summary = fetch_current_plan_summary(athlete_id)
-    if plan_summary:
-        reply += f"\n\n{plan_summary}"
-
     if isinstance(rule_engine_decision, dict):
-        reply_strategy = str(rule_engine_decision.get("reply_strategy", "")).strip()
-        clarification_needed = bool(rule_engine_decision.get("clarification_needed"))
-        if reply_strategy == "safety_concern":
-            return EmailCopy.SAFETY_CONCERN_REPLY
-        if reply_strategy == "off_topic":
-            return EmailCopy.OFF_TOPIC_REDIRECT_REPLY
-        if clarification_needed:
-            reply += (
-                "\n\nBefore I change your plan, I need a clearer weekly check-in "
-                "(event date, available days, and pain score)."
-            )
         engine_output = rule_engine_decision.get("engine_output")
         if isinstance(engine_output, dict):
-            track = str(engine_output.get("track", "")).strip()
-            risk_flag = str(engine_output.get("risk_flag", "")).strip()
-            plan_update_status = str(engine_output.get("plan_update_status", "")).strip()
-            next_email_payload = engine_output.get("next_email_payload")
-            if reply_strategy == "rule_engine_guided" and isinstance(next_email_payload, dict):
-                try:
-                    validate_rule_engine_output(engine_output)
-                    _maybe_pre_refresh(
-                        athlete_id=athlete_id,
-                        inbound_body=inbound_body,
-                        inbound_subject=inbound_subject,
-                        reply_kind="rule_engine_guided",
-                        parsed_updates=parsed_updates,
-                        manual_snapshot=manual_snapshot,
-                        selected_model_name=selected_model_name,
-                        rule_engine_decision=rule_engine_decision,
-                        log=log,
-                    )
-                    reply = render_rule_engine_payload_reply(
-                        next_email_payload,
-                        include_plan_summary=plan_summary,
-                    )
-                    if should_attempt_memory_refresh(
-                        reply_kind="rule_engine_guided",
-                        parsed_updates=parsed_updates,
-                    ):
-                        _maybe_post_refresh(
-                            athlete_id=athlete_id,
-                            inbound_body=inbound_body,
-                            inbound_subject=inbound_subject,
-                            reply_text=reply,
-                            reply_kind="rule_engine_guided",
-                            parsed_updates=parsed_updates,
-                            manual_snapshot=manual_snapshot,
-                            selected_model_name=selected_model_name,
-                            rule_engine_decision=rule_engine_decision,
-                            log=log,
-                        )
-                    return reply
-                except RuleEngineContractError:
-                    logger.error("Invalid rule_engine output supplied to final reply path")
-            if track or risk_flag or plan_update_status:
-                reply += (
-                    "\n\nRule-engine context: "
-                    f"track={track or 'n/a'}, risk={risk_flag or 'n/a'}, "
-                    f"plan_update_status={plan_update_status or 'n/a'}."
-                )
-        if clarification_needed:
-            return reply
+            try:
+                validate_rule_engine_output(engine_output)
+            except RuleEngineContractError:
+                logger.error("Invalid rule_engine output supplied to final reply path")
 
-    # LLM-first path: when routing selected a response model, generate coaching reply
-    # with current inbound context plus plan summary.
-    if selected_model_name:
-        _maybe_pre_refresh(
-            athlete_id=athlete_id,
-            inbound_body=inbound_body,
-            inbound_subject=inbound_subject,
-            reply_kind="coaching_reply",
-            parsed_updates=parsed_updates,
-            manual_snapshot=manual_snapshot,
-            selected_model_name=selected_model_name,
-            rule_engine_decision=rule_engine_decision,
-            log=log,
-        )
-        llm_subject = str(inbound_subject or "").strip() or "Coaching follow-up"
-        llm_body = build_llm_reply_body(
-            inbound_body=inbound_body,
-            athlete_id=athlete_id,
-            plan_summary=plan_summary,
-            rule_engine_decision=rule_engine_decision,
-            fetch_memory_context_for_response_generation=get_memory_context_for_response_generation,
-        )
-        generated = OpenAIResponder.generate_response(
-            subject=llm_subject,
-            body=llm_body,
-            model_name=selected_model_name,
-        )
-        if generated:
-            reply = generated
-
-    if should_attempt_memory_refresh(
-        reply_kind="coaching_reply",
+    if not selected_model_name:
+        logger.error("selected_model_name is required for profile-gated athlete replies")
+        return None
+    return _generate_llm_reply(
+        athlete_id=athlete_id,
+        inbound_body=inbound_body,
+        inbound_subject=inbound_subject,
+        selected_model_name=selected_model_name,
+        profile_after=profile_after,
+        missing_profile_fields=missing_after,
+        plan_summary=plan_summary,
+        rule_engine_decision=rule_engine_decision,
         parsed_updates=parsed_updates,
-    ):
-        _maybe_post_refresh(
-            athlete_id=athlete_id,
-            inbound_body=inbound_body,
-            inbound_subject=inbound_subject,
-            reply_text=reply,
-            reply_kind="coaching_reply",
-            parsed_updates=parsed_updates,
-            manual_snapshot=manual_snapshot,
-            selected_model_name=selected_model_name,
-            rule_engine_decision=rule_engine_decision,
-            log=log,
-        )
-    return reply
+        manual_snapshot=manual_snapshot,
+        log=log,
+        from_email=from_email,
+        inbound_message_id=inbound_message_id,
+        connect_strava_link=connect_link,
+    )

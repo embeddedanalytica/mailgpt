@@ -114,6 +114,16 @@ def lambda_handler(event, context):
             aws_request_id=aws_request_id,
             log_outcome=_log_inbound_outcome,
         )
+        if reply_body is None:
+            _log_inbound_outcome(
+                from_email=from_email,
+                verified=True,
+                result="reply_suppressed_generation_failed",
+                aws_request_id=aws_request_id,
+                athlete_id=athlete_id,
+                message_id=email_data.get("message_id"),
+            )
+            return {"statusCode": 200, "body": "No reply sent due to response-generation failure."}
         message_id = EmailReplySender.send_reply(email_data, reply_body)
         return {"statusCode": 200, "body": f"Reply sent! Message ID: {message_id}"}
 

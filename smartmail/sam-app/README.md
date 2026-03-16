@@ -49,6 +49,24 @@ This is the code-accurate state as of the current repository:
 
 The next major capability under active design is the dedicated response-generation layer. That design lives in [`/Users/levonsh/Projects/smartmail/response-generation-epic.md`](/Users/levonsh/Projects/smartmail/response-generation-epic.md). The current reply path is still MVP scaffolding and is expected to be replaced by RG1.
 
+## LLM Skill Architecture
+
+SmartMail uses specialized LLM workflow skills for bounded tasks in the coaching pipeline. A skill is defined by:
+- a narrow responsibility
+- a dedicated prompt
+- a strict JSON schema
+- validation/normalization logic
+- isolated tests/eval hooks
+
+A workflow may use the same model as other skills or a different model depending on task needs. Model choice is an implementation detail; the stable contract is the skill boundary plus prompt/schema.
+
+Current athlete-memory skills:
+- **Skill A**: extract atomic facts/events from athlete email
+- **Skill B**: decide whether memory refresh should run
+- **Skill C**: refresh `memory_notes` and `continuity_summary`
+
+These skill boundaries keep athlete-memory behavior isolated, testable, and easier to evolve without changing the lightweight memory storage model.
+
 ## Runtime Architecture
 
 ### 1. `EmailServiceFunction` (`sam-app/email_service`)

@@ -13,7 +13,6 @@ from conversation_intelligence import (
 )
 from inbound_rule_router import route_inbound_with_rule_engine
 from dynamodb_models import put_message_intelligence
-from email_copy import EmailCopy
 from config import (
     LIGHTWEIGHT_RESPONSE_MODEL,
     ADVANCED_RESPONSE_MODEL,
@@ -49,7 +48,7 @@ def get_reply_for_inbound(
     *,
     aws_request_id: Optional[str] = None,
     log_outcome: Optional[Callable[..., None]] = None,
-) -> str:
+) -> Optional[str]:
     """
     Returns the reply body to send for this inbound email.
     Conversation intelligence is an LLM-gated prerequisite.
@@ -69,7 +68,7 @@ def get_reply_for_inbound(
                 result="conversation_intelligence_failed",
                 aws_request_id=aws_request_id,
             )
-        return EmailCopy.FALLBACK_AI_ERROR_REPLY
+        return None
 
     route = _route_model_by_complexity(intelligence["complexity_score"])
     stored = put_message_intelligence(
@@ -89,7 +88,7 @@ def get_reply_for_inbound(
                 result="conversation_intelligence_store_failed",
                 aws_request_id=aws_request_id,
             )
-        return EmailCopy.FALLBACK_AI_ERROR_REPLY
+        return None
 
     if log_outcome is not None:
         log_outcome(

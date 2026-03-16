@@ -1,8 +1,9 @@
 """Reply rendering helpers for coaching responses."""
 
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Dict, Optional
 
 from athlete_memory_contract import format_unix_timestamp_for_prompt
+from response_generation_contract import ResponseBrief
 
 
 def render_rule_engine_payload_reply(
@@ -107,21 +108,35 @@ def build_memory_context_block(memory_context: Dict[str, Any]) -> str:
 def build_llm_reply_body(
     *,
     inbound_body: str,
-    athlete_id: str,
-    plan_summary: Optional[str],
-    rule_engine_decision: Optional[Dict[str, Any]],
-    fetch_memory_context_for_response_generation: Callable[[str], Dict[str, Any]],
+    response_brief: ResponseBrief,
 ) -> str:
     llm_body = inbound_body
+    plan_summary = str(response_brief.validated_plan.get("plan_summary", "")).strip()
     if plan_summary:
         llm_body = f"{llm_body}\n\nCurrent plan context:\n{plan_summary}"
 
-    memory_context = fetch_memory_context_for_response_generation(athlete_id)
-    memory_context_block = build_memory_context_block(memory_context)
+    memory_context_block = build_memory_context_block(response_brief.memory_context)
     if memory_context_block:
         llm_body = f"{llm_body}\n\nAthlete memory context:\n{memory_context_block}"
 
-    if isinstance(rule_engine_decision, dict):
-        llm_body = f"{llm_body}\n\nRule engine decision context:\n{rule_engine_decision}"
+    decision_lines = []
+    decision_context = response_brief.decision_context
+    for label, field_name in (
+        ("Track", "track"),
+        ("Phase", "phase"),
+        ("Risk flag", "risk_flag"),
+        ("Today action", "today_action"),
+    ):
+        value = str(decision_context.get(field_name, "")).strip()
+        if value:
+            decision_lines.append(f"{label}: {value}")
+    if "clarification_needed" in decision_context:
+        decision_lines.append(
+            f"Clarification needed: {bool(decision_context.get('clarification_needed'))}"
+        )
+    if decision_lines:
+        llm_body = (
+            f"{llm_body}\n\nDecision context:\n" + "\n".join(decision_lines)
+        )
 
     return llm_body

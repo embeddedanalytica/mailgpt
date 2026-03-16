@@ -11,7 +11,14 @@ def should_attempt_memory_refresh(
     reply_kind: str,
     parsed_updates: Dict[str, Any],
 ) -> bool:
-    if reply_kind in {"safety_concern", "off_topic", "clarification_needed"}:
+    if reply_kind in {
+        "safety_concern",
+        "safety_risk_managed",
+        "off_topic",
+        "off_topic_redirect",
+        "clarification_needed",
+        "clarification",
+    }:
         return False
     if reply_kind == "profile_incomplete":
         return bool(parsed_updates)

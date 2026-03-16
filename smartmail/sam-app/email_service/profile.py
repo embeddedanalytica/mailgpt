@@ -5,7 +5,6 @@ Business logic for coaching context; no auth or verification.
 from typing import Optional, Dict, Any, List
 
 from openai_responder import ProfileExtractor, ProfileExtractionError
-from email_copy import EmailCopy
 
 
 def _contains_unknown_marker(text: str) -> bool:
@@ -115,13 +114,3 @@ def get_missing_required_profile_fields(profile: Optional[Dict[str, Any]]) -> Li
         missing.append("constraints")
 
     return missing
-
-
-def build_profile_collection_reply(missing_fields: List[str]) -> str:
-    """Build the reply text asking the user for missing profile fields."""
-    joined_prompts = "\n".join(EmailCopy.build_profile_collection_lines(missing_fields))
-    return (
-        f"{EmailCopy.PROFILE_COLLECTION_INTRO}"
-        f"{joined_prompts}\n\n"
-        f"{EmailCopy.PROFILE_COLLECTION_UNKNOWN_HINT}"
-    )

@@ -71,18 +71,5 @@ class TestGetMissingRequiredProfileFields(unittest.TestCase):
         }
         self.assertEqual(profile_module.get_missing_required_profile_fields(profile), ["constraints"])
 
-
-class TestBuildProfileCollectionReply(unittest.TestCase):
-    def test_lists_missing_fields(self):
-        reply = profile_module.build_profile_collection_reply(
-            ["primary_goal", "time_availability", "experience_level", "constraints"]
-        )
-        self.assertIn("primary goal", reply)
-        self.assertIn("time availability", reply)
-        self.assertIn("experience level", reply)
-        self.assertIn("constraints", reply.lower())
-        self.assertIn("unknown", reply)
-
-
 if __name__ == "__main__":
     unittest.main()

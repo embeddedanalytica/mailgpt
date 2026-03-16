@@ -61,13 +61,6 @@ class EmailCopy:
 </body>
 </html>"""
 
-    PROFILE_COLLECTION_INTRO = (
-        "Thanks - before I can coach effectively, I need a bit more context.\n\n"
-        "Please reply with:\n"
-    )
-    PROFILE_COLLECTION_UNKNOWN_HINT = (
-        'If any item is unknown right now, you can say "unknown" for that item.'
-    )
     PROFILE_PROMPT_PRIMARY_GOAL = (
         "- Your primary goal (e.g., first marathon, improve 10k time)"
     )
@@ -81,16 +74,6 @@ class EmailCopy:
         "- Any constraints (injury, schedule, equipment, medical, preference). Empty is okay."
     )
 
-    READY_FOR_COACHING_BASE = (
-        "✅ You're ready for coaching. Share your latest training question "
-        "or session details and I'll help you plan next steps."
-    )
-    READY_FOR_COACHING_CONNECT_STRAVA = (
-        "\n\nCONNECT STRAVA FOR MORE PERSONALIZED COACHING:\n"
-        "{connect_link}\n"
-        "Benefit: synced workouts improve load and recovery guidance."
-    )
-
     REPLY_WRAPPER_SEPARATOR = "---"
     REPLY_WRAPPER_FROM = "From"
     REPLY_WRAPPER_SENT = "Sent"
@@ -99,16 +82,6 @@ class EmailCopy:
     REPLY_WRAPPER_SUBJECT = "Subject"
 
     FALLBACK_AI_ERROR_REPLY = "I'm sorry, but I couldn't generate a response at this time."
-    SAFETY_CONCERN_REPLY = (
-        "Thanks for sharing this. Based on what you described, pause training for now and get "
-        "medical guidance before doing another hard session. If symptoms worsen or feel severe, "
-        "seek urgent care. Once you have clearance, reply with what your clinician advised and "
-        "your available training days so I can adjust your plan safely."
-    )
-    OFF_TOPIC_REDIRECT_REPLY = (
-        "I can help with training, recovery, and plan adjustments. "
-        "Share your latest workout update or coaching question and I'll help."
-    )
 
     @staticmethod
     def render_verify_email(
