@@ -6,6 +6,8 @@ This file describes the target design for athlete-facing response generation. Cu
 ## Context and Scope Boundaries
 - The goal is coherent, athlete-facing coaching communication, not just formatting a payload into text.
 - The response layer is distinct from planning and state logic. The rule engine remains the authority on state, safety, validated plans, and fallback constraints.
+- `business.py` remains the orchestration entrypoint for inbound handling during this epic.
+- `coaching.py` is allowed to remain a transitional orchestration surface while responsibilities are moved behind cleaner response-generation boundaries story by story.
 - The current response-generation implementation is treated as replaceable MVP scaffolding, not an architectural constraint.
 - Backward compatibility is not a design goal for this epic. If a cleaner design requires replacing current response shapes or composition flow, prefer the cleaner design.
 - YAGNI still applies: prefer the smallest clean response model that supports strong coaching replies, safe guardrails, and clear system boundaries.
@@ -22,8 +24,9 @@ Planning and communication should be separate concerns: the rule engine decides 
 
 ### Response Model
 - `response_brief`: a bounded input artifact assembled from validated coaching state plus relevant response context.
-- `response_payload`: a structured athlete-facing communication artifact produced from the `response_brief`.
-- `final_email_body`: the deterministic final rendering of the `response_payload` into outbound email text.
+- `response_payload`: a transitional structured athlete-facing communication artifact explored early in the epic, but not the preferred long-term output shape.
+- `final_email_response`: the canonical response-generation output for the generic coaching path, containing the final athlete-facing email body authored by the writing expert LLM.
+- `final_email_body`: the actual outbound email text returned by `final_email_response`.
 
 The response system owns communication structure, framing, prioritization, and presentation.
 The rule engine owns state, safety, plan authority, and validation boundaries.
@@ -60,7 +63,7 @@ Example `response_brief`:
 }
 ~~~
 
-Example `response_payload`:
+Transitional example `response_payload`:
 
 ~~~json
 {
@@ -86,6 +89,14 @@ Example `response_payload`:
 }
 ~~~
 
+Example `final_email_response`:
+
+~~~json
+{
+  "final_email_body": "You can still move the week forward, but keep this one controlled.\n\nI want one purposeful session only if your legs feel steady, with easy aerobic work around it. Reply with how that session feels and whether your energy improves."
+}
+~~~
+
 Example `final_email_body`:
 
 ~~~text
@@ -105,69 +116,71 @@ If your legs feel flat, swap the quality session for easy aerobic work.
 Reply with how the quality session felt and whether your energy improved.
 ~~~
 
-The examples above are illustrative. They define the intended shape of the system, not a locked final schema.
+The examples above are illustrative. They define the intended shape of the system, not a locked final schema. The current preferred end state is `response_brief` in and `final_email_response` out for the generic coaching reply path.
 
 ### Stories
 
-#### Story RG1.1 — Canonical Response Brief Contract
+#### [x] Story RG1.1 — Canonical Response Brief Contract
 As a response system, I need a clear `response_brief` contract so language generation receives bounded and relevant coaching context.
 
 Story DoD:
-- [ ] A canonical `response_brief` shape is defined with only the fields needed for athlete-facing response generation.
-- [ ] The contract separates validated coaching decisions from communication-only context.
-- [ ] The contract includes an explicit `reply_mode` so different response flows do not rely on ad hoc branching.
-- [ ] Validation rejects malformed or incomplete response briefs before response generation begins.
-- [ ] Contract tests cover valid/invalid response-brief payloads and required reply modes.
+- [x] A canonical `response_brief` shape is defined with only the fields needed for athlete-facing response generation.
+- [x] The contract separates validated coaching decisions from communication-only context.
+- [x] The contract includes an explicit `reply_mode` so different response flows do not rely on ad hoc branching.
+- [x] Validation rejects malformed or incomplete response briefs before response generation begins.
+- [x] Contract tests cover valid/invalid response-brief payloads and required reply modes.
 
-#### Story RG1.2 — Canonical Response Payload Contract
-As a messaging layer, I need a structured `response_payload` contract so communication quality is deliberate and testable.
+#### [x] Story RG1.2 — Canonical Final Email Response Contract
+As a messaging layer, I need a canonical final response contract so the generic coaching path can validate LLM-authored athlete-facing email bodies before send.
 
 Story DoD:
-- [ ] A canonical `response_payload` shape is defined for athlete-facing communication sections such as opening, coach take, weekly focus, priorities, and follow-up prompt.
-- [ ] The contract is distinct from rule-engine output and plan artifacts.
-- [ ] Required vs optional sections are explicit.
-- [ ] Validation rejects malformed payloads and unknown required structure.
-- [ ] Contract tests cover valid/invalid payloads and required safety-related fields.
+- [x] A canonical `final_email_response` shape is defined for the generic coaching path with a required non-empty `final_email_body`.
+- [x] The contract is distinct from rule-engine output, plan artifacts, and transient prompt structure.
+- [x] Minimal optional metadata is explicit rather than implied.
+- [x] Validation rejects malformed output and unknown structure before the outbound reply is used.
+- [x] Contract tests cover valid/invalid final-body payloads.
 
-#### Story RG1.3 — Response Brief Assembly from Coaching Context
+#### [x] Story RG1.3 — Response Brief Assembly from Coaching Context
 As a response system, I need a bounded response brief assembled from coaching artifacts so communication is grounded in validated decisions.
 
 Story DoD:
-- [ ] Response-brief assembly consumes validated plan data, decision context, and other communication inputs without taking state authority.
-- [ ] Response-brief assembly can include current plan summary and other relevant context when available.
-- [ ] Missing optional context degrades gracefully without blocking reply generation.
-- [ ] Assembly logic avoids leaking raw internal structures that are not needed for communication quality.
+- [x] Response-brief assembly consumes validated plan data, decision context, and other communication inputs without taking state authority.
+- [x] Response-brief assembly can include current plan summary and other relevant context when available.
+- [x] Missing optional context degrades gracefully without blocking reply generation.
+- [x] Assembly logic avoids leaking raw internal structures that are not needed for communication quality.
 
-#### Story RG1.4 — Language-LLM Response Generation Within Guardrails
-As a messaging layer, I need the LanguageLLM to generate structured athlete-facing replies while remaining bounded by deterministic safety and plan constraints.
-
-Story DoD:
-- [ ] The LanguageLLM consumes only the `response_brief`, not raw mutable system state.
-- [ ] The LanguageLLM returns a structured `response_payload`, not free-form email text.
-- [ ] Prompting instructs the model to explain the week clearly, stay concise, and avoid contradicting risk or safety posture.
-- [ ] Generated output is validated before it can be rendered into the final email body.
-- [ ] Tests verify that the language layer cannot override safety notes, plan authority, or reply mode.
-
-#### Story RG1.5 — Deterministic Final Email Composition
-As a delivery layer, I need one deterministic way to render `response_payload` into the outbound email body so final formatting stays clean and maintainable.
+#### [x] Story RG1.4 — Language-LLM Response Generation Within Guardrails
+As a messaging layer, I need the LanguageLLM to generate athlete-facing replies while remaining bounded by deterministic safety and plan constraints.
 
 Story DoD:
-- [ ] Final email composition consumes a validated `response_payload` and produces one readable outbound email body.
-- [ ] Composition logic is centralized instead of duplicated across reply paths.
-- [ ] Formatting rules for sections, ordering, and empty-field handling are explicit and deterministic.
-- [ ] Tests verify that different payload shapes render clearly and consistently.
+- [x] The LanguageLLM consumes only the `response_brief`, not raw mutable system state.
+- [x] The LanguageLLM returns a validated `final_email_response` for the generic coaching path, centered on `final_email_body`.
+- [x] Prompting instructs the model to write the final athlete-facing email directly, stay concise, and avoid contradicting risk or safety posture.
+- [x] Generated output is validated before it can be used as the outbound reply body.
+- [x] Tests verify that the language layer cannot override safety notes, plan authority, or reply mode.
 
-#### Story RG1.6 — Personalization from Memory and Continuity
+#### [x] Story RG1.5 — LLM-Authored Final Email Body
+As a response-generation layer, I need the writing expert LLM to produce the actual final athlete-facing email body from bounded coaching context so the system does not rely on deterministic section assembly for the generic coaching path.
+
+Story DoD:
+- [x] The generic coaching response skill produces a validated `final_email_response` with a required non-empty `final_email_body`.
+- [x] The generic coaching path uses the LLM-authored `final_email_body` directly instead of assembling final prose from structured sections in code.
+- [x] The skill prompt treats `response_brief` as authoritative communication context and does not permit contradicting validated plan or safety posture.
+- [x] Fallback behavior remains outside the skill so invalid or failed generation still returns a safe usable reply.
+- [x] Rule-engine-guided deterministic replies may remain on their existing path until a later migration story explicitly changes them.
+- [x] Tests verify malformed or missing final-body output fails validation and that the generic reply path no longer depends on deterministic section rendering.
+
+#### [x] Story RG1.6 — Personalization from Memory and Continuity
 As a coaching system, I need the response layer to use memory and continuity context safely so replies feel personalized without becoming speculative.
 
 Story DoD:
-- [ ] Response generation can accept athlete memory and continuity context once that capability exists.
-- [ ] Personalization inputs are bounded and clearly separated from rule-engine authority.
-- [ ] Prompting discourages invented history, overfamiliarity, and speculative claims.
-- [ ] Missing memory artifacts degrade gracefully to non-personalized but still coherent replies.
+- [x] Response generation accepts bounded athlete memory and continuity context through `response_brief.memory_context`.
+- [x] Personalization inputs are bounded and clearly separated from rule-engine authority.
+- [x] Prompting discourages invented history, overfamiliarity, and speculative claims.
+- [x] Missing memory artifacts degrade gracefully to non-personalized but still coherent replies.
 
-#### Story RG1.7 — Specialized Reply Modes
-As a product system, I need explicit reply modes so different athlete situations produce appropriately different response structures.
+#### [x] Story RG1.7 — Specialized Reply Modes
+As a product system, I need explicit reply modes so different athlete situations produce appropriately different communication objectives and outputs.
 
 Supported reply modes for this epic are:
 - `normal_coaching`
@@ -177,46 +190,60 @@ Supported reply modes for this epic are:
 - `off_topic_redirect`
 
 Story DoD:
-- [ ] Reply modes are explicit product-level behavior, not scattered handler branches.
-- [ ] Each reply mode has a distinct response-brief path and communication objective.
-- [ ] Safety and clarification modes prioritize control and clarity over engagement or elaboration.
-- [ ] Tests verify that reply modes produce meaningfully different outputs and do not collapse into one generic template.
+- [x] Reply modes are explicit product-level behavior, not scattered handler branches.
+- [x] Each reply mode has a distinct response-brief path and communication objective, even when multiple modes use the same response-generation skill boundary.
+- [x] Safety and clarification modes prioritize control and clarity over engagement or elaboration.
+- [x] Tests verify that reply modes produce meaningfully different outputs and do not collapse into one generic coaching reply.
 
 #### Story RG1.8 — Fallback, Validation, and Failure Behavior
 As a platform maintainer, I need predictable fallback behavior so the system still sends safe, usable replies when language generation fails.
 
+Implementation note:
+- The current runtime intentionally does not send deterministic canned fallback replies for response-generation failures.
+- The current runtime also does not implement deferred retry yet.
+- For the LLM-authored response-generation path, failures are currently handled by suppressing send and logging bounded debugging context for a later retry-focused story.
+
 Story DoD:
 - [ ] Invalid or failed language-generation output triggers a deterministic fallback response path.
 - [ ] Fallback replies remain aligned with reply mode, safety posture, and validated coaching decisions.
-- [ ] Validation happens before final rendering and again before send if needed.
-- [ ] Tests cover language-generation failure, malformed payloads, and fallback rendering behavior.
+- [ ] Validation happens before the generic coaching path accepts `final_email_body`, and again before send if needed.
+- [ ] Tests cover language-generation failure, malformed `final_email_response` output, and fallback behavior.
 
-#### Story RG1.9 — Prompting and Behavioral Guidance
+#### [x] Story RG1.9 — Prompting and Behavioral Guidance
 As a system designer, I need explicit prompting guidance so the response layer consistently produces useful coaching communication.
 
 Story DoD:
-- [ ] Prompting distinguishes planning authority from communication authority.
-- [ ] Prompting emphasizes concise explanation, realistic coaching tone, and useful prioritization.
-- [ ] Prompting suppresses contradictory, overly generic, or overly verbose responses.
-- [ ] Prompting guidance covers normal, clarification, safety, and lightweight non-planning reply modes.
-- [ ] Tests or fixtures cover representative output patterns across reply modes.
+- [x] Prompting distinguishes planning authority from communication authority.
+- [x] Prompting emphasizes concise explanation, realistic coaching tone, and useful prioritization.
+- [x] Prompting suppresses contradictory, overly generic, or overly verbose responses.
+- [x] Prompting guidance covers normal, clarification, safety, and lightweight non-planning reply modes within the skill runtime boundary.
+- [x] Tests or fixtures cover representative output patterns across reply modes.
 
 ### Epic RG1 DoD
 - [ ] Athlete-facing replies are generated from a dedicated response-generation layer, not from ad hoc string assembly.
-- [ ] Response generation consumes bounded, validated coaching inputs rather than raw mutable system state.
-- [ ] Planning authority and communication authority remain separate concerns.
-- [ ] The system supports distinct reply modes for normal coaching, clarification, safety, lightweight non-planning replies, and off-topic redirects.
-- [ ] The LanguageLLM cannot override safety posture, risk framing, or validated plan authority.
+- [x] Response generation consumes bounded, validated coaching inputs rather than raw mutable system state.
+- [x] Planning authority and communication authority remain separate concerns.
+- [x] The system supports distinct reply modes for normal coaching, clarification, safety, lightweight non-planning replies, and off-topic redirects.
+- [x] The LanguageLLM cannot override safety posture, risk framing, or validated plan authority.
 - [ ] Deterministic fallback replies remain usable and safe when language generation fails.
-- [ ] Personalization can incorporate memory and continuity safely once those capabilities exist.
-- [ ] Backward compatibility with the current MVP response payload is not required.
-- [ ] Duplicated formatting logic is replaced by one cleaner response model and composition path.
+  Current runtime note: fail-closed logging-only behavior is implemented; retry/deferred delivery remains future work.
+- [x] Personalization can incorporate memory and continuity safely once those capabilities exist.
+- [x] Backward compatibility with the current MVP response payload is not required.
+- [x] The generic coaching path uses an LLM-authored final email body rather than deterministic section composition.
+- [x] Response-generation runtime logic lives in a dedicated skill package rather than expanding ad hoc LLM helpers.
+- [x] Remaining orchestration debt in `coaching.py` is reduced without moving business entrypoint ownership away from `business.py`.
+
+Epic status note:
+- The epic is not fully complete yet.
+- The main remaining gap is RG1.8: response-generation failures currently fail closed with logging instead of sending deterministic fallback replies or retrying later.
+- A smaller remaining gap is that some non-response-generation reply surfaces in `coaching.py` still use deterministic string assembly, so the top-level "not from ad hoc string assembly" DoD item is not fully satisfied yet.
 
 ---
 
 ## Non-Goals
 - Preserving the current response payload shape for its own sake.
 - Treating current response-generation code as a long-term architectural boundary.
+- Reintroducing `openai_responder.py` as the primary response-generation boundary.
 - Giving the response layer authority over rule-engine state, safety classification, or plan validation.
 - Rich frontend presentation concerns beyond outbound email composition.
 - A generalized conversational agent beyond the coaching reply use case.
