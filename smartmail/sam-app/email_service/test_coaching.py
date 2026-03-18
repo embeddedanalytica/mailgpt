@@ -124,6 +124,50 @@ class TestBuildProfileGatedReply(unittest.TestCase):
             )
             ensure_plan.assert_called_once_with("ath_1", fallback_goal=None)
 
+    def test_clarification_omits_time_availability_when_four_days_schedule_was_extracted(self):
+        with mock.patch.object(coaching, "get_coach_profile") as get_profile, \
+             mock.patch.object(coaching, "parse_profile_updates_from_email") as parse_updates, \
+             mock.patch.object(coaching, "parse_manual_activity_snapshot_from_email", return_value=None), \
+             mock.patch.object(coaching, "put_manual_activity_snapshot", return_value=True), \
+             mock.patch.object(coaching, "get_progress_snapshot", return_value={"data_quality": "low"}), \
+             mock.patch.object(coaching, "merge_coach_profile_fields") as merge, \
+             mock.patch.object(coaching, "ensure_current_plan") as ensure_plan, \
+             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"memory_notes": [], "continuity_summary": None}), \
+             mock.patch.object(coaching, "run_response_generation_workflow") as run_response_generation_workflow:
+            get_profile.side_effect = [
+                {},
+                {
+                    "primary_goal": "",
+                    "time_availability": {"sessions_per_week": 4},
+                    "experience_level": "intermediate",
+                    "constraints": [],
+                },
+            ]
+            parse_updates.return_value = {
+                "time_availability": {"sessions_per_week": 4},
+                "experience_level": "intermediate",
+                "constraints": [],
+            }
+            merge.return_value = True
+            ensure_plan.return_value = True
+            run_response_generation_workflow.return_value = _final_email_response("Composed clarification reply")
+
+            reply = coaching.build_profile_gated_reply(
+                "ath_1",
+                "user@example.com",
+                "I can train four days a week most weeks.",
+                selected_model_name="gpt-5-nano",
+                log_outcome=None,
+            )
+
+            self.assertEqual(reply, "Composed clarification reply")
+            brief = run_response_generation_workflow.call_args.args[0]
+            self.assertEqual(brief["reply_mode"], "clarification")
+            self.assertEqual(
+                brief["decision_context"]["clarification_questions"],
+                ["- Your primary goal (e.g., first marathon, improve 10k time)"],
+            )
+
     def test_profile_incomplete_reply_still_runs_memory_refresh_when_eligible(self):
         with mock.patch.object(coaching, "get_coach_profile", return_value={}), \
              mock.patch.object(

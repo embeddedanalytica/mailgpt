@@ -23,7 +23,6 @@ from dynamodb_models import (
 )
 from config import ACTION_BASE_URL
 from activity_snapshot import parse_manual_activity_snapshot_from_email
-from openai_responder import SessionCheckinExtractor, SessionCheckinExtractionError
 from ai_extraction_contract import (
     list_missing_or_low_confidence_critical_fields,
     should_request_clarification,
@@ -35,6 +34,10 @@ from profile import (
 from config import ENABLE_SESSION_CHECKIN_EXTRACTION
 from rule_engine import RuleEngineContractError, validate_rule_engine_output
 from skills.memory import MemoryRefreshError, run_memory_refresh, run_memory_router
+from skills.planner import (
+    SessionCheckinExtractionProposalError,
+    run_session_checkin_extraction_workflow,
+)
 from coaching_memory import (
     maybe_post_reply_memory_refresh,
     maybe_pre_reply_memory_refresh,
@@ -319,7 +322,7 @@ def _maybe_extract_profile_gate_checkin(
         len(str(inbound_body or "")),
     )
     try:
-        extracted_checkin = SessionCheckinExtractor.extract_session_checkin_fields(inbound_body)
+        extracted_checkin = run_session_checkin_extraction_workflow(inbound_body)
         if extracted_checkin:
             needs_clarification = should_request_clarification(extracted_checkin)
             missing_fields = list_missing_or_low_confidence_critical_fields(extracted_checkin)
@@ -341,7 +344,7 @@ def _maybe_extract_profile_gate_checkin(
                     result="session_checkin_clarification_needed",
                     missing_or_low_confidence="|".join(missing_fields),
                 )
-    except SessionCheckinExtractionError as exc:
+    except SessionCheckinExtractionProposalError as exc:
         logger.error(
             "Session check-in extraction failed in profile gate: athlete_id=%s error=%s",
             athlete_id,

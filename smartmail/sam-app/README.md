@@ -88,7 +88,7 @@ Current responsibilities:
 - Extract and store manual activity snapshots from email
 - Retrieve bounded athlete memory context for LLM-generated replies
 - Refresh athlete memory artifacts before and/or after meaningful interactions
-- Generate final coaching reply via OpenAI-backed responders
+- Generate final coaching reply via skill-owned response-generation workflows
 
 ### 2. `mailgptregistration` (`sam-app/email_registration`)
 
@@ -380,7 +380,9 @@ Inside `email_service/`, the most relevant modules are:
 - `memory_refresh_eligibility.py` - refresh trigger classification
 - `inbound_rule_router.py` - mutate/read-only rule-engine routing
 - `rule_engine_*` - deterministic rule-engine implementation
-- `openai_responder.py` - reply generation, extraction, and memory refresh LLM boundaries
+- `skills/planner/*` - planner and coach-like inference skill workflows (classification/extraction/planning)
+- `skills/response_generation/*` - communication and response-generation workflows/prompts
+- `openai_responder.py` - compatibility shims only (legacy import surface)
 - `dynamodb_models.py` - profile, memory, plan, connector, and snapshot persistence helpers
 
 ## Local Development

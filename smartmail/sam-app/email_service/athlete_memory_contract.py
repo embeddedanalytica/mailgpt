@@ -116,6 +116,18 @@ def _validate_unix_timestamp(field_name: str, value: Any) -> int:
     return int(value)
 
 
+def _validate_positive_int(field_name: str, value: Any) -> int:
+    if isinstance(value, bool):
+        raise AthleteMemoryContractError(f"{field_name} must be an integer >= 1")
+    if isinstance(value, Decimal):
+        if value != value.to_integral_value():
+            raise AthleteMemoryContractError(f"{field_name} must be an integer >= 1")
+        value = int(value)
+    if not isinstance(value, int) or value < 1:
+        raise AthleteMemoryContractError(f"{field_name} must be an integer >= 1")
+    return int(value)
+
+
 def format_unix_timestamp_for_prompt(value: Any) -> str:
     timestamp = _validate_unix_timestamp("timestamp", value)
     return datetime.fromtimestamp(timestamp, tz=timezone.utc).strftime("%Y-%m-%d")
@@ -217,8 +229,11 @@ class MemoryNote:
 
 
 def validate_memory_note(note: MemoryNote) -> None:
-    if not isinstance(note.memory_note_id, int) or note.memory_note_id < 1:
-        raise AthleteMemoryContractError("memory_note_id must be an integer >= 1")
+    object.__setattr__(
+        note,
+        "memory_note_id",
+        _validate_positive_int("memory_note_id", note.memory_note_id),
+    )
 
     object.__setattr__(note, "fact_type", _validate_fact_type(note.fact_type))
     object.__setattr__(note, "fact_key", normalize_fact_key(note.fact_key))

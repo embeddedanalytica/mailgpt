@@ -1,5 +1,7 @@
 import unittest
+from unittest import mock
 
+import response_generation_assembly
 from response_generation_assembly import build_response_brief
 
 
@@ -27,6 +29,28 @@ def _continuity_summary() -> dict:
 
 
 class TestBuildResponseBrief(unittest.TestCase):
+    def test_clarification_questions_are_sourced_from_response_generation_copy_helper(self):
+        with mock.patch.object(
+            response_generation_assembly,
+            "build_clarification_questions",
+            return_value=["- helper owned question"],
+        ):
+            brief = build_response_brief(
+                athlete_id="ath_helper",
+                reply_kind="profile_incomplete",
+                inbound_subject=None,
+                selected_model_name=None,
+                profile_after={},
+                missing_profile_fields=["primary_goal"],
+                plan_summary=None,
+                rule_engine_decision=None,
+                memory_context=None,
+                pre_reply_refresh_attempted=False,
+                post_reply_refresh_eligible=False,
+            )
+
+        self.assertEqual(brief.decision_context["clarification_questions"], ["- helper owned question"])
+
     def test_profile_incomplete_maps_to_clarification_and_omits_missing_optional_context(self):
         brief = build_response_brief(
             athlete_id="ath_1",

@@ -16,15 +16,10 @@ def _valid_payload():
     return {
         "risk_candidate": "red_a",
         "event_date": "2026-06-20",
-        "hard_return_context": False,
-        "return_context": True,
-        "has_upcoming_event": None,
-        "performance_intent_this_week": True,
         "returning_from_break": False,
         "recent_illness": "none",
         "break_days": None,
         "explicit_main_sport_switch_request": False,
-        "performance_chase_active": True,
         "experience_level": "intermediate",
         "time_bucket": "4_6h",
         "main_sport_current": "run",
@@ -112,10 +107,30 @@ class TestClarificationHelpers(unittest.TestCase):
 
     def test_low_confidence_triggers_clarification(self):
         payload = _valid_payload()
-        payload["field_confidence"]["risk_candidate"] = 0.4
+        payload["field_confidence"]["pain_score"] = 0.4
         missing = list_missing_or_low_confidence_critical_fields(payload, min_confidence=0.7)
-        self.assertIn("risk_candidate", missing)
+        self.assertIn("pain_score", missing)
         self.assertTrue(should_request_clarification(payload, min_confidence=0.7))
+
+    def test_missing_days_available_no_longer_triggers_clarification_by_default(self):
+        payload = _valid_payload()
+        payload.pop("days_available")
+        missing = list_missing_or_low_confidence_critical_fields(payload)
+        self.assertNotIn("days_available", missing)
+        self.assertFalse(should_request_clarification(payload))
+
+    def test_removed_derived_fields_are_rejected(self):
+        for field, value in (
+            ("hard_return_context", False),
+            ("return_context", True),
+            ("has_upcoming_event", False),
+            ("performance_intent_this_week", True),
+            ("performance_chase_active", True),
+        ):
+            payload = _valid_payload()
+            payload[field] = value
+            with self.assertRaises(AIExtractionContractError, msg=field):
+                validate_ai_extraction_payload(payload)
 
     def test_high_confidence_complete_payload_no_clarification(self):
         payload = _valid_payload()

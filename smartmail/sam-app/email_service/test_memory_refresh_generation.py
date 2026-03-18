@@ -1,5 +1,6 @@
 """Unit tests for split memory refresh generation."""
 
+from decimal import Decimal
 import unittest
 from unittest import mock
 
@@ -187,6 +188,28 @@ class TestArtifactUpdaterGeneration(unittest.TestCase):
                 latest_interaction_context={"inbound_email": "hi"},
             )
         self.assertEqual(result["memory_notes"][0]["status"], "active")
+
+    def test_long_term_updater_accepts_decimal_persisted_note_ids(self):
+        with mock.patch.object(skill_runtime, "live_llm_enabled", return_value=True), mock.patch.object(
+            skill_runtime,
+            "openai",
+            _stub_openai_with_contents(
+                [
+                    '{"candidates":[{"action":"confirm","memory_note_id":1,"fact_type":"","fact_key":"","summary":"","importance":"","reason":"","evidence_source":"athlete_email","evidence_strength":"explicit"}],"consolidation_ops":[]}'
+                ]
+            ),
+        ):
+            result = run_long_term_memory_refresh(
+                prior_memory_notes=[
+                    {
+                        **_note(1),
+                        "memory_note_id": Decimal("1"),
+                    }
+                ],
+                latest_interaction_context={"inbound_email": "still true"},
+            )
+
+        self.assertEqual(result["memory_notes"][0]["memory_note_id"], 1)
 
     def test_short_term_updater_rejects_invalid_payload(self):
         with mock.patch.object(skill_runtime, "live_llm_enabled", return_value=True), mock.patch.object(

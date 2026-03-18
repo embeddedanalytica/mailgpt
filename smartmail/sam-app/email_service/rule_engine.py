@@ -595,11 +595,19 @@ def derive_risk(profile: Dict[str, Any], checkin: Dict[str, Any], rule_state: Di
 
 
 def _event_expected(profile: Dict[str, Any], checkin: Dict[str, Any]) -> bool:
+    if _parse_event_date(checkin.get("event_date")) is not None:
+        return True
+
     has_upcoming_event = checkin.get("has_upcoming_event")
     if isinstance(has_upcoming_event, bool):
         return has_upcoming_event
-    if has_upcoming_event is None:
-        return normalize_goal_category(profile) == "event_8_16w"
+
+    goal_category = normalize_goal_category(profile)
+    if goal_category.startswith("event_"):
+        return True
+
+    if _parse_event_date(profile.get("event_date")) is not None:
+        return True
     return False
 
 
@@ -647,7 +655,9 @@ def _resolve_hard_return_context(checkin: Dict[str, Any]) -> bool:
 
 
 def _resolve_soft_return_context(profile: Dict[str, Any], checkin: Dict[str, Any]) -> bool:
-    for key in ("return_context", "newly_returning", "hard_return_context"):
+    if _resolve_hard_return_context(checkin):
+        return True
+    for key in ("newly_returning", "return_to_training", "return_context", "hard_return_context"):
         if _coerce_bool(checkin.get(key)) or _coerce_bool(profile.get(key)):
             return True
     return False
@@ -744,12 +754,14 @@ def _has_main_sport(profile: Dict[str, Any], checkin: Dict[str, Any]) -> bool:
 def _is_return_context(profile: Dict[str, Any], checkin: Dict[str, Any], phase: str) -> bool:
     if str(phase).strip().lower() == "return_to_training":
         return True
+    if _resolve_hard_return_context(checkin):
+        return True
     for key in (
-        "return_context",
-        "hard_return_context",
         "return_to_training",
         "newly_returning",
         "returning_from_break",
+        "return_context",
+        "hard_return_context",
     ):
         if _coerce_bool(checkin.get(key)) or _coerce_bool(profile.get(key)):
             return True

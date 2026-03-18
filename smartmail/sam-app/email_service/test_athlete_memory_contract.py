@@ -132,6 +132,22 @@ class TestMemoryNoteValidation(unittest.TestCase):
         self.assertEqual(rebuilt.updated_at, 1773014400)
         self.assertEqual(rebuilt.last_confirmed_at, 1773014400)
 
+    def test_decimal_memory_note_id_from_dynamodb_is_accepted(self):
+        payload = {
+            **_valid_note().to_dict(),
+            "memory_note_id": Decimal("2"),
+        }
+        rebuilt = MemoryNote.from_dict(payload)
+        self.assertEqual(rebuilt.memory_note_id, 2)
+
+    def test_fractional_decimal_memory_note_id_is_rejected(self):
+        payload = {
+            **_valid_note().to_dict(),
+            "memory_note_id": Decimal("2.5"),
+        }
+        with self.assertRaises(AthleteMemoryContractError):
+            MemoryNote.from_dict(payload)
+
     def test_from_dict_rejects_missing_required_fields(self):
         payload = _valid_note().to_dict()
         del payload["status"]
@@ -146,6 +162,14 @@ class TestMemoryNoteValidation(unittest.TestCase):
 
     def test_memory_note_list_rejects_duplicate_ids(self):
         notes = [_valid_note().to_dict(), {**_valid_note().to_dict(), "summary": "other"}]
+        with self.assertRaises(AthleteMemoryContractError):
+            validate_memory_note_list(notes)
+
+    def test_memory_note_list_rejects_duplicate_ids_after_decimal_normalization(self):
+        notes = [
+            {**_valid_note().to_dict(), "memory_note_id": Decimal("2")},
+            {**_valid_note().to_dict(), "memory_note_id": 2, "summary": "other"},
+        ]
         with self.assertRaises(AthleteMemoryContractError):
             validate_memory_note_list(notes)
 

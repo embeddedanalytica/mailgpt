@@ -5,7 +5,9 @@ DynamoDB-backed rule-state contract and helpers for RE1-FU.2.
 from __future__ import annotations
 
 from copy import deepcopy
+from decimal import Decimal
 import logging
+import math
 import os
 from typing import Any, Dict, List
 
@@ -161,6 +163,26 @@ def _normalize_state(state: Dict[str, Any], athlete_id: str) -> Dict[str, Any]:
     return normalized
 
 
+def _serialize_dynamodb_payload(value: Any) -> Any:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, Decimal):
+        return value
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise RuleEngineStateError("rule_state cannot contain NaN or Infinity floats")
+        return Decimal(str(value))
+    if isinstance(value, dict):
+        return {key: _serialize_dynamodb_payload(val) for key, val in value.items()}
+    if isinstance(value, list):
+        return [_serialize_dynamodb_payload(item) for item in value]
+    if isinstance(value, tuple):
+        return [_serialize_dynamodb_payload(item) for item in value]
+    return value
+
+
 def _normalize_sport(value: Any) -> str:
     text = str(value or "").strip().lower()
     if text in {"", "none", "null"}:
@@ -293,7 +315,7 @@ def update_rule_state(
     normalized = _normalize_state(current, normalized_athlete_id)
     try:
         table = dynamodb.Table(RULE_STATE_TABLE)
-        table.put_item(Item=deepcopy(normalized))
+        table.put_item(Item=_serialize_dynamodb_payload(deepcopy(normalized)))
     except ClientError as exc:
         logger.error("Error updating rule_state athlete_id=%s: %s", normalized_athlete_id, exc)
         raise RuleEngineStateError("failed to persist rule_state to DynamoDB") from exc

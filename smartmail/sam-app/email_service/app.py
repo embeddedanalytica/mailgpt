@@ -4,7 +4,7 @@ Lambda handler: orchestration only.
 - Auth & rate limits (auth, rate_limits)
 - Business reply (business.get_reply_for_inbound)
 - Send (EmailReplySender)
-All business/LLM logic lives in business.py, openai_responder.py, response_evaluator.py, coaching.py, profile.py.
+All business/LLM logic lives in business.py, skill modules, response_evaluator.py, coaching.py, and profile.py.
 """
 import sys
 import logging

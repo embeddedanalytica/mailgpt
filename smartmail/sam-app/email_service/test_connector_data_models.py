@@ -1,6 +1,7 @@
 import sys
 import types
 import unittest
+from decimal import Decimal
 from unittest import mock
 
 # Make tests runnable even when boto/botocore are not installed locally.
@@ -211,6 +212,27 @@ class _RoutingDynamo:
 
 
 class TestConnectorDataModels(unittest.TestCase):
+    def test_serialize_dynamodb_payload_converts_nested_floats(self):
+        payload = {
+            "score": 2.5,
+            "nested": {"confidence": 0.75, "items": [1, 3.5, True, None]},
+            "tuple_values": (4.5, "ok"),
+            "count": 2,
+        }
+
+        serialized = dynamodb_models.serialize_dynamodb_payload(payload)
+
+        self.assertEqual(serialized["score"], Decimal("2.5"))
+        self.assertEqual(serialized["nested"]["confidence"], Decimal("0.75"))
+        self.assertEqual(serialized["nested"]["items"][1], Decimal("3.5"))
+        self.assertIs(serialized["nested"]["items"][2], True)
+        self.assertEqual(serialized["tuple_values"], [Decimal("4.5"), "ok"])
+        self.assertEqual(serialized["count"], 2)
+
+    def test_serialize_dynamodb_payload_rejects_non_finite_float(self):
+        with self.assertRaises(ValueError):
+            dynamodb_models.serialize_dynamodb_payload({"bad": float("inf")})
+
     def test_ensure_athlete_id_returns_id(self):
         with mock.patch.object(
             dynamodb_models,
@@ -381,6 +403,12 @@ class TestConnectorDataModels(unittest.TestCase):
         self.assertEqual(len(normalized["feedback_style_preference"]), 1024)
         self.assertEqual(len(normalized["coach_expectations"]), 1024)
 
+    def test_normalize_profile_record_accepts_decimal_hours_per_week(self):
+        normalized = dynamodb_models.normalize_profile_record(
+            {"time_availability": {"hours_per_week": Decimal("4.5")}}
+        )
+        self.assertEqual(normalized["time_availability"]["hours_per_week"], 4.5)
+
     def test_normalize_profile_updates_new_fields(self):
         oversized = " y " * 700
         normalized = dynamodb_models.normalize_profile_updates(
@@ -410,6 +438,12 @@ class TestConnectorDataModels(unittest.TestCase):
         )
         self.assertEqual(normalized["response_cadence_expectation"], "daily")
 
+    def test_normalize_profile_updates_converts_hours_per_week_to_decimal(self):
+        normalized = dynamodb_models.normalize_profile_updates(
+            {"time_availability": {"hours_per_week": 4.5}}
+        )
+        self.assertEqual(normalized["time_availability"]["hours_per_week"], Decimal("4.5"))
+
     def test_merge_coach_profile_fields_writes_sanitized_values(self):
         profile_table = _ProfileSeedTable()
         with mock.patch.object(
@@ -428,6 +462,25 @@ class TestConnectorDataModels(unittest.TestCase):
         self.assertTrue(ok)
         values = profile_table.last_update_kwargs["ExpressionAttributeValues"]
         self.assertEqual(len(values[":v_goal_why"]), 1024)
+
+    def test_merge_coach_profile_fields_writes_decimal_hours_per_week(self):
+        profile_table = _ProfileSeedTable()
+        with mock.patch.object(
+            dynamodb_models,
+            "dynamodb",
+            _RoutingDynamo({dynamodb_models.COACH_PROFILES_TABLE: profile_table}),
+        ):
+            ok = dynamodb_models.merge_coach_profile_fields(
+                "ath_123",
+                {"time_availability": {"sessions_per_week": 4, "hours_per_week": 4.5}},
+            )
+
+        self.assertTrue(ok)
+        values = profile_table.last_update_kwargs["ExpressionAttributeValues"]
+        self.assertEqual(
+            values[":v_time_availability"],
+            {"sessions_per_week": 4, "hours_per_week": Decimal("4.5")},
+        )
 
     def test_get_memory_notes_returns_empty_when_missing(self):
         profile_table = _ProfileMemoryTable({"athlete_id": "ath_123"})

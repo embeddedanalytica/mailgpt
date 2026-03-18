@@ -460,7 +460,7 @@ class TestCurrentPlanHelpers(unittest.TestCase):
         with mock.patch.object(dynamodb_models, "dynamodb", dynamo), mock.patch.object(
             dynamodb_models,
             "get_current_plan",
-            side_effect=[plan_v1, plan_v1, plan_v2],
+            side_effect=[plan_v1, plan_v1, plan_v2, plan_v2],
         ), mock.patch.object(
             dynamodb_models,
             "_get_plan_update_request",

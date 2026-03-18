@@ -11,7 +11,7 @@ from athlete_memory_contract import (
 )
 from response_generation_contract import ResponseBrief, normalize_reply_mode
 from rule_engine import RuleEngineContractError, validate_rule_engine_output
-from email_copy import EmailCopy
+from skills.response_generation import build_clarification_questions
 
 
 def _string_field(value: Any) -> Optional[str]:
@@ -119,9 +119,7 @@ def build_response_brief(
     if clarification_needed:
         decision_context["clarification_needed"] = True
     if missing_profile_fields:
-        decision_context["clarification_questions"] = EmailCopy.build_profile_collection_lines(
-            missing_profile_fields
-        )
+        decision_context["clarification_questions"] = build_clarification_questions(missing_profile_fields)
 
     include_decision_fields = reply_mode != "off_topic_redirect"
     if validated_engine_output is not None and include_decision_fields:

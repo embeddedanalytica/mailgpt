@@ -112,3 +112,9 @@ Current runtime status belongs in [README.md](/Users/levonsh/Projects/smartmail/
 **Decision:** Implement LLM-powered workflows as separate skill units with dedicated prompts, strict schemas, validators, and eval hooks.
 **Modeling rule:** A skill may use the same model as other skills or a different model; model selection is per-workflow and not the primary contract.
 **Why:** Preserves isolation, testability, and contract stability while allowing flexible model routing by workflow.
+
+---
+
+## D15 — Prompt Ownership Lives in Skill Packages, Not `email_copy.py`
+**Decision:** `email_service/email_copy.py` is transactional outbound copy only. LLM prompt text and communication helpers must live under skill packages (`skills/planner/*`, `skills/response_generation/*`).
+**Why:** Keeps coach-like reasoning and communication boundaries explicit, testable, and aligned with skill ownership contracts.

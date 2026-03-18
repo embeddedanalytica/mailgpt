@@ -3,11 +3,11 @@ import unittest
 from unittest import mock
 
 import profile as profile_module
-from openai_responder import ProfileExtractionError
+from skills.planner import ProfileExtractionProposalError
 
 
 class TestParseProfileUpdates(unittest.TestCase):
-    @mock.patch("profile.ProfileExtractor.extract_profile_fields")
+    @mock.patch("profile.run_profile_extraction_workflow")
     def test_parses_refined_profile_fields(self, mock_extract):
         mock_extract.return_value = {
             "primary_goal": "run a marathon  ",
@@ -28,7 +28,7 @@ class TestParseProfileUpdates(unittest.TestCase):
         self.assertEqual(updates.get("experience_level_note"), "returning after break")
         self.assertEqual(len(updates.get("constraints", [])), 2)
 
-    @mock.patch("profile.ProfileExtractor.extract_profile_fields")
+    @mock.patch("profile.run_profile_extraction_workflow")
     def test_defaults_experience_to_unknown_when_missing(self, mock_extract):
         mock_extract.return_value = {
             "primary_goal": "stay healthy",
@@ -38,13 +38,38 @@ class TestParseProfileUpdates(unittest.TestCase):
         updates = profile_module.parse_profile_updates_from_email(body)
         self.assertEqual(updates.get("experience_level"), "unknown")
 
-    @mock.patch("profile.ProfileExtractor.extract_profile_fields")
+    @mock.patch("profile.run_profile_extraction_workflow")
     def test_llm_failure_fails_closed(self, mock_extract):
-        mock_extract.side_effect = ProfileExtractionError("boom")
+        mock_extract.side_effect = ProfileExtractionProposalError("boom")
         body = "Goal: run a marathon"
         updates = profile_module.parse_profile_updates_from_email(body)
         # On extraction failure, no updates are applied.
         self.assertEqual(updates, {})
+
+    @mock.patch("profile.run_profile_extraction_workflow")
+    def test_spelled_schedule_phrase_is_applied_when_extractor_returns_sessions(self, mock_extract):
+        mock_extract.return_value = {
+            "primary_goal": None,
+            "time_availability": {"sessions_per_week": 4, "hours_per_week": None},
+            "experience_level": "intermediate",
+            "experience_level_note": None,
+            "constraints": None,
+        }
+        body = "I can train four days a week most weeks if we keep it realistic."
+        updates = profile_module.parse_profile_updates_from_email(body)
+        self.assertEqual(updates.get("time_availability", {}).get("sessions_per_week"), 4)
+
+    @mock.patch("profile.run_profile_extraction_workflow")
+    def test_nullable_unknown_time_availability_keeps_time_missing(self, mock_extract):
+        mock_extract.return_value = {
+            "primary_goal": "build consistency",
+            "time_availability": None,
+            "experience_level": "unknown",
+            "experience_level_note": None,
+            "constraints": [],
+        }
+        updates = profile_module.parse_profile_updates_from_email("Not sure on schedule yet.")
+        self.assertNotIn("time_availability", updates)
 
 
 class TestGetMissingRequiredProfileFields(unittest.TestCase):
@@ -70,6 +95,15 @@ class TestGetMissingRequiredProfileFields(unittest.TestCase):
             "experience_level": "beginner",
         }
         self.assertEqual(profile_module.get_missing_required_profile_fields(profile), ["constraints"])
+
+    def test_null_time_availability_is_missing(self):
+        profile = {
+            "primary_goal": "10k PR",
+            "time_availability": None,
+            "experience_level": "unknown",
+            "constraints": [],
+        }
+        self.assertEqual(profile_module.get_missing_required_profile_fields(profile), ["time_availability"])
 
 if __name__ == "__main__":
     unittest.main()

@@ -18,14 +18,13 @@ class TestInboundRuleRouter(unittest.TestCase):
 
     def test_intent_matrix_modes(self):
         with mock.patch.object(router, "get_coach_profile", return_value={"time_bucket": "4_6h"}), mock.patch.object(
-            router.SessionCheckinExtractor,
-            "extract_session_checkin_fields",
+            router,
+            "run_session_checkin_extraction_workflow",
             return_value={
                 "days_available": 4,
                 "pain_score": 2,
                 "risk_candidate": "green",
                 "event_date": None,
-                "has_upcoming_event": False,
             },
         ), mock.patch.object(router, "list_missing_or_low_confidence_critical_fields", return_value=[]), mock.patch.object(
             router,
@@ -73,9 +72,9 @@ class TestInboundRuleRouter(unittest.TestCase):
 
     def test_extractor_failure_forces_no_mutate(self):
         with mock.patch.object(router, "get_coach_profile", return_value={}), mock.patch.object(
-            router.SessionCheckinExtractor,
-            "extract_session_checkin_fields",
-            side_effect=router.SessionCheckinExtractionError("fail"),
+            router,
+            "run_session_checkin_extraction_workflow",
+            side_effect=router.SessionCheckinExtractionProposalError("fail"),
         ), mock.patch.object(router, "run_rule_engine_for_week") as run_re:
             decision = router.route_inbound_with_rule_engine(
                 "ath_1",
@@ -97,14 +96,13 @@ class TestInboundRuleRouter(unittest.TestCase):
             }
         )
         with mock.patch.object(router, "get_coach_profile", return_value={"time_bucket": "4_6h"}), mock.patch.object(
-            router.SessionCheckinExtractor,
-            "extract_session_checkin_fields",
+            router,
+            "run_session_checkin_extraction_workflow",
             return_value={
                 "days_available": 4,
                 "pain_score": 2,
                 "risk_candidate": "green",
                 "event_date": None,
-                "has_upcoming_event": False,
             },
         ), mock.patch.object(router, "list_missing_or_low_confidence_critical_fields", return_value=[]), mock.patch.object(
             router,
@@ -137,14 +135,13 @@ class TestInboundRuleRouter(unittest.TestCase):
             }
         )
         with mock.patch.object(router, "get_coach_profile", return_value={"time_bucket": "4_6h"}), mock.patch.object(
-            router.SessionCheckinExtractor,
-            "extract_session_checkin_fields",
+            router,
+            "run_session_checkin_extraction_workflow",
             return_value={
                 "days_available": 3,
                 "pain_score": 1,
                 "risk_candidate": "green",
                 "event_date": None,
-                "has_upcoming_event": False,
             },
         ), mock.patch.object(router, "list_missing_or_low_confidence_critical_fields", return_value=[]), mock.patch.object(
             router,
@@ -172,14 +169,13 @@ class TestInboundRuleRouter(unittest.TestCase):
             }
         )
         with mock.patch.object(router, "get_coach_profile", return_value={}), mock.patch.object(
-            router.SessionCheckinExtractor,
-            "extract_session_checkin_fields",
+            router,
+            "run_session_checkin_extraction_workflow",
             return_value={
                 "days_available": 2,
                 "pain_score": 1,
                 "risk_candidate": "yellow",
                 "event_date": None,
-                "has_upcoming_event": False,
             },
         ), mock.patch.object(router, "list_missing_or_low_confidence_critical_fields", return_value=[]), mock.patch.object(
             router,
@@ -203,9 +199,9 @@ class TestInboundRuleRouter(unittest.TestCase):
             logs.append(kwargs)
 
         with mock.patch.object(router, "get_coach_profile", return_value={}), mock.patch.object(
-            router.SessionCheckinExtractor,
-            "extract_session_checkin_fields",
-            side_effect=router.SessionCheckinExtractionError("fail"),
+            router,
+            "run_session_checkin_extraction_workflow",
+            side_effect=router.SessionCheckinExtractionProposalError("fail"),
         ):
             router.route_inbound_with_rule_engine(
                 "ath_1",
@@ -225,3 +221,80 @@ class TestInboundRuleRouter(unittest.TestCase):
         self.assertIn("plan_update_result_status", entry)
         self.assertIn("clarification_needed", entry)
         self.assertIn("intent", entry)
+
+    def test_backfills_missing_fields_from_profile(self):
+        engine_output = mock.Mock(
+            to_dict=lambda: {
+                "plan_update_status": "updated",
+                "track": "main_build",
+                "risk_flag": "green",
+            }
+        )
+        profile = {
+            "time_bucket": "4_6h",
+            "main_sport_current": "run",
+            "schedule_variability": "medium",
+            "experience_level": "intermediate",
+            "structure_preference": "structure",
+            "time_availability": {"sessions_per_week": 4},
+        }
+        with mock.patch.object(router, "get_coach_profile", return_value=profile), mock.patch.object(
+            router,
+            "run_session_checkin_extraction_workflow",
+            return_value={"pain_score": 2, "event_date": "2026-06-20"},
+        ), mock.patch.object(router, "list_missing_or_low_confidence_critical_fields", return_value=[]), mock.patch.object(
+            router,
+            "run_rule_engine_for_week",
+            return_value=engine_output,
+        ) as run_re, mock.patch.object(
+            router,
+            "apply_rule_engine_plan_update",
+            return_value={"status": "applied", "plan_version": 2, "error_code": None},
+        ):
+            decision = router.route_inbound_with_rule_engine(
+                "ath_1",
+                "u@example.com",
+                self._email_data(),
+                {"intent": "check_in"},
+            )
+
+        self.assertEqual(decision["mode"], "mutate")
+        checkin = run_re.call_args.kwargs["checkin"]
+        self.assertEqual(checkin["days_available"], 4)
+        self.assertEqual(checkin["experience_level"], "intermediate")
+        self.assertEqual(checkin["structure_preference"], "structure")
+
+    def test_missing_days_available_can_still_run_when_profile_has_durable_schedule(self):
+        engine_output = mock.Mock(
+            to_dict=lambda: {
+                "plan_update_status": "updated",
+                "track": "main_build",
+                "risk_flag": "green",
+            }
+        )
+        with mock.patch.object(
+            router,
+            "get_coach_profile",
+            return_value={"time_availability": {"sessions_per_week": 4}},
+        ), mock.patch.object(
+            router,
+            "run_session_checkin_extraction_workflow",
+            return_value={"pain_score": 2, "event_date": "2026-06-20"},
+        ), mock.patch.object(router, "list_missing_or_low_confidence_critical_fields", return_value=[]), mock.patch.object(
+            router,
+            "run_rule_engine_for_week",
+            return_value=engine_output,
+        ) as run_re, mock.patch.object(
+            router,
+            "apply_rule_engine_plan_update",
+            return_value={"status": "applied", "plan_version": 2, "error_code": None},
+        ):
+            decision = router.route_inbound_with_rule_engine(
+                "ath_1",
+                "u@example.com",
+                self._email_data(),
+                {"intent": "availability_update"},
+            )
+
+        self.assertEqual(decision["mode"], "mutate")
+        self.assertEqual(run_re.call_args.kwargs["checkin"]["days_available"], 4)

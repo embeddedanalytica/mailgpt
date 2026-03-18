@@ -10,7 +10,7 @@ import boto3  # type: ignore
 import openai  # type: ignore
 
 from config import OPENAI_REASONING_MODEL, RESPONSE_EVALUATION_TABLE, AWS_REGION
-from email_copy import AIEvaluationCopy
+from skills.response_generation import EVAL_SYSTEM_PROMPT_TEMPLATE
 
 logger = logging.getLogger(__name__)
 openai.api_key = os.getenv("OPENAI_API_KEY")
@@ -20,7 +20,7 @@ dynamodb = boto3.resource("dynamodb", region_name=AWS_REGION)
 class ResponseEvaluation:
     """Evaluates AI-generated replies and stores results in DynamoDB."""
 
-    EVAL_SYSTEM_PROMPT_TEMPLATE = AIEvaluationCopy.EVAL_SYSTEM_PROMPT_TEMPLATE
+    EVAL_SYSTEM_PROMPT_TEMPLATE = EVAL_SYSTEM_PROMPT_TEMPLATE
 
     @staticmethod
     def evaluate_response(original_email: str, ai_response: str) -> str | None:

@@ -41,7 +41,7 @@ With boto3/botocore installed (e.g. in Lambda or a venv), coaching and business 
 - **profile** – ✅ `test_profile.py`: extractors, parse, get_missing, build_reply.
 - **coaching** – ✅ `test_coaching.py` (with boto): build_profile_gated_reply with mocked get_coach_profile/merge.
 - **business** – ✅ `test_business.py` (with boto): get_reply_for_inbound delegates to coaching.
-- **openai_responder** – *No tests*. Add `test_openai_responder.py` with mocked `openai.OpenAI()` to test `generate_response`, `should_ai_respond` (and intention prompt).
+- **skills/planner workflow runners** – ✅ `test_planner_skill_workflows.py`: conversation intelligence, profile extraction, and session-checkin extraction success/failure paths.
 - **response_evaluator** – *No tests*. Add `test_response_evaluator.py` with mocked OpenAI and DynamoDB.
 - **email_processor** – ✅ `test_email_processor.py`: parse_sns_event, decode, clean.
 - **email_reply_sender** – *No dedicated tests*. E2E uses mocked `send_reply`. Add `test_email_reply_sender.py` to test `format_reply`, `filter_valid_recipients`, `get_geniml_email` in isolation; mock SES and ResponseEvaluation for `send_reply`.
@@ -59,8 +59,7 @@ With boto3/botocore installed (e.g. in Lambda or a venv), coaching and business 
 ## Gaps to fill (recommended)
 
 1. **auth** – `test_auth.py`: mock Dynamo for `is_registered`; mock `create_action_token` and `VerificationEmailSender` for `handle_unverified_sender` (cooldown path vs sent path).
-2. **openai_responder** – `test_openai_responder.py`: mock `openai.OpenAI().chat.completions.create`; assert prompts and that `generate_response` / `should_ai_respond` return expected shapes.
-3. **response_evaluator** – `test_response_evaluator.py`: mock OpenAI and DynamoDB; assert eval prompt and Dynamo put_item.
-4. **email_reply_sender** – `test_email_reply_sender.py`: unit tests for `format_reply`, `filter_valid_recipients`, `get_geniml_email`; mock `ResponseEvaluation.evaluate_response` and SES for `send_reply`.
+2. **response_evaluator** – `test_response_evaluator.py`: mock OpenAI and DynamoDB; assert eval prompt and Dynamo put_item.
+3. **email_reply_sender** – `test_email_reply_sender.py`: unit tests for `format_reply`, `filter_valid_recipients`, `get_geniml_email`; mock `ResponseEvaluation.evaluate_response` and SES for `send_reply`.
 
 After adding these, you’ll have **isolation tests for every component** and **E2E coverage** for the handler (auth, rate limit, business, send).

@@ -2,6 +2,7 @@
 
 import json
 import logging
+from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
 from athlete_memory_contract import (
@@ -18,6 +19,38 @@ from skills.memory.long_term.validator import validate_long_term_memory_response
 from skills.runtime import SkillExecutionError, execute_json_schema, preview_text
 
 logger = logging.getLogger(__name__)
+
+
+def _memory_preview(notes: Any, *, limit: int = 2) -> str:
+    def _coerce(value: Any) -> Any:
+        if isinstance(value, Decimal):
+            if value % 1 == 0:
+                return int(value)
+            return float(value)
+        if isinstance(value, list):
+            return [_coerce(item) for item in value]
+        if isinstance(value, dict):
+            return {key: _coerce(val) for key, val in value.items()}
+        return value
+
+    if not isinstance(notes, list):
+        return repr(notes)
+    preview = []
+    for note in notes[:limit]:
+        if isinstance(note, dict):
+            preview.append(
+                {
+                    "memory_note_id": note.get("memory_note_id"),
+                    "fact_type": note.get("fact_type"),
+                    "fact_key": note.get("fact_key"),
+                    "status": note.get("status"),
+                    "summary": str(note.get("summary", ""))[:120],
+                    "keys": sorted(note.keys()),
+                }
+            )
+        else:
+            preview.append({"type": type(note).__name__, "repr": repr(note)[:120]})
+    return json.dumps(_coerce(preview), separators=(",", ":"), ensure_ascii=True)
 
 
 def build_long_term_memory_user_payload(
@@ -74,11 +107,23 @@ def run_long_term_memory_refresh(
             warning_log_name="memory_refresh_long_term",
         )
         validated = validate_long_term_memory_response(data)
+        logger.info(
+            "Long-term memory refresh validated candidates prior_count=%s candidate_count=%s candidates_preview=%s",
+            len(prior_memory_notes),
+            len(validated.get("candidates", [])),
+            _memory_preview(validated.get("candidates", [])),
+        )
         reduced_notes = reduce_long_term_memory(
             stored_memory_notes=stored_memory_notes
             if stored_memory_notes is not None
             else prior_memory_notes,
             candidate_payload=validated,
+        )
+        logger.info(
+            "Long-term memory refresh reduced notes stored_count=%s reduced_count=%s reduced_preview=%s",
+            len(stored_memory_notes if stored_memory_notes is not None else prior_memory_notes),
+            len(reduced_notes),
+            _memory_preview(reduced_notes),
         )
         return {
             "memory_notes": reduced_notes,

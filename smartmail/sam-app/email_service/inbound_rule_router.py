@@ -2,26 +2,33 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import date
 from typing import Any, Callable, Dict, Optional
 
 try:  # pragma: no cover - import style depends on runner context
     from .ai_extraction_contract import list_missing_or_low_confidence_critical_fields
     from .dynamodb_models import get_coach_profile
-    from .openai_responder import SessionCheckinExtractionError, SessionCheckinExtractor
     from .rule_engine_orchestrator import (
         RuleEngineOrchestratorError,
         apply_rule_engine_plan_update,
         run_rule_engine_for_week,
     )
+    from .skills.planner import (
+        SessionCheckinExtractionProposalError,
+        run_session_checkin_extraction_workflow,
+    )
 except ImportError:  # pragma: no cover
     from ai_extraction_contract import list_missing_or_low_confidence_critical_fields
     from dynamodb_models import get_coach_profile
-    from openai_responder import SessionCheckinExtractionError, SessionCheckinExtractor
     from rule_engine_orchestrator import (
         RuleEngineOrchestratorError,
         apply_rule_engine_plan_update,
         run_rule_engine_for_week,
+    )
+    from skills.planner import (
+        SessionCheckinExtractionProposalError,
+        run_session_checkin_extraction_workflow,
     )
 
 _MUTATE_INTENTS = {"check_in", "plan_change_request", "availability_update"}
@@ -38,6 +45,8 @@ _SPECIAL_INTENT_BEHAVIOR = {
         "rule_engine_status": "not_applicable_safety",
     },
 }
+
+logger = logging.getLogger(__name__)
 
 
 class InboundRuleRouterError(ValueError):
@@ -83,16 +92,36 @@ def _mode_for_intent(intent: str, clarification_needed: bool, has_extracted_chec
 
 def _enrich_checkin_payload(extracted: Dict[str, Any], profile: Dict[str, Any]) -> Dict[str, Any]:
     payload = dict(extracted)
+    injected_fields: list[str] = []
     if "week_start" not in payload:
         payload["week_start"] = date.today().strftime("%Y-%m-%d")
     if "time_bucket" not in payload and profile.get("time_bucket"):
         payload["time_bucket"] = profile.get("time_bucket")
+        injected_fields.append("time_bucket")
     if "main_sport_current" not in payload and profile.get("main_sport_current"):
         payload["main_sport_current"] = profile.get("main_sport_current")
+        injected_fields.append("main_sport_current")
     if "schedule_variability" not in payload and profile.get("schedule_variability"):
         payload["schedule_variability"] = profile.get("schedule_variability")
-    if "has_upcoming_event" not in payload:
-        payload["has_upcoming_event"] = None
+        injected_fields.append("schedule_variability")
+    if "experience_level" not in payload and profile.get("experience_level"):
+        payload["experience_level"] = profile.get("experience_level")
+        injected_fields.append("experience_level")
+    if "structure_preference" not in payload and profile.get("structure_preference"):
+        payload["structure_preference"] = profile.get("structure_preference")
+        injected_fields.append("structure_preference")
+    if "days_available" not in payload:
+        time_availability = profile.get("time_availability")
+        if isinstance(time_availability, dict):
+            sessions_per_week = time_availability.get("sessions_per_week")
+            if isinstance(sessions_per_week, int):
+                payload["days_available"] = sessions_per_week
+                injected_fields.append("days_available")
+    if injected_fields:
+        logger.info(
+            "Rule-engine payload backfilled from profile: injected_fields=%s",
+            "|".join(injected_fields),
+        )
     return payload
 
 
@@ -169,7 +198,7 @@ def route_inbound_with_rule_engine(
             body_chars=len(inbound_body),
         )
     try:
-        extracted_checkin = SessionCheckinExtractor.extract_session_checkin_fields(inbound_body)
+        extracted_checkin = run_session_checkin_extraction_workflow(inbound_body)
         if extracted_checkin:
             missing_or_low = list_missing_or_low_confidence_critical_fields(extracted_checkin)
             if log_outcome is not None:
@@ -185,7 +214,7 @@ def route_inbound_with_rule_engine(
                     ),
                     missing_or_low_confidence="|".join(missing_or_low),
                 )
-    except SessionCheckinExtractionError:
+    except SessionCheckinExtractionProposalError:
         extraction_failed = True
         if log_outcome is not None:
             log_outcome(

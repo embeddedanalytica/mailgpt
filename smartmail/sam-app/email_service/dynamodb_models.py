@@ -16,6 +16,8 @@ import base64
 import uuid
 import json
 import hashlib
+import math
+from decimal import Decimal
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 from botocore.exceptions import ClientError
@@ -83,6 +85,38 @@ _PROFILE_TEXT_FIELDS = {
     "feedback_style_preference",
     "coach_expectations",
 }
+
+
+def _memory_debug_preview(notes: Any, *, limit: int = 2) -> str:
+    def _coerce(value: Any) -> Any:
+        if isinstance(value, Decimal):
+            if value % 1 == 0:
+                return int(value)
+            return float(value)
+        if isinstance(value, list):
+            return [_coerce(item) for item in value]
+        if isinstance(value, dict):
+            return {key: _coerce(val) for key, val in value.items()}
+        return value
+
+    if not isinstance(notes, list):
+        return repr(notes)
+    preview = []
+    for note in notes[:limit]:
+        if isinstance(note, dict):
+            preview.append(
+                {
+                    "memory_note_id": note.get("memory_note_id"),
+                    "fact_type": note.get("fact_type"),
+                    "fact_key": note.get("fact_key"),
+                    "status": note.get("status"),
+                    "summary": str(note.get("summary", ""))[:120],
+                    "keys": sorted(note.keys()),
+                }
+            )
+        else:
+            preview.append({"type": type(note).__name__, "repr": repr(note)[:120]})
+    return json.dumps(_coerce(preview), separators=(",", ":"), ensure_ascii=True)
 _TYPE_SERIALIZER = TypeSerializer()
 
 
@@ -141,6 +175,35 @@ def _normalize_profile_text_field(value: Any) -> str:
     return value.strip()[:_PROFILE_TEXT_FIELD_MAX_LEN]
 
 
+def _to_dynamodb_decimal(value: Any) -> Optional[Decimal]:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    numeric = float(value)
+    if numeric <= 0:
+        return None
+    return Decimal(str(numeric))
+
+
+def serialize_dynamodb_payload(value: Any) -> Any:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, Decimal):
+        return value
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError('DynamoDB payload cannot contain NaN or Infinity floats')
+        return Decimal(str(value))
+    if isinstance(value, dict):
+        return {key: serialize_dynamodb_payload(val) for key, val in value.items()}
+    if isinstance(value, list):
+        return [serialize_dynamodb_payload(item) for item in value]
+    if isinstance(value, tuple):
+        return [serialize_dynamodb_payload(item) for item in value]
+    return value
+
+
 def normalize_profile_updates(updates: Dict[str, Any]) -> Dict[str, Any]:
     normalized: Dict[str, Any] = {}
 
@@ -157,8 +220,9 @@ def normalize_profile_updates(updates: Dict[str, Any]) -> Dict[str, Any]:
         if isinstance(sessions_per_week, (int, float)) and int(sessions_per_week) > 0:
             normalized_time["sessions_per_week"] = int(sessions_per_week)
         hours_per_week = time_availability.get("hours_per_week")
-        if isinstance(hours_per_week, (int, float)) and float(hours_per_week) > 0:
-            normalized_time["hours_per_week"] = float(hours_per_week)
+        hours_decimal = _to_dynamodb_decimal(hours_per_week)
+        if hours_decimal is not None:
+            normalized_time["hours_per_week"] = hours_decimal
         if normalized_time:
             normalized["time_availability"] = normalized_time
 
@@ -216,10 +280,10 @@ def normalize_profile_record(profile: Optional[Dict[str, Any]]) -> Dict[str, Any
     time_availability = profile.get("time_availability")
     if isinstance(time_availability, dict):
         sessions_per_week = time_availability.get("sessions_per_week")
-        if isinstance(sessions_per_week, int) and sessions_per_week > 0:
-            normalized["time_availability"]["sessions_per_week"] = sessions_per_week
+        if isinstance(sessions_per_week, (int, Decimal)) and int(sessions_per_week) > 0:
+            normalized["time_availability"]["sessions_per_week"] = int(sessions_per_week)
         hours_per_week = time_availability.get("hours_per_week")
-        if isinstance(hours_per_week, (int, float)) and float(hours_per_week) > 0:
+        if isinstance(hours_per_week, (int, float, Decimal)) and float(hours_per_week) > 0:
             normalized["time_availability"]["hours_per_week"] = float(hours_per_week)
 
     experience_level = str(profile.get("experience_level", "unknown")).strip().lower()
@@ -284,11 +348,11 @@ def ensure_athlete_id_for_email(email: str) -> Optional[str]:
                 "#updated_at": "updated_at",
                 "#athlete_id": "athlete_id",
             },
-            ExpressionAttributeValues={
+            ExpressionAttributeValues=serialize_dynamodb_payload({
                 ":created_at": now,
                 ":updated_at": now,
                 ":athlete_id": new_athlete_id,
-            },
+            }),
             ReturnValues="ALL_NEW",
         )
         item = response.get("Attributes", {})
@@ -327,7 +391,7 @@ def ensure_athlete_id_for_email(email: str) -> Optional[str]:
                 "#coach_expectations": "coach_expectations",
                 "#response_cadence_expectation": "response_cadence_expectation",
             },
-            ExpressionAttributeValues={
+            ExpressionAttributeValues=serialize_dynamodb_payload({
                 ":created_at": now,
                 ":updated_at": now,
                 ":experience_level": "unknown",
@@ -340,7 +404,7 @@ def ensure_athlete_id_for_email(email: str) -> Optional[str]:
                 ":feedback_style_preference": "",
                 ":coach_expectations": "",
                 ":response_cadence_expectation": "unknown",
-            },
+            }),
         )
         return athlete_id
     except ClientError as e:
@@ -397,7 +461,7 @@ def merge_coach_profile_fields(athlete_id: str, updates: Dict[str, Any]) -> bool
             Key={"athlete_id": athlete_id},
             UpdateExpression="SET " + ", ".join(set_clauses),
             ExpressionAttributeNames=expression_attribute_names,
-            ExpressionAttributeValues=expression_attribute_values,
+            ExpressionAttributeValues=serialize_dynamodb_payload(expression_attribute_values),
         )
         return True
     except ClientError as e:
@@ -416,9 +480,11 @@ def get_memory_notes(athlete_id: str) -> List[Dict[str, Any]]:
         return validate_memory_note_list(raw_notes)
     except AthleteMemoryContractError as exc:
         logger.error(
-            "Invalid persisted memory_notes athlete_id=%s error=%s",
+            "Invalid persisted memory_notes athlete_id=%s error=%s raw_notes_count=%s raw_notes_preview=%s",
             athlete_id,
             exc,
+            len(raw_notes),
+            _memory_debug_preview(raw_notes),
         )
         return []
 
@@ -460,6 +526,13 @@ def _update_coach_profile_memory_fields(
     memory_notes: List[Dict[str, Any]],
     continuity_summary: Optional[Dict[str, Any]] = None,
 ) -> bool:
+    logger.info(
+        "Persisting memory artifacts athlete_id=%s memory_notes_count=%s memory_notes_preview=%s has_continuity_summary=%s",
+        athlete_id,
+        len(memory_notes) if isinstance(memory_notes, list) else "non_list",
+        _memory_debug_preview(memory_notes),
+        continuity_summary is not None,
+    )
     table = dynamodb.Table(COACH_PROFILES_TABLE)
     now = int(time.time())
     expression_attribute_names = {
@@ -470,7 +543,7 @@ def _update_coach_profile_memory_fields(
     expression_attribute_values = {
         ":created_at": now,
         ":updated_at": now,
-        ":memory_notes": memory_notes,
+        ":memory_notes": serialize_dynamodb_payload(memory_notes),
     }
     set_clauses = [
         "#created_at = if_not_exists(#created_at, :created_at)",
@@ -479,7 +552,7 @@ def _update_coach_profile_memory_fields(
     ]
     if continuity_summary is not None:
         expression_attribute_names["#continuity_summary"] = "continuity_summary"
-        expression_attribute_values[":continuity_summary"] = continuity_summary
+        expression_attribute_values[":continuity_summary"] = serialize_dynamodb_payload(continuity_summary)
         set_clauses.append("#continuity_summary = :continuity_summary")
 
     table.update_item(
@@ -499,7 +572,13 @@ def replace_memory_notes(athlete_id: str, memory_notes: List[Dict[str, Any]]) ->
     try:
         normalized_notes = validate_memory_note_list(memory_notes)
     except AthleteMemoryContractError as exc:
-        logger.error("Invalid memory_notes payload athlete_id=%s error=%s", athlete_id, exc)
+        logger.error(
+            "Invalid memory_notes payload athlete_id=%s error=%s raw_count=%s raw_preview=%s",
+            athlete_id,
+            exc,
+            len(memory_notes) if isinstance(memory_notes, list) else "non_list",
+            _memory_debug_preview(memory_notes),
+        )
         return False
 
     try:
@@ -674,7 +753,13 @@ def replace_memory_artifacts(
             ContinuitySummary.from_dict(continuity_summary).to_dict()
         )
     except AthleteMemoryContractError as exc:
-        logger.error("Invalid memory artifact payload athlete_id=%s error=%s", athlete_id, exc)
+        logger.error(
+            "Invalid memory artifact payload athlete_id=%s error=%s raw_count=%s raw_preview=%s",
+            athlete_id,
+            exc,
+            len(memory_notes) if isinstance(memory_notes, list) else "non_list",
+            _memory_debug_preview(memory_notes),
+        )
         return False
 
     try:
@@ -765,7 +850,7 @@ def upsert_athlete_connection(
             Key={"athlete_id": athlete_id, "provider": provider_norm},
             UpdateExpression="SET " + ", ".join(set_clauses),
             ExpressionAttributeNames=expression_attribute_names,
-            ExpressionAttributeValues=expression_attribute_values,
+            ExpressionAttributeValues=serialize_dynamodb_payload(expression_attribute_values),
         )
         return True
     except ClientError as e:
@@ -900,7 +985,7 @@ def put_normalized_activity(
     try:
         table = dynamodb.Table(ACTIVITIES_TABLE)
         table.put_item(
-            Item=item,
+            Item=serialize_dynamodb_payload(item),
             ConditionExpression="attribute_not_exists(provider_activity_key)",
         )
         return {"inserted": True, "reason": "inserted", "provider_activity_key": provider_activity_key}
@@ -943,7 +1028,7 @@ def put_daily_metrics(
             item["source_window_start_ts"] = int(source_window_start_ts)
         if source_window_end_ts is not None:
             item["source_window_end_ts"] = int(source_window_end_ts)
-        table.put_item(Item=item)
+        table.put_item(Item=serialize_dynamodb_payload(item))
         return True
     except ClientError as e:
         logger.error(f"Error putting daily metrics athlete_id={athlete_id}, metric_date={metric_date}: {e}")
@@ -978,20 +1063,20 @@ def normalize_progress_snapshot(record: Optional[Dict[str, Any]], athlete_id: st
     record = record or {}
 
     last_activity_at = record.get("last_activity_at")
-    if isinstance(last_activity_at, int) and last_activity_at > 0:
-        base["last_activity_at"] = last_activity_at
+    if isinstance(last_activity_at, (int, Decimal)) and int(last_activity_at) > 0:
+        base["last_activity_at"] = int(last_activity_at)
 
     last_activity_type = str(record.get("last_activity_type", "")).strip()
     if last_activity_type:
         base["last_activity_type"] = last_activity_type
 
     last_7d = record.get("last_7d_activity_count")
-    if isinstance(last_7d, int) and last_7d >= 0:
-        base["last_7d_activity_count"] = last_7d
+    if isinstance(last_7d, (int, Decimal)) and int(last_7d) >= 0:
+        base["last_7d_activity_count"] = int(last_7d)
 
     last_14d = record.get("last_14d_activity_count")
-    if isinstance(last_14d, int) and last_14d >= 0:
-        base["last_14d_activity_count"] = last_14d
+    if isinstance(last_14d, (int, Decimal)) and int(last_14d) >= 0:
+        base["last_14d_activity_count"] = int(last_14d)
 
     consistency_status = str(record.get("consistency_status", "")).strip().lower()
     if consistency_status in _CONSISTENCY_STATUSES:
@@ -1018,8 +1103,8 @@ def normalize_progress_snapshot(record: Optional[Dict[str, Any]], athlete_id: st
         base["last_reported_sleep"] = sleep
 
     updated_at = record.get("updated_at")
-    if isinstance(updated_at, int) and updated_at > 0:
-        base["updated_at"] = updated_at
+    if isinstance(updated_at, (int, Decimal)) and int(updated_at) > 0:
+        base["updated_at"] = int(updated_at)
 
     data_quality = str(record.get("data_quality", "")).strip().lower()
     if data_quality in _DATA_QUALITY:
@@ -1066,7 +1151,7 @@ def ensure_progress_snapshot_exists(athlete_id: str) -> bool:
                 "#last_reported_sleep": "last_reported_sleep",
                 "#data_quality": "data_quality",
             },
-            ExpressionAttributeValues={
+            ExpressionAttributeValues=serialize_dynamodb_payload({
                 ":updated_at": defaults["updated_at"],
                 ":last_activity_at": defaults["last_activity_at"],
                 ":last_activity_type": defaults["last_activity_type"],
@@ -1079,7 +1164,7 @@ def ensure_progress_snapshot_exists(athlete_id: str) -> bool:
                 ":last_reported_soreness": defaults["last_reported_soreness"],
                 ":last_reported_sleep": defaults["last_reported_sleep"],
                 ":data_quality": defaults["data_quality"],
-            },
+            }),
         )
         return True
     except ClientError as e:
@@ -1133,7 +1218,7 @@ def put_manual_activity_snapshot(
         if subjective_state:
             item["subjective_state"] = subjective_state
         snapshots_table.put_item(
-            Item=item,
+            Item=serialize_dynamodb_payload(item),
             ConditionExpression="attribute_not_exists(snapshot_key)",
         )
     except ClientError as e:
@@ -1295,7 +1380,7 @@ def recompute_progress_snapshot(athlete_id: str, now_epoch: Optional[int] = None
 
     try:
         table = dynamodb.Table(PROGRESS_SNAPSHOTS_TABLE)
-        table.put_item(Item=snapshot)
+        table.put_item(Item=serialize_dynamodb_payload(snapshot))
         return True
     except ClientError as e:
         logger.error(f"Error writing progress snapshot athlete_id={athlete_id}: {e}")
@@ -1327,7 +1412,7 @@ def append_plan_history(
             item["changes_from_previous"] = changes_from_previous
 
         table.put_item(
-            Item=item,
+            Item=serialize_dynamodb_payload(item),
             ConditionExpression="attribute_not_exists(plan_version)",
         )
         return True
@@ -1404,7 +1489,7 @@ def log_recommendation(
             item["metadata"] = metadata
 
         table.put_item(
-            Item=item,
+            Item=serialize_dynamodb_payload(item),
             ConditionExpression="attribute_not_exists(created_at)",
         )
         return True
@@ -1458,7 +1543,7 @@ def put_message_intelligence(
         if metadata is not None:
             item["metadata"] = metadata
         table.put_item(
-            Item=item,
+            Item=serialize_dynamodb_payload(item),
             ConditionExpression="attribute_not_exists(message_id)",
         )
         return True
@@ -1537,14 +1622,14 @@ def normalize_current_plan(plan: Optional[Dict[str, Any]], fallback_goal: Option
         status = "active"
 
     plan_version_raw = plan.get("plan_version")
-    if isinstance(plan_version_raw, int) and plan_version_raw >= 1:
-        plan_version = plan_version_raw
+    if isinstance(plan_version_raw, (int, Decimal)) and int(plan_version_raw) >= 1:
+        plan_version = int(plan_version_raw)
     else:
         plan_version = 1
 
     updated_at_raw = plan.get("updated_at")
-    if isinstance(updated_at_raw, int) and updated_at_raw > 0:
-        updated_at = updated_at_raw
+    if isinstance(updated_at_raw, (int, Decimal)) and int(updated_at_raw) > 0:
+        updated_at = int(updated_at_raw)
     else:
         updated_at = now
 
@@ -1596,11 +1681,13 @@ def _build_default_current_plan(goal: Optional[str], now_epoch: Optional[int] = 
 
 
 def _serialize_item(item: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
-    return {k: _TYPE_SERIALIZER.serialize(v) for k, v in item.items()}
+    serialized_item = serialize_dynamodb_payload(item)
+    return {k: _TYPE_SERIALIZER.serialize(v) for k, v in serialized_item.items()}
 
 
 def _serialize_values(values: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
-    return {k: _TYPE_SERIALIZER.serialize(v) for k, v in values.items()}
+    serialized_values = serialize_dynamodb_payload(values)
+    return {k: _TYPE_SERIALIZER.serialize(v) for k, v in serialized_values.items()}
 
 
 def _normalize_changes_from_previous(changes_from_previous: Optional[List[str]]) -> List[str]:
@@ -1634,6 +1721,79 @@ def _normalize_plan_updates(updates: Dict[str, Any]) -> Dict[str, Any]:
             fallback_date=_default_plan_start_date(),
         )
     return normalized
+
+
+def _apply_plan_update_without_transaction(
+    *,
+    athlete_id: str,
+    expected_version: int,
+    next_version: int,
+    merged_plan: Dict[str, Any],
+    ledger_item: Dict[str, Any],
+    history_item: Dict[str, Any],
+) -> Dict[str, Any]:
+    try:
+        profile_table = dynamodb.Table(COACH_PROFILES_TABLE)
+        profile_table.update_item(
+            Key={"athlete_id": athlete_id},
+            UpdateExpression="SET #updated_at = :updated_at, #current_plan = :current_plan",
+            ConditionExpression="#current_plan.#plan_version = :expected_version",
+            ExpressionAttributeNames={
+                "#updated_at": "updated_at",
+                "#current_plan": "current_plan",
+                "#plan_version": "plan_version",
+            },
+            ExpressionAttributeValues=serialize_dynamodb_payload(
+                {
+                    ":updated_at": int(time.time()),
+                    ":current_plan": merged_plan,
+                    ":expected_version": expected_version,
+                }
+            ),
+        )
+    except ClientError as e:
+        error_code = e.response.get("Error", {}).get("Code", "")
+        if error_code == "ConditionalCheckFailedException":
+            return {
+                "status": "retryable_concurrency_error",
+                "plan_version": None,
+                "error_code": "version_conflict",
+            }
+        logger.error("Fallback plan update profile write failed athlete_id=%s: %s", athlete_id, e)
+        return {
+            "status": "validation_error",
+            "plan_version": None,
+            "error_code": "transaction_error",
+        }
+
+    try:
+        history_table = dynamodb.Table(PLAN_HISTORY_TABLE)
+        history_table.put_item(
+            Item=serialize_dynamodb_payload(history_item),
+            ConditionExpression="attribute_not_exists(plan_version)",
+        )
+    except ClientError as e:
+        error_code = e.response.get("Error", {}).get("Code", "")
+        if error_code != "ConditionalCheckFailedException":
+            logger.error("Fallback plan update history write failed athlete_id=%s: %s", athlete_id, e)
+            return {
+                "status": "validation_error",
+                "plan_version": None,
+                "error_code": "transaction_error",
+            }
+
+    try:
+        ledger_table = dynamodb.Table(PLAN_UPDATE_REQUESTS_TABLE)
+        ledger_table.put_item(
+            Item=serialize_dynamodb_payload(ledger_item),
+            ConditionExpression="attribute_not_exists(logical_request_id)",
+        )
+    except ClientError as e:
+        error_code = e.response.get("Error", {}).get("Code", "")
+        if error_code != "ConditionalCheckFailedException":
+            logger.error("Fallback plan update ledger write failed athlete_id=%s: %s", athlete_id, e)
+
+    return {"status": "applied", "plan_version": next_version, "error_code": None}
 
 
 def _compute_plan_update_payload_hash(
@@ -1860,20 +2020,31 @@ def update_current_plan(
         if normalized_changes:
             history_item["changes_from_previous"] = normalized_changes
 
+        serialized_ledger_item = _serialize_item(ledger_item)
+        serialized_profile_key = _serialize_item({"athlete_id": athlete_id})
+        serialized_update_values = _serialize_values(
+            {
+                ":updated_at": now,
+                ":current_plan": merged,
+                ":expected_version": expected_version,
+            }
+        )
+        serialized_history_item = _serialize_item(history_item)
+
         try:
             dynamodb.meta.client.transact_write_items(
                 TransactItems=[
                     {
                         "Put": {
                             "TableName": PLAN_UPDATE_REQUESTS_TABLE,
-                            "Item": _serialize_item(ledger_item),
+                            "Item": serialized_ledger_item,
                             "ConditionExpression": "attribute_not_exists(logical_request_id)",
                         }
                     },
                     {
                         "Update": {
                             "TableName": COACH_PROFILES_TABLE,
-                            "Key": _serialize_item({"athlete_id": athlete_id}),
+                            "Key": serialized_profile_key,
                             "UpdateExpression": "SET #updated_at = :updated_at, #current_plan = :current_plan",
                             "ConditionExpression": "#current_plan.#plan_version = :expected_version",
                             "ExpressionAttributeNames": {
@@ -1881,19 +2052,13 @@ def update_current_plan(
                                 "#current_plan": "current_plan",
                                 "#plan_version": "plan_version",
                             },
-                            "ExpressionAttributeValues": _serialize_values(
-                                {
-                                    ":updated_at": now,
-                                    ":current_plan": merged,
-                                    ":expected_version": expected_version,
-                                }
-                            ),
+                            "ExpressionAttributeValues": serialized_update_values,
                         }
                     },
                     {
                         "Put": {
                             "TableName": PLAN_HISTORY_TABLE,
-                            "Item": _serialize_item(history_item),
+                            "Item": serialized_history_item,
                             "ConditionExpression": "attribute_not_exists(plan_version)",
                         }
                     },
@@ -1911,6 +2076,28 @@ def update_current_plan(
                 }
 
             existing_request = _get_plan_update_request(athlete_id, normalized_request_id)
+            cancellation_reasons = [
+                {
+                    "code": str(reason.get("Code", "")),
+                    "message": str(reason.get("Message", "")),
+                }
+                for reason in (e.response.get("CancellationReasons") or [])
+                if isinstance(reason, dict)
+            ]
+            type_mismatch_on_athlete_key = any(
+                "Type mismatch for key athlete_id expected: S actual: M" in reason.get("message", "")
+                for reason in cancellation_reasons
+            )
+            if type_mismatch_on_athlete_key:
+                fallback_result = _apply_plan_update_without_transaction(
+                    athlete_id=athlete_id,
+                    expected_version=expected_version,
+                    next_version=next_version,
+                    merged_plan=merged,
+                    ledger_item=ledger_item,
+                    history_item=history_item,
+                )
+                return fallback_result
             if existing_request is not None:
                 existing_hash = str(existing_request.get("payload_hash", ""))
                 existing_version = existing_request.get("resulting_plan_version")
@@ -1989,7 +2176,7 @@ def create_action_token(
         if payload:
             item["payload"] = payload
         
-        table.put_item(Item=item)
+        table.put_item(Item=serialize_dynamodb_payload(item))
         return token_id
     except ClientError as e:
         logger.error(f"Error creating action token: {e}")

@@ -190,7 +190,7 @@ class TestRiskAndPhase(unittest.TestCase):
         self.assertEqual(
             derive_phase(
                 {"experience_level": "new"},
-                {**self.peak_event, "has_upcoming_event": True},
+                {**self.peak_event},
                 self.today,
                 {},
                 risk_flag="green",
@@ -201,7 +201,7 @@ class TestRiskAndPhase(unittest.TestCase):
         self.assertEqual(
             derive_phase(
                 {"goal_category": "event_8_16w"},
-                {**self.peak_event, "has_upcoming_event": None},
+                {**self.peak_event},
                 self.today,
                 {},
                 risk_flag="green",
@@ -212,11 +212,22 @@ class TestRiskAndPhase(unittest.TestCase):
         self.assertEqual(
             derive_phase(
                 {"goal_category": "general_consistency"},
-                {"has_upcoming_event": False},
+                {},
                 self.today,
                 {},
                 risk_flag="green",
                 effective_performance_intent=True,
+            ),
+            "build",
+        )
+        self.assertEqual(
+            derive_phase(
+                {"newly_returning": True, "goal_category": "event_8_16w"},
+                {**self.peak_event},
+                self.today,
+                {},
+                risk_flag="green",
+                effective_performance_intent=False,
             ),
             "build",
         )
@@ -459,4 +470,3 @@ class TestRoutingAndPayload(unittest.TestCase):
         )
         self.assertEqual(payload["subject_hint"], "This week: protect the two anchors")
         self.assertTrue(any(item.startswith("Priority: ") for item in payload["sessions"]))
-

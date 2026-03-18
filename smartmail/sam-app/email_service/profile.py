@@ -2,9 +2,13 @@
 Profile extraction and gating for coaching context.
 Business logic for coaching context; no auth or verification.
 """
+from decimal import Decimal
 from typing import Optional, Dict, Any, List
 
-from openai_responder import ProfileExtractor, ProfileExtractionError
+from skills.planner import (
+    ProfileExtractionProposalError,
+    run_profile_extraction_workflow,
+)
 
 
 def _contains_unknown_marker(text: str) -> bool:
@@ -25,8 +29,8 @@ def parse_profile_updates_from_email(body: str) -> Dict[str, Any]:
     updates: Dict[str, Any] = {}
 
     try:
-        raw = ProfileExtractor.extract_profile_fields(body)
-    except ProfileExtractionError:
+        raw = run_profile_extraction_workflow(body)
+    except ProfileExtractionProposalError:
         # Fail closed: do not apply any profile updates if extraction fails.
         return {}
 
@@ -100,7 +104,7 @@ def get_missing_required_profile_fields(profile: Optional[Dict[str, Any]]) -> Li
         sessions_per_week = time_availability.get("sessions_per_week")
         hours_per_week = time_availability.get("hours_per_week")
         has_sessions = isinstance(sessions_per_week, int) and sessions_per_week > 0
-        has_hours = isinstance(hours_per_week, (int, float)) and float(hours_per_week) > 0
+        has_hours = isinstance(hours_per_week, (int, float, Decimal)) and float(hours_per_week) > 0
         has_time = has_sessions or has_hours
     if not has_time:
         missing.append("time_availability")

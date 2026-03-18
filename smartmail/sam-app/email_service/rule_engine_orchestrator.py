@@ -7,7 +7,6 @@ from typing import Any, Dict
 
 try:  # pragma: no cover - import style depends on runner context
     from .dynamodb_models import update_current_plan
-    from .openai_responder import LanguageRenderError, LanguageReplyRenderer
     from .rule_engine import (
         RuleEngineContractError,
         RuleEngineOutput,
@@ -34,9 +33,9 @@ try:  # pragma: no cover - import style depends on runner context
     )
     from .rule_engine_state import load_rule_state, update_rule_state
     from .skills.planner import build_planner_brief, run_planner_workflow
+    from .skills.response_generation import LanguageRenderError, LanguageReplyRenderer
 except ImportError:  # pragma: no cover
     from dynamodb_models import update_current_plan
-    from openai_responder import LanguageRenderError, LanguageReplyRenderer
     from rule_engine import (
         RuleEngineContractError,
         RuleEngineOutput,
@@ -63,6 +62,7 @@ except ImportError:  # pragma: no cover
     )
     from rule_engine_state import load_rule_state, update_rule_state
     from skills.planner import build_planner_brief, run_planner_workflow
+    from skills.response_generation import LanguageRenderError, LanguageReplyRenderer
 
 
 class RuleEngineOrchestratorError(ValueError):

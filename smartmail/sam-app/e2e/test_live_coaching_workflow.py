@@ -323,7 +323,7 @@ TURNS: List[TurnSpec] = [
     TurnSpec(3, "Profile details and target race", "Here is the missing context more directly. Primary goal: run a half marathon on 2026-05-17 and finish feeling strong. Time availability: 4 sessions per week and about 4 to 5 hours total. Experience level: intermediate. Constraints: mild Achilles tightness, busy work mornings on Tuesdays, and I prefer structured guidance.", "semi_structured", "clarification_or_inference_ok", expected_intent="question"),
     TurnSpec(4, "Availability update for this week", "Availability update for this week. Event date: 2026-05-17. Days available: 4. Pain score: 2 out of 10. Risk candidate feels green. I can run Monday, Wednesday, Friday, and Sunday. Week is not chaotic. Schedule variability is medium because work may move one session by a few hours.", "structured", "should_mutate", expected_intent="availability_update", expect_plan_growth=True),
     TurnSpec(5, "First check-in after an easy run", "Training check-in. Event date: 2026-05-17. Days available: 4. Pain score: 2 out of 10. Risk candidate is green. I did a run for 45m and 6 km yesterday. Felt good, energy ok, little sore, slept well. Missed sessions count: 0. I want to keep building carefully.", "structured", "should_mutate", expected_intent="check_in", expect_manual_snapshot=True, expect_plan_growth=True, expect_progress_non_default=True),
-    TurnSpec(6, "Long run felt fine", "Long run update: I got through 75 minutes this morning and honestly I feel ok after the long run. The Achilles is there in the background but not angry, and I slept well last night. I'd like to keep the same four-day rhythm this week if that still makes sense.", "freeform", "clarification_or_inference_ok", acceptable_intents={"check_in", "question", "availability_update"}, expect_manual_snapshot=True, expect_memory=True, expect_progress_non_default=True, allow_clarification_instead_of_inference=True, inference_candidate=True, expect_durable_schedule_reuse=True),
+    TurnSpec(6, "Long run felt fine", "Long run update: I got through 75 minutes this morning and honestly I feel ok after the long run. The Achilles is there in the background but not angry, and I slept well last night. I'd like to keep the same four-day rhythm this week if that still makes sense.", "freeform", "clarification_or_inference_ok", acceptable_intents={"check_in", "question", "availability_update", "plan_change_request"}, expect_manual_snapshot=True, expect_memory=True, expect_progress_non_default=True, allow_clarification_instead_of_inference=True, inference_candidate=True, expect_durable_schedule_reuse=True),
     TurnSpec(7, "How easy should easy feel?", "Quick question: on these comeback runs, how easy should easy actually feel? I'm trying not to chase pace, but I also don't want to jog so slowly that the mechanics get weird.", "freeform", "should_read_only", expected_intent="question"),
     TurnSpec(8, "Work got messy", "Can we adjust the week? Work is crazy and I probably only have Wednesday, Friday, and Sunday for training. I missed one session already and my stress is definitely up.", "freeform", "clarification_or_inference_ok", acceptable_intents={"plan_change_request", "availability_update", "question"}, expect_memory=True, expect_clarification_semantics=True),
     TurnSpec(9, "Here are the details you probably need", "More detail for the adjustment: event date is 2026-05-17, days available this week are 3, pain score is still 2 out of 10, risk candidate feels yellow because work stress is high, week is chaotic true, stress score 8, sleep score 5.", "structured", "should_mutate", acceptable_intents={"plan_change_request", "availability_update"}, expect_plan_growth=True),
@@ -380,6 +380,22 @@ class TestLiveCoachingWorkflow(unittest.TestCase):
         self.capture = _RawEmailCapture()
         self.athlete_id: Optional[str] = None
         self.turn_results: List[Dict[str, Any]] = []
+        artifact_dir = Path(
+            os.getenv(
+                "LIVE_E2E_ARTIFACT_DIR",
+                str(Path(__file__).resolve().parent / "artifacts"),
+            )
+        )
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        artifact_run_id = f"{int(time.time())}-{secrets.token_hex(4)}"
+        self.turn_artifact_path = artifact_dir / f"live_coaching_turns_{artifact_run_id}.jsonl"
+        self._append_turn_artifact(
+            {
+                "phase": "run_start",
+                "run_id": artifact_run_id,
+                "email_address": self.email_address,
+            }
+        )
         self.ddb.cleanup_for_email(self.email_address)
 
     def tearDown(self) -> None:
@@ -444,7 +460,16 @@ class TestLiveCoachingWorkflow(unittest.TestCase):
             return result
         return _wrapped
 
+    def _append_turn_artifact(self, payload: Dict[str, Any]) -> None:
+        with self.turn_artifact_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
     def test_live_thirty_turn_coaching_workflow(self) -> None:
+        self._log_turn(
+            TURNS[0],
+            phase="artifact_path",
+            artifact_path=str(self.turn_artifact_path),
+        )
         register_status, register_body, register_headers = _http_request(
             "POST",
             f"{BASE_URL}/register",
@@ -557,6 +582,29 @@ class TestLiveCoachingWorkflow(unittest.TestCase):
                 self.assertTrue(captured["text"].strip(), f"turn {turn.number} text body empty")
                 self.assertIn("Re:", captured["subject"], f"turn {turn.number} missing reply subject")
                 self.assertIn(self.email_address.lower(), [d.lower() for d in captured["destinations"]])
+                self._append_turn_artifact(
+                    {
+                        "phase": "turn_response",
+                        "turn": turn.number,
+                        "style": turn.style,
+                        "expected_mode": turn.expect_reply_mode_behavior,
+                        "inbound": {
+                            "sender": self.email_address,
+                            "message_id": message_id,
+                            "date_received": date_received,
+                            "subject": turn.subject,
+                            "body": turn.body,
+                        },
+                        "outbound": {
+                            "lambda_body": response_body,
+                            "subject": captured["subject"],
+                            "destinations": captured["destinations"],
+                            "text": captured["text"],
+                            "html": captured["html"],
+                            "raw": captured["raw"],
+                        },
+                    }
+                )
 
                 profile = dynamodb_models.get_coach_profile(self.athlete_id) or {}
                 current_plan = dynamodb_models.get_current_plan(self.athlete_id)

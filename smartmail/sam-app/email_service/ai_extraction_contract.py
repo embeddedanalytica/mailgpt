@@ -20,20 +20,15 @@ ALLOWED_MAIN_SPORTS = {"run", "bike", "swim", "other"}
 ALLOWED_STRUCTURE_PREFERENCES = {"structure", "flexibility", "mixed"}
 ALLOWED_SCHEDULE_VARIABILITY = {"low", "medium", "high"}
 ALLOWED_RECENT_ILLNESS = {"none", "mild", "significant"}
-CRITICAL_WEEKLY_FIELDS = ("risk_candidate", "event_date", "days_available", "pain_score")
+CRITICAL_WEEKLY_FIELDS = ("event_date", "pain_score")
 
 _ALLOWED_TOP_LEVEL_FIELDS = {
     "risk_candidate",
     "event_date",
-    "hard_return_context",
-    "return_context",
-    "has_upcoming_event",
-    "performance_intent_this_week",
     "returning_from_break",
     "recent_illness",
     "break_days",
     "explicit_main_sport_switch_request",
-    "performance_chase_active",
     "experience_level",
     "time_bucket",
     "main_sport_current",
@@ -158,14 +153,6 @@ def validate_ai_extraction_payload(payload: Dict[str, Any]) -> None:
         _require_string_in("risk_candidate", payload["risk_candidate"], ALLOWED_RISK_CANDIDATES)
     if "event_date" in payload:
         _require_optional_ymd_date("event_date", payload["event_date"])
-    if "hard_return_context" in payload:
-        _require_bool("hard_return_context", payload["hard_return_context"])
-    if "return_context" in payload:
-        _require_bool("return_context", payload["return_context"])
-    if "has_upcoming_event" in payload:
-        _require_optional_bool("has_upcoming_event", payload["has_upcoming_event"])
-    if "performance_intent_this_week" in payload:
-        _require_optional_bool("performance_intent_this_week", payload["performance_intent_this_week"])
     if "returning_from_break" in payload:
         _require_bool("returning_from_break", payload["returning_from_break"])
     if "recent_illness" in payload:
@@ -177,8 +164,6 @@ def validate_ai_extraction_payload(payload: Dict[str, Any]) -> None:
             "explicit_main_sport_switch_request",
             payload["explicit_main_sport_switch_request"],
         )
-    if "performance_chase_active" in payload:
-        _require_bool("performance_chase_active", payload["performance_chase_active"])
     if "experience_level" in payload:
         _require_string_in("experience_level", payload["experience_level"], ALLOWED_EXPERIENCE_LEVELS)
     if "time_bucket" in payload:

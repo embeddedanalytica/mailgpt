@@ -1,5 +1,6 @@
 """Unit tests for RE1-FU.2 rule-state store contract."""
 
+from decimal import Decimal
 import unittest
 from unittest import mock
 
@@ -20,6 +21,7 @@ class _RuleStateTable:
         athlete_id = item.get("athlete_id")
         if isinstance(athlete_id, str) and athlete_id:
             self.items[athlete_id] = dict(item)
+        self.last_put_item = dict(item)
         return {}
 
 
@@ -141,3 +143,32 @@ class TestRuleStateStore(unittest.TestCase):
             rule_engine_state.update_rule_state("ath_fu_invalid", [], {})
         with self.assertRaises(rule_engine_state.RuleEngineStateError):
             rule_engine_state.update_rule_state("ath_fu_invalid", {}, [])
+
+    def test_put_item_serializes_float_scores_to_decimal(self):
+        athlete_id = "ath_fu_state_decimal"
+        rule_engine_state.update_rule_state(
+            athlete_id,
+            {
+                "week_start": "2026-03-15",
+                "pain_score": 2.5,
+                "energy_score": 6.5,
+                "sleep_score": 7.25,
+                "stress_score": 4.5,
+                "planned_sessions_count": 4,
+                "completed_sessions_count": 3,
+                "sports_last_week": [{"sport": "run", "minutes": 55}],
+            },
+            {"phase": "build", "risk_flag": "yellow"},
+        )
+        stored = self.table.last_put_item
+        weekly_signal = stored["weekly_signals_last_4"][0]
+        self.assertIsInstance(weekly_signal["pain_score"], Decimal)
+        self.assertEqual(weekly_signal["pain_score"], Decimal("2.5"))
+        self.assertIsInstance(weekly_signal["energy_score"], Decimal)
+        self.assertEqual(weekly_signal["sleep_score"], Decimal("7.25"))
+        state = rule_engine_state.load_rule_state(athlete_id)
+        self.assertEqual(state["weekly_signals_last_4"][0]["pain_score"], 2.5)
+
+    def test_serializer_rejects_non_finite_floats(self):
+        with self.assertRaises(rule_engine_state.RuleEngineStateError):
+            rule_engine_state._serialize_dynamodb_payload({"bad": float("nan")})

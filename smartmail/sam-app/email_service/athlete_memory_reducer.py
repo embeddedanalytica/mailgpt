@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+import logging
 import re
 import time
 from typing import Any, Dict, List, Optional
@@ -674,6 +675,23 @@ def reduce_long_term_memory(
     added_note_meta: Dict[int, Dict[str, Any]] = {}
 
     accepted_candidates = _dedupe_conflicting_candidates(normalized_payload["candidates"])
+    debug_candidates = [
+        {
+            "action": candidate.get("action"),
+            "memory_note_id": candidate.get("memory_note_id"),
+            "fact_type": candidate.get("fact_type"),
+            "fact_key": candidate.get("fact_key"),
+            "summary": str(candidate.get("summary", ""))[:120],
+        }
+        for candidate in accepted_candidates[:3]
+    ]
+    logger = logging.getLogger(__name__)
+    logger.info(
+        "Reducing long-term memory stored_count=%s accepted_candidate_count=%s accepted_candidates=%s",
+        len(normalized_notes),
+        len(accepted_candidates),
+        debug_candidates,
+    )
     for candidate in accepted_candidates:
         _apply_single_candidate(
             notes=normalized_notes,
@@ -694,6 +712,20 @@ def reduce_long_term_memory(
     )
 
     normalized_notes.sort(key=lambda note: note["memory_note_id"])
+    logger.info(
+        "Reduced long-term memory final_count=%s final_preview=%s",
+        len(normalized_notes),
+        [
+            {
+                "memory_note_id": note.get("memory_note_id"),
+                "fact_type": note.get("fact_type"),
+                "fact_key": note.get("fact_key"),
+                "status": note.get("status"),
+                "summary": str(note.get("summary", ""))[:120],
+            }
+            for note in normalized_notes[:3]
+        ],
+    )
     try:
         return validate_memory_note_list(normalized_notes)
     except AthleteMemoryContractError as exc:
