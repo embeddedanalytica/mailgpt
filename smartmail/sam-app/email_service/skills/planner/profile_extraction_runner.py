@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional
 
 import skills.runtime as skill_runtime
 from config import PROFILE_EXTRACTION_MODEL
-from skills.planner.profile_extraction_prompt import SYSTEM_PROMPT
+from skills.planner.profile_extraction_prompt import SYSTEM_PROMPT, build_intake_aware_prompt
 from skills.planner.profile_extraction_schema import JSON_SCHEMA, JSON_SCHEMA_NAME
 from skills.planner.profile_extraction_validator import (
     ProfileExtractionContractError,
@@ -26,14 +26,16 @@ def run_profile_extraction_workflow(
     email_body: str,
     *,
     model_name: Optional[str] = None,
+    missing_fields: Optional[list[str]] = None,
 ) -> Dict[str, Any]:
     raw_content = ""
     try:
         selected_model = str(model_name or PROFILE_EXTRACTION_MODEL).strip() or PROFILE_EXTRACTION_MODEL
+        system_prompt = build_intake_aware_prompt(missing_fields) if missing_fields else SYSTEM_PROMPT
         payload, raw_content = skill_runtime.execute_json_schema(
             logger=logger,
             model_name=selected_model,
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             user_content=json.dumps({"email_body": str(email_body or "")}, separators=(",", ":"), ensure_ascii=True),
             schema_name=JSON_SCHEMA_NAME,
             schema=JSON_SCHEMA,

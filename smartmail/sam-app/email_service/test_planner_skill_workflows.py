@@ -38,11 +38,11 @@ def _stub_openai_with_contents(contents):
 class TestConversationIntelligenceWorkflow(unittest.TestCase):
     def test_returns_validated_payload(self):
         with mock.patch.object(skill_runtime, "openai", _stub_openai_with_contents([
-            '{"intent":"availability_update","complexity_score":3}'
+            '{"intent":"coaching","complexity_score":3}'
         ])):
             result = run_conversation_intelligence_workflow("Travel week")
 
-        self.assertEqual(result["intent"], "availability_update")
+        self.assertEqual(result["intent"], "coaching")
         self.assertEqual(result["complexity_score"], 3)
         self.assertEqual(result["resolution_source"], "single_prompt")
 

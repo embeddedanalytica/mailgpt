@@ -1,5 +1,9 @@
 """Prompt text for profile-extraction workflow."""
 
+from __future__ import annotations
+
+from typing import List, Optional
+
 SYSTEM_PROMPT = (
     "You are a personal coach assistant that reads user's email and extracts ONLY the user's "
     "training context needed for coaching. The email may contain a thread in reverse chronological order. You must read the thread from bottom to top to best capture the user's training goal and intent.\n\n"
@@ -26,3 +30,33 @@ SYSTEM_PROMPT = (
     "- If a field is not mentioned, either omit it or set it to null.\n"
     "- The response MUST be valid JSON and MUST NOT contain any explanatory text."
 )
+
+_FIELD_DESCRIPTIONS = {
+    "primary_goal": "their training goal or what they are working toward",
+    "time_availability": "how many days or hours per week they can train",
+    "experience_level": "their training background or experience level",
+    "constraints": "any injuries, schedule limitations, equipment access, or other constraints (empty list is fine if none)",
+}
+
+
+def build_intake_aware_prompt(missing_fields: Optional[List[str]] = None) -> str:
+    """Build a system prompt that focuses extraction on missing profile fields."""
+    if not missing_fields:
+        return SYSTEM_PROMPT
+
+    focus_lines = [
+        _FIELD_DESCRIPTIONS[f]
+        for f in missing_fields
+        if f in _FIELD_DESCRIPTIONS
+    ]
+    if not focus_lines:
+        return SYSTEM_PROMPT
+
+    focus_section = (
+        "\n\nIntake context:\n"
+        "This is an onboarding conversation. The following information is still needed from the athlete:\n"
+        + "".join(f"- {line}\n" for line in focus_lines)
+        + "Pay extra attention to extracting these fields from the email. "
+        "The athlete may mention them casually or indirectly."
+    )
+    return SYSTEM_PROMPT + focus_section

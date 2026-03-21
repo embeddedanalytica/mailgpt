@@ -7,13 +7,10 @@ from typing import Any, Dict
 from config import OPENAI_CLASSIFICATION_MODEL
 
 _ALLOWED_INTENTS = {
-    "check_in",
+    "coaching",
     "question",
-    "plan_change_request",
-    "milestone_update",
     "off_topic",
     "safety_concern",
-    "availability_update",
 }
 
 

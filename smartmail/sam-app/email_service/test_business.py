@@ -227,7 +227,7 @@ class TestGetReplyForInbound(unittest.TestCase):
 
     def test_rule_engine_guided_reply_keeps_selected_model_but_uses_deterministic_reply_path(self):
         guided_decision = {
-            "intent": "check_in",
+            "intent": "coaching",
             "mode": "mutate",
             "reply_strategy": "rule_engine_guided",
             "engine_output": {
@@ -251,7 +251,7 @@ class TestGetReplyForInbound(unittest.TestCase):
             business,
             "analyze_conversation_intelligence",
             return_value={
-                "intent": "check_in",
+                "intent": "coaching",
                 "complexity_score": 2,
                 "model_name": "gpt-5-mini",
             },
@@ -279,7 +279,7 @@ class TestGetReplyForInbound(unittest.TestCase):
     @unittest.skipIf(coaching is None, "coaching module unavailable")
     def test_rule_engine_guided_reply_renders_payload_through_business(self):
         guided_decision = {
-            "intent": "check_in",
+            "intent": "coaching",
             "mode": "mutate",
             "reply_strategy": "rule_engine_guided",
             "engine_output": {
@@ -309,7 +309,7 @@ class TestGetReplyForInbound(unittest.TestCase):
                 mock.patch.object(
                     business,
                     "analyze_conversation_intelligence",
-                    return_value={"intent": "check_in", "complexity_score": 2, "model_name": "gpt-5-mini"},
+                    return_value={"intent": "coaching", "complexity_score": 2, "model_name": "gpt-5-mini"},
                 )
             )
             stack.enter_context(
@@ -330,9 +330,10 @@ class TestGetReplyForInbound(unittest.TestCase):
                 mock.patch.object(
                     coaching,
                     "get_memory_context_for_response_generation",
-                    return_value={"memory_notes": [], "continuity_summary": None},
+                    return_value={"backbone": {}, "context_notes": [], "continuity_summary": None},
                 )
             )
+            stack.enter_context(mock.patch.object(coaching, "maybe_post_reply_unified_refresh"))
             runner = stack.enter_context(mock.patch.object(coaching, "run_response_generation_workflow"))
             for patcher in self._profile_ready_patches():
                 stack.enter_context(patcher)
@@ -361,7 +362,7 @@ class TestGetReplyForInbound(unittest.TestCase):
     @unittest.skipIf(coaching is None, "coaching module unavailable")
     def test_red_b_guided_reply_includes_disclaimer_and_clinician_guidance_through_business(self):
         guided_decision = {
-            "intent": "check_in",
+            "intent": "coaching",
             "mode": "mutate",
             "reply_strategy": "rule_engine_guided",
             "engine_output": {
@@ -391,7 +392,7 @@ class TestGetReplyForInbound(unittest.TestCase):
                 mock.patch.object(
                     business,
                     "analyze_conversation_intelligence",
-                    return_value={"intent": "check_in", "complexity_score": 2, "model_name": "gpt-5-mini"},
+                    return_value={"intent": "coaching", "complexity_score": 2, "model_name": "gpt-5-mini"},
                 )
             )
             stack.enter_context(
@@ -412,9 +413,10 @@ class TestGetReplyForInbound(unittest.TestCase):
                 mock.patch.object(
                     coaching,
                     "get_memory_context_for_response_generation",
-                    return_value={"memory_notes": [], "continuity_summary": None},
+                    return_value={"backbone": {}, "context_notes": [], "continuity_summary": None},
                 )
             )
+            stack.enter_context(mock.patch.object(coaching, "maybe_post_reply_unified_refresh"))
             runner = stack.enter_context(mock.patch.object(coaching, "run_response_generation_workflow"))
             for patcher in self._profile_ready_patches():
                 stack.enter_context(patcher)

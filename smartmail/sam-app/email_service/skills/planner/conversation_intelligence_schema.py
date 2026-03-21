@@ -10,13 +10,10 @@ JSON_SCHEMA = {
         "intent": {
             "type": "string",
             "enum": [
-                "check_in",
+                "coaching",
                 "question",
-                "plan_change_request",
-                "milestone_update",
                 "off_topic",
                 "safety_concern",
-                "availability_update",
             ],
         },
         "complexity_score": {"type": "integer", "minimum": 1, "maximum": 5},

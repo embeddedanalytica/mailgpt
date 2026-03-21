@@ -5,18 +5,16 @@ import response_generation_assembly
 from response_generation_assembly import build_response_brief
 
 
-def _memory_note(note_id: int = 1) -> dict:
-    return {
-        "memory_note_id": note_id,
-        "fact_type": "constraint",
-        "fact_key": f"weekday_before_7am_cutoff_{note_id}",
-        "summary": "Weekday sessions need to finish before 7am",
-        "importance": "high",
-        "status": "active",
-        "created_at": 1773273600,
-        "updated_at": 1773273600,
-        "last_confirmed_at": 1773273600,
-    }
+def _backbone_with(**slots) -> dict:
+    """Helper to build a backbone dict with named slot summaries."""
+    result = {}
+    for key, summary in slots.items():
+        result[key] = {"summary": summary, "updated_at": 1773273600}
+    return result
+
+
+def _context_note(label: str = "Gear", summary: str = "Owns a power meter", updated_at: int = 1773273600) -> dict:
+    return {"label": label, "summary": summary, "updated_at": updated_at}
 
 
 def _continuity_summary() -> dict:
@@ -26,6 +24,10 @@ def _continuity_summary() -> dict:
         "open_loops": ["How did the quality session feel?"],
         "updated_at": 1773273600,
     }
+
+
+def _empty_memory_context() -> dict:
+    return {"backbone": {}, "context_notes": [], "continuity_summary": None}
 
 
 class TestBuildResponseBrief(unittest.TestCase):
@@ -45,8 +47,6 @@ class TestBuildResponseBrief(unittest.TestCase):
                 plan_summary=None,
                 rule_engine_decision=None,
                 memory_context=None,
-                pre_reply_refresh_attempted=False,
-                post_reply_refresh_eligible=False,
             )
 
         self.assertEqual(brief.decision_context["clarification_questions"], ["- helper owned question"])
@@ -62,8 +62,6 @@ class TestBuildResponseBrief(unittest.TestCase):
             plan_summary=None,
             rule_engine_decision=None,
             memory_context=None,
-            pre_reply_refresh_attempted=True,
-            post_reply_refresh_eligible=False,
         )
 
         self.assertEqual(brief.reply_mode, "clarification")
@@ -91,11 +89,12 @@ class TestBuildResponseBrief(unittest.TestCase):
             plan_summary="Current plan - Goal: Half marathon.",
             rule_engine_decision=None,
             memory_context={
-                "memory_notes": [_memory_note()],
+                "backbone": _backbone_with(
+                    hard_constraints="Weekday sessions need to finish before 7am",
+                ),
+                "context_notes": [_context_note()],
                 "continuity_summary": _continuity_summary(),
             },
-            pre_reply_refresh_attempted=True,
-            post_reply_refresh_eligible=True,
             connect_strava_link="https://geniml.com/action/tok_123",
         )
 
@@ -109,7 +108,6 @@ class TestBuildResponseBrief(unittest.TestCase):
             "https://geniml.com/action/tok_123",
         )
         self.assertEqual(brief.validated_plan["plan_summary"], "Current plan - Goal: Half marathon.")
-        self.assertEqual(len(brief.memory_context["memory_notes"]), 1)
         self.assertEqual(brief.memory_context["continuity_summary"]["summary"], "Athlete is rebuilding consistency.")
         self.assertEqual(brief.memory_context["memory_available"], True)
         self.assertEqual(
@@ -117,10 +115,10 @@ class TestBuildResponseBrief(unittest.TestCase):
             "Athlete is rebuilding consistency.",
         )
         self.assertEqual(
-            [note["memory_note_id"] for note in brief.memory_context["priority_memory_notes"]],
-            [1],
+            brief.memory_context["backbone_summaries"]["hard_constraints"],
+            "Weekday sessions need to finish before 7am",
         )
-        self.assertEqual(brief.memory_context["supporting_memory_notes"], [])
+        self.assertEqual(len(brief.memory_context["context_notes"]), 1)
 
     def test_rule_engine_guided_includes_validated_engine_fields(self):
         brief = build_response_brief(
@@ -156,9 +154,7 @@ class TestBuildResponseBrief(unittest.TestCase):
                     },
                 },
             },
-            memory_context={"memory_notes": [], "continuity_summary": None},
-            pre_reply_refresh_attempted=False,
-            post_reply_refresh_eligible=True,
+            memory_context=_empty_memory_context(),
         )
 
         self.assertEqual(brief.reply_mode, "normal_coaching")
@@ -190,7 +186,7 @@ class TestBuildResponseBrief(unittest.TestCase):
             "No hard sessions when risk is red-tier.",
         )
 
-    def test_memory_salience_uses_high_importance_notes_as_priority_and_rest_as_supporting(self):
+    def test_memory_salience_uses_backbone_as_priority(self):
         brief = build_response_brief(
             athlete_id="ath_4",
             reply_kind="coaching_reply",
@@ -201,37 +197,30 @@ class TestBuildResponseBrief(unittest.TestCase):
             plan_summary=None,
             rule_engine_decision=None,
             memory_context={
-                "memory_notes": [
-                    _memory_note(1),
-                    {
-                        **_memory_note(2),
-                        "importance": "medium",
-                        "summary": "Travel every third week of the month",
-                        "fact_key": "travel_every_third_week",
-                    },
-                    {
-                        **_memory_note(3),
-                        "importance": "low",
-                        "summary": "Prefers concise bullets",
-                        "fact_key": "prefers_concise_bullets",
-                    },
+                "backbone": _backbone_with(
+                    primary_goal="Half marathon in October",
+                    hard_constraints="Weekday sessions need to finish before 7am",
+                ),
+                "context_notes": [
+                    _context_note("Calf watch", "Watch for calf tightness when adding speed"),
+                    _context_note("Reply format", "Prefers concise bullets"),
                 ],
                 "continuity_summary": _continuity_summary(),
             },
-            pre_reply_refresh_attempted=True,
-            post_reply_refresh_eligible=True,
         )
 
         self.assertEqual(
-            [note["memory_note_id"] for note in brief.memory_context["priority_memory_notes"]],
-            [1],
+            brief.memory_context["backbone_summaries"]["primary_goal"],
+            "Half marathon in October",
         )
         self.assertEqual(
-            [note["memory_note_id"] for note in brief.memory_context["supporting_memory_notes"]],
-            [2, 3],
+            brief.memory_context["backbone_summaries"]["hard_constraints"],
+            "Weekday sessions need to finish before 7am",
         )
+        self.assertEqual(len(brief.memory_context["context_notes"]), 2)
+        self.assertTrue(brief.memory_context["memory_available"])
 
-    def test_memory_salience_promotes_most_recent_note_when_no_high_notes_exist(self):
+    def test_empty_backbone_and_context_with_continuity_still_available(self):
         brief = build_response_brief(
             athlete_id="ath_5",
             reply_kind="coaching_reply",
@@ -242,40 +231,19 @@ class TestBuildResponseBrief(unittest.TestCase):
             plan_summary=None,
             rule_engine_decision=None,
             memory_context={
-                "memory_notes": [
-                    {
-                        **_memory_note(2),
-                        "importance": "low",
-                        "summary": "Most recent note",
-                        "fact_key": "preference:most_recent_note",
-                        "created_at": 1773187200,
-                        "updated_at": 1773273600,
-                        "last_confirmed_at": 1773273600,
-                    },
-                    {
-                        **_memory_note(1),
-                        "importance": "medium",
-                        "summary": "Less recent note",
-                        "fact_key": "schedule:less_recent_note",
-                        "created_at": 1773097200,
-                        "updated_at": 1773187200,
-                        "last_confirmed_at": 1773187200,
-                    },
-                ],
-                "continuity_summary": None,
+                "backbone": {},
+                "context_notes": [],
+                "continuity_summary": _continuity_summary(),
             },
-            pre_reply_refresh_attempted=True,
-            post_reply_refresh_eligible=True,
         )
 
+        self.assertNotIn("backbone_summaries", brief.memory_context)
+        self.assertNotIn("context_notes", brief.memory_context)
         self.assertEqual(
-            [note["memory_note_id"] for note in brief.memory_context["priority_memory_notes"]],
-            [2],
+            brief.memory_context["continuity_focus"],
+            "Athlete is rebuilding consistency.",
         )
-        self.assertEqual(
-            [note["memory_note_id"] for note in brief.memory_context["supporting_memory_notes"]],
-            [1],
-        )
+        self.assertTrue(brief.memory_context["memory_available"])
 
     def test_safety_and_off_topic_map_to_canonical_modes_without_validated_plan(self):
         safety = build_response_brief(
@@ -287,9 +255,7 @@ class TestBuildResponseBrief(unittest.TestCase):
             missing_profile_fields=[],
             plan_summary=None,
             rule_engine_decision={"reply_strategy": "safety_concern"},
-            memory_context={"memory_notes": [], "continuity_summary": None},
-            pre_reply_refresh_attempted=False,
-            post_reply_refresh_eligible=False,
+            memory_context=_empty_memory_context(),
         )
         off_topic = build_response_brief(
             athlete_id="ath_1",
@@ -300,9 +266,7 @@ class TestBuildResponseBrief(unittest.TestCase):
             missing_profile_fields=[],
             plan_summary=None,
             rule_engine_decision={"reply_strategy": "off_topic"},
-            memory_context={"memory_notes": [], "continuity_summary": None},
-            pre_reply_refresh_attempted=False,
-            post_reply_refresh_eligible=False,
+            memory_context=_empty_memory_context(),
         )
 
         self.assertEqual(safety.reply_mode, "safety_risk_managed")
@@ -345,9 +309,11 @@ class TestBuildResponseBrief(unittest.TestCase):
                     },
                 },
             },
-            memory_context={"memory_notes": [_memory_note()], "continuity_summary": _continuity_summary()},
-            pre_reply_refresh_attempted=True,
-            post_reply_refresh_eligible=True,
+            memory_context={
+                "backbone": _backbone_with(hard_constraints="Weekday sessions need to finish before 7am"),
+                "context_notes": [_context_note()],
+                "continuity_summary": _continuity_summary(),
+            },
         )
 
         self.assertEqual(brief.reply_mode, "lightweight_non_planning")
@@ -365,17 +331,11 @@ class TestBuildResponseBrief(unittest.TestCase):
             plan_summary=None,
             rule_engine_decision=None,
             memory_context={},
-            pre_reply_refresh_attempted=False,
-            post_reply_refresh_eligible=True,
         )
 
         self.assertEqual(brief.validated_plan, {})
-        self.assertEqual(brief.memory_context["memory_notes"], [])
         self.assertIsNone(brief.memory_context["continuity_summary"])
-        self.assertIsNone(brief.memory_context["continuity_focus"])
-        self.assertEqual(brief.memory_context["priority_memory_notes"], [])
-        self.assertEqual(brief.memory_context["supporting_memory_notes"], [])
-        self.assertEqual(brief.delivery_context["response_channel"], "email")
+        self.assertFalse(brief.memory_context["memory_available"])
 
     def test_invalid_rule_engine_output_does_not_leak_into_brief(self):
         brief = build_response_brief(
@@ -390,9 +350,7 @@ class TestBuildResponseBrief(unittest.TestCase):
                 "reply_strategy": "rule_engine_guided",
                 "engine_output": {"track": "main_build"},
             },
-            memory_context={"memory_notes": [], "continuity_summary": None},
-            pre_reply_refresh_attempted=False,
-            post_reply_refresh_eligible=True,
+            memory_context=_empty_memory_context(),
         )
 
         self.assertEqual(brief.decision_context, {})
@@ -409,18 +367,15 @@ class TestBuildResponseBrief(unittest.TestCase):
             plan_summary=None,
             rule_engine_decision=None,
             memory_context={
-                "memory_notes": [{"summary": "Missing required fields"}],
+                "backbone": "not a dict",
+                "context_notes": "not a list",
                 "continuity_summary": {"summary": " "},
             },
-            pre_reply_refresh_attempted=True,
-            post_reply_refresh_eligible=True,
         )
 
-        self.assertEqual(brief.memory_context["memory_notes"], [])
+        self.assertNotIn("backbone_summaries", brief.memory_context)
+        self.assertNotIn("context_notes", brief.memory_context)
         self.assertIsNone(brief.memory_context["continuity_summary"])
-        self.assertIsNone(brief.memory_context["continuity_focus"])
-        self.assertEqual(brief.memory_context["priority_memory_notes"], [])
-        self.assertEqual(brief.memory_context["supporting_memory_notes"], [])
         self.assertFalse(brief.memory_context["memory_available"])
 
 

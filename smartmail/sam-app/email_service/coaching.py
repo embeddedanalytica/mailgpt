@@ -12,16 +12,17 @@ from dynamodb_models import (
     merge_coach_profile_fields,
     ensure_current_plan,
     fetch_current_plan_summary,
-    get_memory_notes,
+    get_backbone,
+    get_context_notes,
     get_continuity_summary,
     get_memory_context_for_response_generation,
-    replace_continuity_summary,
-    replace_memory_notes,
+    replace_unified_memory,
     create_action_token,
     put_manual_activity_snapshot,
     get_progress_snapshot,
 )
 from config import ACTION_BASE_URL
+from email_copy import EmailCopy
 from activity_snapshot import parse_manual_activity_snapshot_from_email
 from ai_extraction_contract import (
     list_missing_or_low_confidence_critical_fields,
@@ -33,14 +34,12 @@ from profile import (
 )
 from config import ENABLE_SESSION_CHECKIN_EXTRACTION
 from rule_engine import RuleEngineContractError, validate_rule_engine_output
-from skills.memory import MemoryRefreshError, run_memory_refresh, run_memory_router
 from skills.planner import (
     SessionCheckinExtractionProposalError,
     run_session_checkin_extraction_workflow,
 )
 from coaching_memory import (
-    maybe_post_reply_memory_refresh,
-    maybe_pre_reply_memory_refresh,
+    maybe_post_reply_unified_refresh,
     should_attempt_memory_refresh,
 )
 from response_generation_contract import normalize_reply_mode
@@ -51,7 +50,7 @@ from skills.response_generation import (
 )
 
 logger = logging.getLogger(__name__)
-_READ_ONLY_REPLY_INTENTS = {"question", "milestone_update"}
+_READ_ONLY_REPLY_INTENTS = {"question"}
 
 
 def _type_map(payload: Dict[str, Any]) -> Dict[str, str]:
@@ -79,7 +78,7 @@ def _resolve_reply_mode(
     rule_engine_decision: Optional[Dict[str, Any]],
 ) -> str:
     if missing_profile_fields:
-        return normalize_reply_mode("clarification")
+        return normalize_reply_mode("intake")
     if not isinstance(rule_engine_decision, dict):
         return normalize_reply_mode("normal_coaching")
 
@@ -119,40 +118,19 @@ def _generate_llm_reply(
         rule_engine_decision=rule_engine_decision,
     )
     memory_refresh_reply_kind = "profile_incomplete" if missing_profile_fields else reply_mode
-    pre_reply_refresh_attempted = should_attempt_memory_refresh(
-        reply_kind=memory_refresh_reply_kind,
-        parsed_updates=parsed_updates,
-    )
-    if pre_reply_refresh_attempted:
-        _maybe_pre_refresh(
-            athlete_id=athlete_id,
-            inbound_body=inbound_body,
-            inbound_subject=inbound_subject,
-            reply_kind=memory_refresh_reply_kind,
-            parsed_updates=parsed_updates,
-            manual_snapshot=manual_snapshot,
-            selected_model_name=selected_model_name,
-            rule_engine_decision=rule_engine_decision,
-            log=log,
-        )
 
     memory_context = get_memory_context_for_response_generation(athlete_id)
-    post_reply_refresh_eligible = should_attempt_memory_refresh(
-        reply_kind=memory_refresh_reply_kind,
-        parsed_updates=parsed_updates,
-    )
     response_brief = build_response_brief(
         athlete_id=athlete_id,
         reply_kind=reply_mode,
         inbound_subject=inbound_subject,
+        inbound_body=inbound_body,
         selected_model_name=selected_model_name,
         profile_after=profile_after,
         missing_profile_fields=missing_profile_fields,
         plan_summary=plan_summary,
         rule_engine_decision=rule_engine_decision,
         memory_context=memory_context,
-        pre_reply_refresh_attempted=pre_reply_refresh_attempted,
-        post_reply_refresh_eligible=post_reply_refresh_eligible,
         connect_strava_link=connect_strava_link,
     )
     try:
@@ -177,19 +155,23 @@ def _generate_llm_reply(
         )
         return None
 
-    if post_reply_refresh_eligible:
-        _maybe_post_refresh(
-            athlete_id=athlete_id,
-            inbound_body=inbound_body,
-            inbound_subject=inbound_subject,
-            reply_text=reply,
-            reply_kind=memory_refresh_reply_kind,
-            parsed_updates=parsed_updates,
-            manual_snapshot=manual_snapshot,
-            selected_model_name=selected_model_name,
-            rule_engine_decision=rule_engine_decision,
-            log=log,
-        )
+    # AM3: single post-reply unified memory refresh
+    maybe_post_reply_unified_refresh(
+        athlete_id=athlete_id,
+        inbound_body=inbound_body,
+        inbound_subject=inbound_subject,
+        reply_text=reply,
+        reply_kind=memory_refresh_reply_kind,
+        parsed_updates=parsed_updates,
+        manual_snapshot=manual_snapshot,
+        selected_model_name=selected_model_name,
+        rule_engine_decision=rule_engine_decision,
+        log=log,
+        get_backbone_fn=get_backbone,
+        get_context_notes_fn=get_context_notes,
+        get_continuity_summary_fn=get_continuity_summary,
+        replace_unified_memory_fn=replace_unified_memory,
+    )
     return reply
 
 
@@ -221,68 +203,6 @@ def _log_response_generation_failure(
     )
 
 
-def _maybe_pre_refresh(
-    *,
-    athlete_id: str,
-    inbound_body: str,
-    inbound_subject: Optional[str],
-    reply_kind: str,
-    parsed_updates: Dict[str, Any],
-    manual_snapshot: Optional[Dict[str, Any]],
-    selected_model_name: Optional[str],
-    rule_engine_decision: Optional[Dict[str, Any]],
-    log: Callable[..., None],
-) -> None:
-    maybe_pre_reply_memory_refresh(
-        athlete_id=athlete_id,
-        inbound_body=inbound_body,
-        inbound_subject=inbound_subject,
-        reply_kind=reply_kind,
-        parsed_updates=parsed_updates,
-        manual_snapshot=manual_snapshot,
-        selected_model_name=selected_model_name,
-        rule_engine_decision=rule_engine_decision,
-        log=log,
-        run_memory_router_fn=run_memory_router,
-        get_memory_notes_fn=get_memory_notes,
-        get_continuity_summary_fn=get_continuity_summary,
-        run_memory_refresh_fn=run_memory_refresh,
-        replace_memory_notes_fn=replace_memory_notes,
-    )
-
-
-def _maybe_post_refresh(
-    *,
-    athlete_id: str,
-    inbound_body: str,
-    inbound_subject: Optional[str],
-    reply_text: str,
-    reply_kind: str,
-    parsed_updates: Dict[str, Any],
-    manual_snapshot: Optional[Dict[str, Any]],
-    selected_model_name: Optional[str],
-    rule_engine_decision: Optional[Dict[str, Any]],
-    log: Callable[..., None],
-) -> None:
-    maybe_post_reply_memory_refresh(
-        athlete_id=athlete_id,
-        inbound_body=inbound_body,
-        inbound_subject=inbound_subject,
-        reply_text=reply_text,
-        reply_kind=reply_kind,
-        parsed_updates=parsed_updates,
-        manual_snapshot=manual_snapshot,
-        selected_model_name=selected_model_name,
-        rule_engine_decision=rule_engine_decision,
-        log=log,
-        run_memory_router_fn=run_memory_router,
-        get_memory_notes_fn=get_memory_notes,
-        get_continuity_summary_fn=get_continuity_summary,
-        run_memory_refresh_fn=run_memory_refresh,
-        replace_continuity_summary_fn=replace_continuity_summary,
-    )
-
-
 def _apply_profile_updates(
     *,
     athlete_id: str,
@@ -293,7 +213,9 @@ def _apply_profile_updates(
 ) -> tuple[Dict[str, Any], list[str], Dict[str, Any]]:
     profile_before = get_coach_profile(athlete_id) or {}
     missing_before = get_missing_required_profile_fields(profile_before)
-    parsed_updates = parse_profile_updates_from_email(inbound_body)
+    parsed_updates = parse_profile_updates_from_email(
+        inbound_body, missing_fields=missing_before or None,
+    )
     if parsed_updates:
         update_ok = merge_coach_profile_fields(athlete_id, parsed_updates)
         log(result="profile_updated", fields="|".join(sorted(parsed_updates.keys())))
@@ -498,6 +420,17 @@ def build_profile_gated_reply(
             inbound_message_id=inbound_message_id,
             connect_strava_link=connect_link,
         )
+
+    if missing_before:
+        # Profile just became complete on this turn — send deterministic
+        # acknowledgment instead of immediately generating a coaching plan.
+        log(result="intake_completed")
+        log(
+            result="profile_gate_evaluated",
+            missing_before=len(missing_before),
+            missing_after=len(missing_after),
+        )
+        return EmailCopy.INTAKE_COMPLETION_REPLY
 
     log(result="profile_ready_for_coaching")
     log(

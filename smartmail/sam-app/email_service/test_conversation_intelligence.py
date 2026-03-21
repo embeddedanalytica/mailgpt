@@ -12,7 +12,7 @@ class TestConversationIntelligence(unittest.TestCase):
             conversation_intelligence,
             "run_conversation_intelligence_workflow",
             return_value={
-                "intent": "availability_update",
+                "intent": "coaching",
                 "complexity_score": 3,
                 "model_name": conversation_intelligence.OPENAI_CLASSIFICATION_MODEL,
                 "resolution_source": "single_prompt",
@@ -23,7 +23,7 @@ class TestConversationIntelligence(unittest.TestCase):
                 "Travel week, only two days available."
             )
 
-        self.assertEqual(result["intent"], "availability_update")
+        self.assertEqual(result["intent"], "coaching")
         self.assertEqual(result["complexity_score"], 3)
         self.assertEqual(result["model_name"], conversation_intelligence.OPENAI_CLASSIFICATION_MODEL)
         self.assertEqual(result["resolution_source"], "single_prompt")
@@ -38,7 +38,7 @@ class TestConversationIntelligence(unittest.TestCase):
         ):
             result = conversation_intelligence.analyze_conversation_intelligence("Hi")
 
-        self.assertEqual(result["intent"], "question")
+        self.assertEqual(result["intent"], "coaching")
         self.assertEqual(result["complexity_score"], 3)
         self.assertEqual(result["resolution_source"], "fallback")
         self.assertEqual(result["intent_resolution_reason"], "single_prompt_validation_failed")
@@ -53,7 +53,7 @@ class TestConversationIntelligence(unittest.TestCase):
                 "Finished my 10k in 46:30."
             )
 
-        self.assertEqual(result["intent"], "question")
+        self.assertEqual(result["intent"], "coaching")
         self.assertEqual(result["complexity_score"], 3)
         self.assertEqual(result["resolution_source"], "fallback")
         self.assertEqual(result["intent_resolution_reason"], "llm_intelligence_failed")

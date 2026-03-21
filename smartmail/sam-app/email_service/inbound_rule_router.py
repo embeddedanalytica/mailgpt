@@ -31,8 +31,8 @@ except ImportError:  # pragma: no cover
         run_session_checkin_extraction_workflow,
     )
 
-_MUTATE_INTENTS = {"check_in", "plan_change_request", "availability_update"}
-_READ_ONLY_INTENTS = {"question", "milestone_update"}
+_MUTATE_INTENTS = {"coaching"}
+_READ_ONLY_INTENTS = {"question"}
 _SPECIAL_INTENT_BEHAVIOR = {
     "off_topic": {
         "mode": "skip",
@@ -81,7 +81,7 @@ def _base_decision(intent: str) -> Dict[str, Any]:
 def _mode_for_intent(intent: str, clarification_needed: bool, has_extracted_checkin: bool) -> str:
     if intent in _SPECIAL_INTENT_BEHAVIOR:
         return _SPECIAL_INTENT_BEHAVIOR[intent]["mode"]
-    if clarification_needed or not has_extracted_checkin:
+    if clarification_needed:
         return "skip"
     if intent in _MUTATE_INTENTS:
         return "mutate"
@@ -168,7 +168,7 @@ def route_inbound_with_rule_engine(
     if not isinstance(conversation_intelligence, dict):
         raise InboundRuleRouterError("conversation_intelligence must be a dict")
 
-    intent = str(conversation_intelligence.get("intent", "off_topic")).strip().lower() or "off_topic"
+    intent = str(conversation_intelligence.get("intent", "coaching")).strip().lower() or "coaching"
     decision = _base_decision(intent)
     special_behavior = _SPECIAL_INTENT_BEHAVIOR.get(intent)
     if special_behavior is not None:
@@ -225,7 +225,7 @@ def route_inbound_with_rule_engine(
                 intent=intent,
             )
 
-    clarification_needed = extraction_failed or bool(missing_or_low)
+    clarification_needed = extraction_failed
     decision["clarification_needed"] = clarification_needed
     decision["missing_or_low_confidence"] = list(missing_or_low)
     decision["mode"] = _mode_for_intent(intent, clarification_needed, bool(extracted_checkin))

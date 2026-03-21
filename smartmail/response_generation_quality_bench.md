@@ -32,15 +32,13 @@ Each scenario in the machine-readable block includes:
       "validated_plan": {},
       "delivery_context": {
         "inbound_subject": "Need help getting started",
+        "inbound_body": "Hi, I want to start a running training program but I'm not sure where to begin. Can you help me?",
         "selected_model_name": "gpt-5-mini",
         "response_channel": "email"
       },
       "memory_context": {
-        "pre_reply_refresh_attempted": true,
-        "post_reply_refresh_eligible": false,
-        "memory_notes": [],
-        "continuity_summary": null,
-        "memory_available": false
+        "memory_available": false,
+        "continuity_summary": null
       }
     },
     "review_focus": [
@@ -69,15 +67,13 @@ Each scenario in the machine-readable block includes:
       "validated_plan": {},
       "delivery_context": {
         "inbound_subject": "I signed up for a race",
+        "inbound_body": "Hi! I just signed up for a half marathon this spring. I'm a beginner and want to make sure I train properly. Can you help me put together a plan?",
         "selected_model_name": "gpt-5-mini",
         "response_channel": "email"
       },
       "memory_context": {
-        "pre_reply_refresh_attempted": true,
-        "post_reply_refresh_eligible": false,
-        "memory_notes": [],
-        "continuity_summary": null,
-        "memory_available": false
+        "memory_available": false,
+        "continuity_summary": null
       }
     },
     "review_focus": [
@@ -123,16 +119,14 @@ Each scenario in the machine-readable block includes:
       },
       "delivery_context": {
         "inbound_subject": "Can you make me a first week plan?",
+        "inbound_body": "Hi, I've been wanting to get more consistent with running and improve my energy levels. Can you give me a first week plan to follow?",
         "selected_model_name": "gpt-5-mini",
         "response_channel": "email",
         "connect_strava_link": "https://geniml.com/action/tok_new001"
       },
       "memory_context": {
-        "pre_reply_refresh_attempted": true,
-        "post_reply_refresh_eligible": true,
-        "memory_notes": [],
-        "continuity_summary": null,
-        "memory_available": false
+        "memory_available": false,
+        "continuity_summary": null
       }
     },
     "review_focus": [
@@ -180,15 +174,13 @@ Each scenario in the machine-readable block includes:
       },
       "delivery_context": {
         "inbound_subject": "How should this week look?",
+        "inbound_body": "I'm mid-build for a 10k in 7 weeks and training has been feeling good. How should this week look in terms of sessions and effort?",
         "selected_model_name": "gpt-5-mini",
         "response_channel": "email"
       },
       "memory_context": {
-        "pre_reply_refresh_attempted": false,
-        "post_reply_refresh_eligible": true,
-        "memory_notes": [],
-        "continuity_summary": null,
-        "memory_available": false
+        "memory_available": false,
+        "continuity_summary": null
       }
     },
     "review_focus": [
@@ -236,25 +228,12 @@ Each scenario in the machine-readable block includes:
       },
       "delivery_context": {
         "inbound_subject": "I feel a bit flat this week",
+        "inbound_body": "I feel a bit flat this week — legs are heavy and motivation is lower than usual. Not sure if I should push through the planned sessions or ease up a bit.",
         "selected_model_name": "gpt-5-mini",
         "response_channel": "email"
       },
       "memory_context": {
-        "pre_reply_refresh_attempted": true,
-        "post_reply_refresh_eligible": true,
-        "memory_notes": [
-          {
-            "memory_note_id": 1,
-            "fact_type": "constraint",
-            "fact_key": "weekday_before_7am_cutoff",
-            "summary": "Weekday sessions need to finish before 7am due to school drop-off.",
-            "importance": "high",
-            "status": "active",
-            "created_at": 1773273600,
-            "updated_at": 1773273600,
-            "last_confirmed_at": 1773273600
-          }
-        ],
+        "memory_available": true,
         "continuity_summary": {
           "summary": "Athlete has been consistent but reports lower morning freshness.",
           "last_recommendation": "Keep quality controlled and prioritize easy-day recovery.",
@@ -263,21 +242,10 @@ Each scenario in the machine-readable block includes:
           ],
           "updated_at": 1773273600
         },
-        "memory_available": true,
-        "continuity_focus": "Consistency is good; preserve freshness with conservative quality.",
-        "priority_memory_notes": [
-          {
-            "memory_note_id": 1,
-            "fact_type": "constraint",
-            "fact_key": "weekday_before_7am_cutoff",
-            "summary": "Weekday sessions need to finish before 7am due to school drop-off.",
-            "importance": "high",
-            "status": "active",
-            "created_at": 1773273600,
-            "updated_at": 1773273600,
-            "last_confirmed_at": 1773273600
-          }
-        ]
+        "backbone_summaries": {
+          "hard_constraints": "Weekday sessions need to finish before 7am due to school drop-off."
+        },
+        "continuity_focus": "Consistency is good; preserve freshness with conservative quality."
       }
     },
     "review_focus": [
@@ -323,25 +291,12 @@ Each scenario in the machine-readable block includes:
       },
       "delivery_context": {
         "inbound_subject": "I am traveling next week",
+        "inbound_body": "I'm going to be traveling for work next week — flying Tuesday, back Sunday. I'll have hotel gym access with a treadmill and dumbbells. How should I handle training?",
         "selected_model_name": "gpt-5-mini",
         "response_channel": "email"
       },
       "memory_context": {
-        "pre_reply_refresh_attempted": true,
-        "post_reply_refresh_eligible": true,
-        "memory_notes": [
-          {
-            "memory_note_id": 2,
-            "fact_type": "schedule",
-            "fact_key": "sunday_long_run_anchor",
-            "summary": "Sunday is usually the long-run anchor.",
-            "importance": "high",
-            "status": "active",
-            "created_at": 1773273600,
-            "updated_at": 1773273600,
-            "last_confirmed_at": 1773273600
-          }
-        ],
+        "memory_available": true,
         "continuity_summary": {
           "summary": "One-week travel disruption with limited equipment.",
           "last_recommendation": "Keep training simple and resume normal structure after travel.",
@@ -350,7 +305,9 @@ Each scenario in the machine-readable block includes:
           ],
           "updated_at": 1773273600
         },
-        "memory_available": true
+        "backbone_summaries": {
+          "weekly_structure": "Sunday is usually the long-run anchor."
+        }
       }
     },
     "review_focus": [
@@ -399,25 +356,12 @@ Each scenario in the machine-readable block includes:
       },
       "delivery_context": {
         "inbound_subject": "Can I push harder this week?",
+        "inbound_body": "Things have been feeling really good lately and my Achilles has been calm for two weeks. I want to push harder this week — maybe add an extra quality session or increase the intensity. Is that okay?",
         "selected_model_name": "gpt-5-mini",
         "response_channel": "email"
       },
       "memory_context": {
-        "pre_reply_refresh_attempted": true,
-        "post_reply_refresh_eligible": true,
-        "memory_notes": [
-          {
-            "memory_note_id": 3,
-            "fact_type": "constraint",
-            "fact_key": "achilles_reacts_to_back_to_back_intensity",
-            "summary": "Right Achilles tends to flare after two hard run days in a row.",
-            "importance": "high",
-            "status": "active",
-            "created_at": 1773273600,
-            "updated_at": 1773273600,
-            "last_confirmed_at": 1773273600
-          }
-        ],
+        "memory_available": true,
         "continuity_summary": {
           "summary": "Recent progression was positive but tendon history remains the primary limiter.",
           "last_recommendation": "Keep one quality run and one quality bike session separated.",
@@ -426,7 +370,9 @@ Each scenario in the machine-readable block includes:
           ],
           "updated_at": 1773273600
         },
-        "memory_available": true
+        "backbone_summaries": {
+          "hard_constraints": "Right Achilles tends to flare after two hard run days in a row."
+        }
       }
     },
     "review_focus": [
@@ -456,15 +402,13 @@ Each scenario in the machine-readable block includes:
       },
       "delivery_context": {
         "inbound_subject": "Sharp chest pain during run",
+        "inbound_body": "I had sharp chest pain during my run today. It came on about 20 minutes in and I had to stop completely. It happened twice. I rested and it faded but I'm worried. Should I run tomorrow?",
         "selected_model_name": "gpt-5-mini",
         "response_channel": "email"
       },
       "memory_context": {
-        "pre_reply_refresh_attempted": false,
-        "post_reply_refresh_eligible": false,
-        "memory_notes": [],
-        "continuity_summary": null,
-        "memory_available": false
+        "memory_available": false,
+        "continuity_summary": null
       }
     },
     "review_focus": [
@@ -494,25 +438,12 @@ Each scenario in the machine-readable block includes:
       },
       "delivery_context": {
         "inbound_subject": "Dizziness and severe fatigue",
+        "inbound_body": "I've been experiencing dizziness and severe fatigue during my last three runs. It hits me around the 15-minute mark and doesn't fully go away for hours afterward. I felt this way once before a few months ago too.",
         "selected_model_name": "gpt-5-mini",
         "response_channel": "email"
       },
       "memory_context": {
-        "pre_reply_refresh_attempted": true,
-        "post_reply_refresh_eligible": false,
-        "memory_notes": [
-          {
-            "memory_note_id": 4,
-            "fact_type": "other",
-            "fact_key": "prior_episode_of_dizziness_under_load",
-            "summary": "Athlete previously reported dizziness during a hard run.",
-            "importance": "high",
-            "status": "active",
-            "created_at": 1773273600,
-            "updated_at": 1773273600,
-            "last_confirmed_at": 1773273600
-          }
-        ],
+        "memory_available": true,
         "continuity_summary": {
           "summary": "Prior similar symptom episode increases concern level.",
           "last_recommendation": "Escalate to medical guidance before training decisions.",
@@ -521,7 +452,13 @@ Each scenario in the machine-readable block includes:
           ],
           "updated_at": 1773273600
         },
-        "memory_available": true
+        "context_notes": [
+          {
+            "label": "Prior Episode Of Dizziness Under Load",
+            "summary": "Athlete previously reported dizziness during a hard run.",
+            "updated_at": 1773273600
+          }
+        ]
       }
     },
     "review_focus": [
@@ -542,15 +479,13 @@ Each scenario in the machine-readable block includes:
       "validated_plan": {},
       "delivery_context": {
         "inbound_subject": "How easy should easy runs feel?",
+        "inbound_body": "Quick question — how easy should easy runs actually feel? I'm never sure if I'm going too hard or staying too comfortable. Is there a simple way to check?",
         "selected_model_name": "gpt-5-mini",
         "response_channel": "email"
       },
       "memory_context": {
-        "pre_reply_refresh_attempted": false,
-        "post_reply_refresh_eligible": true,
-        "memory_notes": [],
-        "continuity_summary": null,
-        "memory_available": false
+        "memory_available": false,
+        "continuity_summary": null
       }
     },
     "review_focus": [
@@ -571,25 +506,12 @@ Each scenario in the machine-readable block includes:
       "validated_plan": {},
       "delivery_context": {
         "inbound_subject": "I hit a PR today",
+        "inbound_body": "Just wanted to share — I hit a PR in my 5k today! Ran 24:10, which is 40 seconds faster than my previous best. Legs feel good and I'm really happy with how training is going.",
         "selected_model_name": "gpt-5-mini",
         "response_channel": "email"
       },
       "memory_context": {
-        "pre_reply_refresh_attempted": true,
-        "post_reply_refresh_eligible": true,
-        "memory_notes": [
-          {
-            "memory_note_id": 5,
-            "fact_type": "preference",
-            "fact_key": "prefers_short_actionable_replies",
-            "summary": "Athlete prefers concise guidance over long explanations.",
-            "importance": "medium",
-            "status": "active",
-            "created_at": 1773273600,
-            "updated_at": 1773273600,
-            "last_confirmed_at": 1773273600
-          }
-        ],
+        "memory_available": true,
         "continuity_summary": {
           "summary": "Athlete has two weeks of steady progress and positive check-ins.",
           "last_recommendation": "Protect recovery day after quality progress.",
@@ -598,7 +520,9 @@ Each scenario in the machine-readable block includes:
           ],
           "updated_at": 1773273600
         },
-        "memory_available": true
+        "backbone_summaries": {
+          "training_preferences": "Athlete prefers concise guidance over long explanations."
+        }
       }
     },
     "review_focus": [
@@ -619,15 +543,13 @@ Each scenario in the machine-readable block includes:
       "validated_plan": {},
       "delivery_context": {
         "inbound_subject": "Which supplement brand should I buy?",
+        "inbound_body": "I've been reading a lot about supplements for runners — electrolytes, protein powder, beetroot extract. There are so many brands. Which ones do you recommend I buy?",
         "selected_model_name": "gpt-5-mini",
         "response_channel": "email"
       },
       "memory_context": {
-        "pre_reply_refresh_attempted": false,
-        "post_reply_refresh_eligible": false,
-        "memory_notes": [],
-        "continuity_summary": null,
-        "memory_available": false
+        "memory_available": false,
+        "continuity_summary": null
       }
     },
     "review_focus": [
@@ -648,15 +570,13 @@ Each scenario in the machine-readable block includes:
       "validated_plan": {},
       "delivery_context": {
         "inbound_subject": "Can you review my startup pitch deck?",
+        "inbound_body": "Hey, I know this is totally off topic but I have a big pitch next week for my startup. Would you mind taking a look at my slide deck and giving me some feedback?",
         "selected_model_name": "gpt-5-mini",
         "response_channel": "email"
       },
       "memory_context": {
-        "pre_reply_refresh_attempted": false,
-        "post_reply_refresh_eligible": false,
-        "memory_notes": [],
-        "continuity_summary": null,
-        "memory_available": false
+        "memory_available": false,
+        "continuity_summary": null
       }
     },
     "review_focus": [
@@ -704,36 +624,12 @@ Each scenario in the machine-readable block includes:
       },
       "delivery_context": {
         "inbound_subject": "How should I handle this key week?",
+        "inbound_body": "Five weeks out from the marathon and the last three weeks have gone really well — all long runs executed, energy has been good. How should I handle this key week? I want to make sure I nail the long run.",
         "selected_model_name": "gpt-5-mini",
         "response_channel": "email"
       },
       "memory_context": {
-        "pre_reply_refresh_attempted": true,
-        "post_reply_refresh_eligible": true,
-        "memory_notes": [
-          {
-            "memory_note_id": 6,
-            "fact_type": "schedule",
-            "fact_key": "sunday_long_run_anchor",
-            "summary": "Sunday is the long-run anchor and usually has best compliance.",
-            "importance": "high",
-            "status": "active",
-            "created_at": 1773273600,
-            "updated_at": 1773273600,
-            "last_confirmed_at": 1773273600
-          },
-          {
-            "memory_note_id": 7,
-            "fact_type": "preference",
-            "fact_key": "prefers_clear_priority_ordering",
-            "summary": "Athlete prefers explicit priority order for key sessions.",
-            "importance": "medium",
-            "status": "active",
-            "created_at": 1773273600,
-            "updated_at": 1773273600,
-            "last_confirmed_at": 1773273600
-          }
-        ],
+        "memory_available": true,
         "continuity_summary": {
           "summary": "Three consistent weeks completed with improved long-run execution.",
           "last_recommendation": "Hold structure and execute one race-specific long run this week.",
@@ -742,34 +638,11 @@ Each scenario in the machine-readable block includes:
           ],
           "updated_at": 1773273600
         },
-        "memory_available": true,
-        "continuity_focus": "Continue race-specific work while keeping load controlled.",
-        "priority_memory_notes": [
-          {
-            "memory_note_id": 6,
-            "fact_type": "schedule",
-            "fact_key": "sunday_long_run_anchor",
-            "summary": "Sunday is the long-run anchor and usually has best compliance.",
-            "importance": "high",
-            "status": "active",
-            "created_at": 1773273600,
-            "updated_at": 1773273600,
-            "last_confirmed_at": 1773273600
-          }
-        ],
-        "supporting_memory_notes": [
-          {
-            "memory_note_id": 7,
-            "fact_type": "preference",
-            "fact_key": "prefers_clear_priority_ordering",
-            "summary": "Athlete prefers explicit priority order for key sessions.",
-            "importance": "medium",
-            "status": "active",
-            "created_at": 1773273600,
-            "updated_at": 1773273600,
-            "last_confirmed_at": 1773273600
-          }
-        ]
+        "backbone_summaries": {
+          "weekly_structure": "Sunday is the long-run anchor and usually has best compliance.",
+          "training_preferences": "Athlete prefers explicit priority order for key sessions."
+        },
+        "continuity_focus": "Continue race-specific work while keeping load controlled."
       }
     },
     "review_focus": [
@@ -812,36 +685,12 @@ Each scenario in the machine-readable block includes:
       },
       "delivery_context": {
         "inbound_subject": "Can we keep my old Wednesday double?",
+        "inbound_body": "I really miss my old Wednesday double session — morning run plus evening strength. I know my schedule changed but is there any way to keep that pattern? It worked really well for me.",
         "selected_model_name": "gpt-5-mini",
         "response_channel": "email"
       },
       "memory_context": {
-        "pre_reply_refresh_attempted": true,
-        "post_reply_refresh_eligible": true,
-        "memory_notes": [
-          {
-            "memory_note_id": 8,
-            "fact_type": "constraint",
-            "fact_key": "new_weekday_meeting_blocks_early_double",
-            "summary": "New recurring weekday meeting blocks the old Wednesday double-session pattern.",
-            "importance": "high",
-            "status": "active",
-            "created_at": 1773273600,
-            "updated_at": 1773273600,
-            "last_confirmed_at": 1773273600
-          },
-          {
-            "memory_note_id": 9,
-            "fact_type": "schedule",
-            "fact_key": "historical_wednesday_double",
-            "summary": "Historically completed Wednesday doubles during prior block.",
-            "importance": "medium",
-            "status": "active",
-            "created_at": 1773273600,
-            "updated_at": 1773273600,
-            "last_confirmed_at": 1773273600
-          }
-        ],
+        "memory_available": true,
         "continuity_summary": {
           "summary": "Schedule changed recently; old double-day pattern is no longer reliable.",
           "last_recommendation": "Anchor quality around feasible single-session days.",
@@ -850,33 +699,10 @@ Each scenario in the machine-readable block includes:
           ],
           "updated_at": 1773273600
         },
-        "memory_available": true,
-        "priority_memory_notes": [
-          {
-            "memory_note_id": 8,
-            "fact_type": "constraint",
-            "fact_key": "new_weekday_meeting_blocks_early_double",
-            "summary": "New recurring weekday meeting blocks the old Wednesday double-session pattern.",
-            "importance": "high",
-            "status": "active",
-            "created_at": 1773273600,
-            "updated_at": 1773273600,
-            "last_confirmed_at": 1773273600
-          }
-        ],
-        "supporting_memory_notes": [
-          {
-            "memory_note_id": 9,
-            "fact_type": "schedule",
-            "fact_key": "historical_wednesday_double",
-            "summary": "Historically completed Wednesday doubles during prior block.",
-            "importance": "medium",
-            "status": "active",
-            "created_at": 1773273600,
-            "updated_at": 1773273600,
-            "last_confirmed_at": 1773273600
-          }
-        ]
+        "backbone_summaries": {
+          "hard_constraints": "New recurring weekday meeting blocks the old Wednesday double-session pattern.",
+          "weekly_structure": "Historically completed Wednesday doubles during prior block."
+        }
       }
     },
     "review_focus": [
@@ -920,15 +746,13 @@ Each scenario in the machine-readable block includes:
       },
       "delivery_context": {
         "inbound_subject": "Ready to train again after being sick",
+        "inbound_body": "I was sick for about 10 days — fever, fatigue, the works. Finally feeling like myself again. I'm ready to get back to training. What should my first week back look like?",
         "selected_model_name": "gpt-5-mini",
         "response_channel": "email"
       },
       "memory_context": {
-        "pre_reply_refresh_attempted": true,
-        "post_reply_refresh_eligible": true,
-        "memory_notes": [],
-        "continuity_summary": null,
-        "memory_available": false
+        "memory_available": false,
+        "continuity_summary": null
       }
     },
     "review_focus": [
@@ -955,15 +779,13 @@ Each scenario in the machine-readable block includes:
       "validated_plan": {},
       "delivery_context": {
         "inbound_subject": "I want to start tri training",
+        "inbound_body": "I want to start training for my first sprint triathlon. I've done some running before but never swum or cycled competitively. I'm not sure where to start or how to structure things.",
         "selected_model_name": "gpt-5-mini",
         "response_channel": "email"
       },
       "memory_context": {
-        "pre_reply_refresh_attempted": true,
-        "post_reply_refresh_eligible": false,
-        "memory_notes": [],
-        "continuity_summary": null,
-        "memory_available": false
+        "memory_available": false,
+        "continuity_summary": null
       }
     },
     "review_focus": [
@@ -1006,16 +828,14 @@ Each scenario in the machine-readable block includes:
       },
       "delivery_context": {
         "inbound_subject": "Can you set my first month?",
+        "inbound_body": "I want to get serious about running and build toward a 10k race in 10 weeks. I've done some casual jogging but nothing structured. Can you set up a training plan for my first month?",
         "selected_model_name": "gpt-5-mini",
         "response_channel": "email",
         "connect_strava_link": "https://geniml.com/action/tok_connect_018"
       },
       "memory_context": {
-        "pre_reply_refresh_attempted": false,
-        "post_reply_refresh_eligible": true,
-        "memory_notes": [],
-        "continuity_summary": null,
-        "memory_available": false
+        "memory_available": false,
+        "continuity_summary": null
       }
     },
     "review_focus": [
@@ -1036,25 +856,12 @@ Each scenario in the machine-readable block includes:
       "validated_plan": {},
       "delivery_context": {
         "inbound_subject": "Yesterday's tempo felt too hard",
+        "inbound_body": "Yesterday's tempo run felt way too hard — I was struggling to hold the pace and my breathing was completely ragged by halfway through. I finished it but felt wrecked after. Should I be worried?",
         "selected_model_name": "gpt-5-mini",
         "response_channel": "email"
       },
       "memory_context": {
-        "pre_reply_refresh_attempted": true,
-        "post_reply_refresh_eligible": true,
-        "memory_notes": [
-          {
-            "memory_note_id": 10,
-            "fact_type": "preference",
-            "fact_key": "prefers_rpe_based_cues",
-            "summary": "Athlete responds better to RPE cues than fixed pace targets.",
-            "importance": "high",
-            "status": "active",
-            "created_at": 1773273600,
-            "updated_at": 1773273600,
-            "last_confirmed_at": 1773273600
-          }
-        ],
+        "memory_available": true,
         "continuity_summary": {
           "summary": "Recent quality sessions are landing a bit too hard relative to target effort.",
           "last_recommendation": "Use RPE and breathing cues to cap intensity.",
@@ -1063,7 +870,9 @@ Each scenario in the machine-readable block includes:
           ],
           "updated_at": 1773273600
         },
-        "memory_available": true,
+        "backbone_summaries": {
+          "training_preferences": "Athlete responds better to RPE cues than fixed pace targets."
+        },
         "continuity_focus": "Keep intensity calibrated by feel, not pace."
       }
     },
@@ -1111,25 +920,12 @@ Each scenario in the machine-readable block includes:
       },
       "delivery_context": {
         "inbound_subject": "Back from travel and ready to resume",
+        "inbound_body": "Just got back from my work trip last night. I managed three hotel treadmill sessions during the week, nothing hard. Feeling pretty good — ready to get back to normal training. What should this week look like?",
         "selected_model_name": "gpt-5-mini",
         "response_channel": "email"
       },
       "memory_context": {
-        "pre_reply_refresh_attempted": true,
-        "post_reply_refresh_eligible": true,
-        "memory_notes": [
-          {
-            "memory_note_id": 11,
-            "fact_type": "schedule",
-            "fact_key": "sunday_long_run_anchor",
-            "summary": "Sunday long run remains the best compliance anchor.",
-            "importance": "high",
-            "status": "active",
-            "created_at": 1773273600,
-            "updated_at": 1773273600,
-            "last_confirmed_at": 1773273600
-          }
-        ],
+        "memory_available": true,
         "continuity_summary": {
           "summary": "Travel phase is complete; athlete is transitioning back to normal structure.",
           "last_recommendation": "Use one conservative quality session in the first week back.",
@@ -1138,7 +934,9 @@ Each scenario in the machine-readable block includes:
           ],
           "updated_at": 1773273600
         },
-        "memory_available": true
+        "backbone_summaries": {
+          "weekly_structure": "Sunday long run remains the best compliance anchor."
+        }
       }
     },
     "review_focus": [

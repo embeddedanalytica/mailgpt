@@ -34,11 +34,8 @@ def _valid_scenario(scenario_id: str = "RG-001") -> dict:
                 "response_channel": "email",
             },
             "memory_context": {
-                "pre_reply_refresh_attempted": True,
-                "post_reply_refresh_eligible": True,
-                "memory_notes": [],
-                "continuity_summary": None,
                 "memory_available": False,
+                "continuity_summary": None,
             },
         },
     }

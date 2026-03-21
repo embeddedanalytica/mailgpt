@@ -36,7 +36,7 @@ def analyze_conversation_intelligence(email_body: str) -> Dict[str, object]:
         return validated
     except ConversationIntelligenceProposalError:
         return {
-            "intent": "question",
+            "intent": "coaching",
             "complexity_score": 3,
             "model_name": OPENAI_CLASSIFICATION_MODEL,
             "resolution_source": "fallback",
@@ -45,7 +45,7 @@ def analyze_conversation_intelligence(email_body: str) -> Dict[str, object]:
     except Exception as e:
         logger.error("Error extracting conversation intelligence: %s", e)
         return {
-            "intent": "question",
+            "intent": "coaching",
             "complexity_score": 3,
             "model_name": OPENAI_CLASSIFICATION_MODEL,
             "resolution_source": "fallback",

@@ -10,13 +10,14 @@ from typing import Any, Dict
 from athlete_memory_contract import (
     AthleteMemoryContractError,
     ContinuitySummary,
-    validate_memory_note_list,
+    validate_context_note_list,
 )
 
 
 ALLOWED_REPLY_MODES = {
     "normal_coaching",
     "clarification",
+    "intake",
     "safety_risk_managed",
     "lightweight_non_planning",
     "off_topic_redirect",
@@ -42,6 +43,7 @@ _DECISION_CONTEXT_FIELDS = {
     "today_action",
     "clarification_needed",
     "clarification_questions",
+    "missing_profile_fields",
     "plan_update_status",
 }
 _VALIDATED_PLAN_FIELDS = {
@@ -55,26 +57,21 @@ _VALIDATED_PLAN_FIELDS = {
 }
 _DELIVERY_CONTEXT_FIELDS = {
     "inbound_subject",
+    "inbound_body",
     "selected_model_name",
     "response_channel",
     "connect_strava_link",
 }
 _MEMORY_CONTEXT_FIELDS = {
-    "pre_reply_refresh_attempted",
-    "post_reply_refresh_eligible",
-    "memory_notes",
-    "continuity_summary",
     "memory_available",
+    "backbone_summaries",
+    "context_notes",
+    "continuity_summary",
     "continuity_focus",
-    "priority_memory_notes",
-    "supporting_memory_notes",
 }
 _REQUIRED_MEMORY_CONTEXT_FIELDS = {
-    "pre_reply_refresh_attempted",
-    "post_reply_refresh_eligible",
-    "memory_notes",
-    "continuity_summary",
     "memory_available",
+    "continuity_summary",
 }
 _CURRENT_TO_CANONICAL_REPLY_MODES = {
     "profile_incomplete": "clarification",
@@ -214,6 +211,11 @@ def _validate_decision_context(payload: Dict[str, Any]) -> Dict[str, Any]:
             "decision_context.clarification_questions",
             context["clarification_questions"],
         )
+    if "missing_profile_fields" in context:
+        normalized["missing_profile_fields"] = _require_non_empty_string_list(
+            "decision_context.missing_profile_fields",
+            context["missing_profile_fields"],
+        )
     if "plan_update_status" in context:
         normalized["plan_update_status"] = _require_string(
             "decision_context.plan_update_status",
@@ -260,7 +262,7 @@ def _validate_delivery_context(payload: Dict[str, Any]) -> Dict[str, Any]:
     )
 
     normalized: Dict[str, Any] = {}
-    for field_name in ("inbound_subject", "selected_model_name", "response_channel", "connect_strava_link"):
+    for field_name in ("inbound_subject", "inbound_body", "selected_model_name", "response_channel", "connect_strava_link"):
         if field_name in context:
             normalized[field_name] = _require_string(
                 f"delivery_context.{field_name}",
@@ -289,33 +291,32 @@ def _validate_memory_context(payload: Dict[str, Any]) -> Dict[str, Any]:
         "memory_context.memory_available",
         context["memory_available"],
     )
-    normalized_memory_notes = context["memory_notes"]
-    if not isinstance(normalized_memory_notes, list):
-        raise ResponseGenerationContractError("memory_context.memory_notes must be a list")
-    try:
-        normalized_memory_notes = validate_memory_note_list(normalized_memory_notes)
-    except AthleteMemoryContractError as exc:
-        raise ResponseGenerationContractError(f"memory_context.memory_notes invalid: {exc}") from exc
 
-    def _validate_memory_note_subset(field_name: str) -> list[dict[str, Any]]:
-        raw_value = context.get(field_name, [])
-        if not isinstance(raw_value, list):
-            raise ResponseGenerationContractError(f"memory_context.{field_name} must be a list")
+    # AM3: backbone_summaries (optional dict of slot_name → summary string)
+    normalized_backbone_summaries: Dict[str, str] = {}
+    if "backbone_summaries" in context:
+        raw_backbone = context["backbone_summaries"]
+        if not isinstance(raw_backbone, dict):
+            raise ResponseGenerationContractError("memory_context.backbone_summaries must be a dict")
+        for key, value in raw_backbone.items():
+            if not isinstance(value, str) or not value.strip():
+                raise ResponseGenerationContractError(
+                    f"memory_context.backbone_summaries.{key} must be a non-empty string"
+                )
+            normalized_backbone_summaries[key] = value.strip()
+
+    # AM3: context_notes (optional list of {label, summary, updated_at})
+    normalized_context_notes: list[dict[str, Any]] = []
+    if "context_notes" in context:
+        raw_notes = context["context_notes"]
+        if not isinstance(raw_notes, list):
+            raise ResponseGenerationContractError("memory_context.context_notes must be a list")
         try:
-            normalized = validate_memory_note_list(raw_value)
+            normalized_context_notes = validate_context_note_list(raw_notes)
         except AthleteMemoryContractError as exc:
             raise ResponseGenerationContractError(
-                f"memory_context.{field_name} invalid: {exc}"
+                f"memory_context.context_notes invalid: {exc}"
             ) from exc
-        memory_note_ids = {
-            int(note["memory_note_id"]) for note in normalized_memory_notes if "memory_note_id" in note
-        }
-        subset_ids = {int(note["memory_note_id"]) for note in normalized if "memory_note_id" in note}
-        if not subset_ids.issubset(memory_note_ids):
-            raise ResponseGenerationContractError(
-                f"memory_context.{field_name} must be a subset of memory_context.memory_notes"
-            )
-        return normalized
 
     raw_continuity_summary = context["continuity_summary"]
     normalized_continuity_summary = None
@@ -334,47 +335,27 @@ def _validate_memory_context(payload: Dict[str, Any]) -> Dict[str, Any]:
             context["continuity_focus"],
         )
 
-    normalized_priority_memory_notes = []
-    if "priority_memory_notes" in context:
-        normalized_priority_memory_notes = _validate_memory_note_subset("priority_memory_notes")
-        if not normalized_priority_memory_notes:
-            raise ResponseGenerationContractError(
-                "memory_context.priority_memory_notes must not be empty when present"
-            )
-
-    normalized_supporting_memory_notes = []
-    if "supporting_memory_notes" in context:
-        normalized_supporting_memory_notes = _validate_memory_note_subset(
-            "supporting_memory_notes"
-        )
-
     if not normalized_memory_available and (
-        normalized_memory_notes
+        normalized_backbone_summaries
+        or normalized_context_notes
         or normalized_continuity_summary
         or normalized_continuity_focus
-        or normalized_priority_memory_notes
-        or normalized_supporting_memory_notes
     ):
         raise ResponseGenerationContractError(
             "memory_context.memory_available must be true when memory artifacts are present"
         )
 
-    return {
-        "pre_reply_refresh_attempted": _require_bool(
-            "memory_context.pre_reply_refresh_attempted",
-            context["pre_reply_refresh_attempted"],
-        ),
-        "post_reply_refresh_eligible": _require_bool(
-            "memory_context.post_reply_refresh_eligible",
-            context["post_reply_refresh_eligible"],
-        ),
-        "memory_notes": normalized_memory_notes,
-        "continuity_summary": normalized_continuity_summary,
+    result: Dict[str, Any] = {
         "memory_available": normalized_memory_available,
-        "continuity_focus": normalized_continuity_focus,
-        "priority_memory_notes": normalized_priority_memory_notes,
-        "supporting_memory_notes": normalized_supporting_memory_notes,
+        "continuity_summary": normalized_continuity_summary,
     }
+    if normalized_backbone_summaries:
+        result["backbone_summaries"] = normalized_backbone_summaries
+    if normalized_context_notes:
+        result["context_notes"] = normalized_context_notes
+    if normalized_continuity_focus:
+        result["continuity_focus"] = normalized_continuity_focus
+    return result
 
 
 def validate_response_brief(payload: Dict[str, Any]) -> None:

@@ -19,17 +19,24 @@ def _contains_unknown_marker(text: str) -> bool:
     )
 
 
-def parse_profile_updates_from_email(body: str) -> Dict[str, Any]:
+def parse_profile_updates_from_email(
+    body: str,
+    *,
+    missing_fields: Optional[List[str]] = None,
+) -> Dict[str, Any]:
     """
     Parse athlete profile updates from email body.
 
     Uses an LLM-backed extractor for primary parsing. On extraction failure,
     returns an empty updates dict (fail closed).
+
+    When ``missing_fields`` is provided, the extraction prompt focuses on those
+    fields to improve accuracy during onboarding intake.
     """
     updates: Dict[str, Any] = {}
 
     try:
-        raw = run_profile_extraction_workflow(body)
+        raw = run_profile_extraction_workflow(body, missing_fields=missing_fields)
     except ProfileExtractionProposalError:
         # Fail closed: do not apply any profile updates if extraction fails.
         return {}

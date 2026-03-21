@@ -25,13 +25,13 @@ import boto3
 from boto3.dynamodb.conditions import Key
 from boto3.dynamodb.types import TypeSerializer
 from athlete_memory_contract import (
+    BACKBONE_SLOT_KEYS,
     AthleteMemoryContractError,
+    BackboneSlots,
     ContinuitySummary,
-    MemoryNote,
-    filter_active_memory_notes,
-    validate_memory_note_list,
+    validate_backbone_slots,
+    validate_context_note_list,
 )
-from athlete_memory_reducer import derive_canonical_fact_key
 
 logger = logging.getLogger()
 
@@ -87,36 +87,6 @@ _PROFILE_TEXT_FIELDS = {
 }
 
 
-def _memory_debug_preview(notes: Any, *, limit: int = 2) -> str:
-    def _coerce(value: Any) -> Any:
-        if isinstance(value, Decimal):
-            if value % 1 == 0:
-                return int(value)
-            return float(value)
-        if isinstance(value, list):
-            return [_coerce(item) for item in value]
-        if isinstance(value, dict):
-            return {key: _coerce(val) for key, val in value.items()}
-        return value
-
-    if not isinstance(notes, list):
-        return repr(notes)
-    preview = []
-    for note in notes[:limit]:
-        if isinstance(note, dict):
-            preview.append(
-                {
-                    "memory_note_id": note.get("memory_note_id"),
-                    "fact_type": note.get("fact_type"),
-                    "fact_key": note.get("fact_key"),
-                    "status": note.get("status"),
-                    "summary": str(note.get("summary", ""))[:120],
-                    "keys": sorted(note.keys()),
-                }
-            )
-        else:
-            preview.append({"type": type(note).__name__, "repr": repr(note)[:120]})
-    return json.dumps(_coerce(preview), separators=(",", ":"), ensure_ascii=True)
 _TYPE_SERIALIZER = TypeSerializer()
 
 
@@ -469,39 +439,6 @@ def merge_coach_profile_fields(athlete_id: str, updates: Dict[str, Any]) -> bool
         return False
 
 
-def get_memory_notes(athlete_id: str) -> List[Dict[str, Any]]:
-    """Returns persisted athlete memory notes, or an empty list when absent/invalid."""
-    profile = _get_raw_coach_profile(athlete_id) or {}
-    raw_notes = profile.get("memory_notes")
-    if not isinstance(raw_notes, list):
-        return []
-
-    try:
-        return validate_memory_note_list(raw_notes)
-    except AthleteMemoryContractError as exc:
-        logger.error(
-            "Invalid persisted memory_notes athlete_id=%s error=%s raw_notes_count=%s raw_notes_preview=%s",
-            athlete_id,
-            exc,
-            len(raw_notes),
-            _memory_debug_preview(raw_notes),
-        )
-        return []
-
-
-def get_active_memory_notes(athlete_id: str) -> List[Dict[str, Any]]:
-    """Returns only active durable-memory notes for the athlete."""
-    try:
-        return filter_active_memory_notes(get_memory_notes(athlete_id))
-    except AthleteMemoryContractError as exc:
-        logger.error(
-            "Invalid active memory_notes athlete_id=%s error=%s",
-            athlete_id,
-            exc,
-        )
-        return []
-
-
 def _get_valid_continuity_summary_from_profile(
     athlete_id: str,
     profile: Dict[str, Any],
@@ -520,182 +457,12 @@ def _get_valid_continuity_summary_from_profile(
         return None
 
 
-def _update_coach_profile_memory_fields(
-    athlete_id: str,
-    *,
-    memory_notes: List[Dict[str, Any]],
-    continuity_summary: Optional[Dict[str, Any]] = None,
-) -> bool:
-    logger.info(
-        "Persisting memory artifacts athlete_id=%s memory_notes_count=%s memory_notes_preview=%s has_continuity_summary=%s",
-        athlete_id,
-        len(memory_notes) if isinstance(memory_notes, list) else "non_list",
-        _memory_debug_preview(memory_notes),
-        continuity_summary is not None,
-    )
-    table = dynamodb.Table(COACH_PROFILES_TABLE)
-    now = int(time.time())
-    expression_attribute_names = {
-        "#created_at": "created_at",
-        "#updated_at": "updated_at",
-        "#memory_notes": "memory_notes",
-    }
-    expression_attribute_values = {
-        ":created_at": now,
-        ":updated_at": now,
-        ":memory_notes": serialize_dynamodb_payload(memory_notes),
-    }
-    set_clauses = [
-        "#created_at = if_not_exists(#created_at, :created_at)",
-        "#updated_at = :updated_at",
-        "#memory_notes = :memory_notes",
-    ]
-    if continuity_summary is not None:
-        expression_attribute_names["#continuity_summary"] = "continuity_summary"
-        expression_attribute_values[":continuity_summary"] = serialize_dynamodb_payload(continuity_summary)
-        set_clauses.append("#continuity_summary = :continuity_summary")
-
-    table.update_item(
-        Key={"athlete_id": athlete_id},
-        UpdateExpression="SET " + ", ".join(set_clauses),
-        ExpressionAttributeNames=expression_attribute_names,
-        ExpressionAttributeValues=expression_attribute_values,
-    )
-    return True
 
 
-def replace_memory_notes(athlete_id: str, memory_notes: List[Dict[str, Any]]) -> bool:
-    """Replaces the persisted memory_notes list on coach_profiles after validation."""
-    if not isinstance(memory_notes, list):
-        return False
-
-    try:
-        normalized_notes = validate_memory_note_list(memory_notes)
-    except AthleteMemoryContractError as exc:
-        logger.error(
-            "Invalid memory_notes payload athlete_id=%s error=%s raw_count=%s raw_preview=%s",
-            athlete_id,
-            exc,
-            len(memory_notes) if isinstance(memory_notes, list) else "non_list",
-            _memory_debug_preview(memory_notes),
-        )
-        return False
-
-    try:
-        return _update_coach_profile_memory_fields(
-            athlete_id,
-            memory_notes=normalized_notes,
-        )
-    except ClientError as e:
-        logger.error(f"Error replacing memory_notes for athlete_id={athlete_id}: {e}")
-        return False
 
 
-def upsert_memory_note(athlete_id: str, note_payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """
-    Adds a new note with the next lightweight ID or replaces an existing note by memory_note_id.
-    """
-    if not isinstance(note_payload, dict):
-        return None
-
-    existing_notes = get_memory_notes(athlete_id)
-    existing_by_id = {
-        int(note["memory_note_id"]): dict(note)
-        for note in existing_notes
-    }
-    now = int(time.time())
-
-    candidate_payload = dict(note_payload)
-    requested_id = candidate_payload.get("memory_note_id")
-    if requested_id is None:
-        next_id = max(existing_by_id.keys(), default=0) + 1
-        candidate_payload["memory_note_id"] = next_id
-        candidate_payload["created_at"] = now
-    else:
-        if not isinstance(requested_id, int) or requested_id < 1:
-            logger.error(
-                "Invalid requested memory_note_id athlete_id=%s value=%s",
-                athlete_id,
-                requested_id,
-            )
-            return None
-        if requested_id not in existing_by_id:
-            logger.error(
-                "Unknown memory_note_id for upsert athlete_id=%s memory_note_id=%s",
-                athlete_id,
-                requested_id,
-            )
-            return None
-        candidate_payload["created_at"] = existing_by_id[requested_id]["created_at"]
-
-    fact_type = str(candidate_payload.get("fact_type", "")).strip().lower()
-    summary = str(candidate_payload.get("summary", "")).strip()
-    if not fact_type or not summary:
-        logger.error(
-            "Invalid memory_note upsert athlete_id=%s missing fact_type or summary",
-            athlete_id,
-        )
-        return None
-
-    candidate_payload["fact_key"] = derive_canonical_fact_key(
-        fact_type=fact_type,
-        proposed_key=candidate_payload.get("fact_key", ""),
-        summary=summary,
-    )
-    candidate_payload["fact_type"] = fact_type
-    candidate_payload["status"] = str(candidate_payload.get("status", "active")).strip().lower() or "active"
-    candidate_payload["updated_at"] = now
-    candidate_payload["last_confirmed_at"] = int(
-        candidate_payload.get("last_confirmed_at", now)
-    )
-
-    try:
-        normalized_note = MemoryNote.from_dict(candidate_payload).to_dict()
-    except AthleteMemoryContractError as exc:
-        logger.error("Invalid memory_note upsert athlete_id=%s error=%s", athlete_id, exc)
-        return None
-
-    updated_notes: List[Dict[str, Any]] = []
-    note_replaced = False
-    for existing_note in existing_notes:
-        if existing_note["memory_note_id"] == normalized_note["memory_note_id"]:
-            updated_notes.append(normalized_note)
-            note_replaced = True
-            continue
-        updated_notes.append(existing_note)
-    if not note_replaced:
-        updated_notes.append(normalized_note)
-
-    if not replace_memory_notes(athlete_id, updated_notes):
-        return None
-    return normalized_note
 
 
-def get_memory_context_for_response_generation(athlete_id: str) -> Dict[str, Any]:
-    """
-    Returns bounded memory context for LLM reply generation.
-
-    Selection rule:
-    - all high-importance notes
-    - up to 3 additional notes ordered by last_confirmed_at desc
-    - current continuity_summary when present and valid
-    """
-    raw_profile = _get_raw_coach_profile(athlete_id) or {}
-    memory_notes = get_active_memory_notes(athlete_id)
-    high_notes = [note for note in memory_notes if note.get("importance") == "high"]
-    extra_candidates = [
-        note for note in memory_notes if note.get("importance") != "high"
-    ]
-    extra_candidates.sort(
-        key=lambda note: int(note.get("last_confirmed_at", 0)),
-        reverse=True,
-    )
-    continuity_summary = _get_valid_continuity_summary_from_profile(athlete_id, raw_profile)
-
-    return {
-        "memory_notes": high_notes + extra_candidates[:3],
-        "continuity_summary": continuity_summary,
-    }
 
 
 def get_continuity_summary(athlete_id: str) -> Optional[Dict[str, Any]]:
@@ -704,73 +471,128 @@ def get_continuity_summary(athlete_id: str) -> Optional[Dict[str, Any]]:
     return _get_valid_continuity_summary_from_profile(athlete_id, profile)
 
 
-def replace_continuity_summary(
-    athlete_id: str,
-    continuity_summary: Dict[str, Any],
-) -> bool:
-    """Replaces only continuity_summary on coach_profiles after validation."""
-    if not isinstance(continuity_summary, dict):
-        return False
 
+
+
+
+# ============================================================================
+# AM3 UNIFIED MEMORY (backbone + context_notes + continuity)
+# ============================================================================
+
+
+def get_backbone(athlete_id: str) -> Dict[str, Any]:
+    """Returns the persisted backbone dict, or empty slots if absent/invalid."""
+    profile = _get_raw_coach_profile(athlete_id) or {}
+    raw_backbone = profile.get("backbone")
+    if not isinstance(raw_backbone, dict):
+        return BackboneSlots.empty().to_dict()
     try:
-        normalized_continuity_summary = ContinuitySummary.from_dict(
-            continuity_summary
-        ).to_dict()
+        return validate_backbone_slots(raw_backbone).to_dict()
     except AthleteMemoryContractError as exc:
         logger.error(
-            "Invalid continuity_summary payload athlete_id=%s error=%s",
+            "Invalid persisted backbone athlete_id=%s error=%s",
+            athlete_id,
+            exc,
+        )
+        return BackboneSlots.empty().to_dict()
+
+
+def get_context_notes(athlete_id: str) -> List[Dict[str, Any]]:
+    """Returns the persisted context_notes list, or empty list if absent/invalid."""
+    profile = _get_raw_coach_profile(athlete_id) or {}
+    raw_notes = profile.get("context_notes")
+    if not isinstance(raw_notes, list):
+        return []
+    try:
+        return validate_context_note_list(raw_notes)
+    except AthleteMemoryContractError as exc:
+        logger.error(
+            "Invalid persisted context_notes athlete_id=%s error=%s",
+            athlete_id,
+            exc,
+        )
+        return []
+
+
+def replace_unified_memory(
+    athlete_id: str,
+    backbone: Dict[str, Any],
+    context_notes: List[Dict[str, Any]],
+    continuity_summary: Dict[str, Any],
+) -> bool:
+    """Atomically replaces backbone + context_notes + continuity_summary on coach_profiles."""
+    try:
+        validated_backbone = validate_backbone_slots(backbone).to_dict()
+        validated_notes = validate_context_note_list(context_notes)
+        validated_continuity = ContinuitySummary.from_dict(continuity_summary).to_dict()
+    except AthleteMemoryContractError as exc:
+        logger.error(
+            "Invalid unified memory payload athlete_id=%s error=%s",
             athlete_id,
             exc,
         )
         return False
 
+    table = dynamodb.Table(COACH_PROFILES_TABLE)
+    now = int(time.time())
     try:
-        return _update_coach_profile_memory_fields(
-            athlete_id,
-            memory_notes=get_memory_notes(athlete_id),
-            continuity_summary=normalized_continuity_summary,
+        table.update_item(
+            Key={"athlete_id": athlete_id},
+            UpdateExpression=(
+                "SET #created_at = if_not_exists(#created_at, :created_at), "
+                "#updated_at = :updated_at, "
+                "#backbone = :backbone, "
+                "#context_notes = :context_notes, "
+                "#continuity_summary = :continuity_summary"
+            ),
+            ExpressionAttributeNames={
+                "#created_at": "created_at",
+                "#updated_at": "updated_at",
+                "#backbone": "backbone",
+                "#context_notes": "context_notes",
+                "#continuity_summary": "continuity_summary",
+            },
+            ExpressionAttributeValues=serialize_dynamodb_payload({
+                ":created_at": now,
+                ":updated_at": now,
+                ":backbone": validated_backbone,
+                ":context_notes": validated_notes,
+                ":continuity_summary": validated_continuity,
+            }),
         )
+        return True
     except ClientError as e:
-        logger.error(f"Error replacing continuity_summary for athlete_id={athlete_id}: {e}")
+        logger.error(f"Error replacing unified memory for athlete_id={athlete_id}: {e}")
         return False
 
 
-def replace_memory_artifacts(
-    athlete_id: str,
-    *,
-    memory_notes: List[Dict[str, Any]],
-    continuity_summary: Dict[str, Any],
-) -> bool:
+def get_memory_context_for_response_generation(athlete_id: str) -> Dict[str, Any]:
+    """Returns AM3 memory context (backbone + context_notes + continuity) for response generation.
+
+    If old-format data is detected (has memory_notes but no backbone), returns
+    empty memory context — the first post-reply refresh will regenerate.
     """
-    Atomically replaces memory_notes and continuity_summary on coach_profiles after validation.
-    """
-    if not isinstance(memory_notes, list) or not isinstance(continuity_summary, dict):
-        return False
+    raw_profile = _get_raw_coach_profile(athlete_id) or {}
 
-    try:
-        normalized_notes = validate_memory_note_list(memory_notes)
-        normalized_continuity_summary = (
-            ContinuitySummary.from_dict(continuity_summary).to_dict()
-        )
-    except AthleteMemoryContractError as exc:
-        logger.error(
-            "Invalid memory artifact payload athlete_id=%s error=%s raw_count=%s raw_preview=%s",
-            athlete_id,
-            exc,
-            len(memory_notes) if isinstance(memory_notes, list) else "non_list",
-            _memory_debug_preview(memory_notes),
-        )
-        return False
+    # Detect old format: has memory_notes but no backbone
+    has_backbone = isinstance(raw_profile.get("backbone"), dict)
+    if not has_backbone:
+        continuity_summary = _get_valid_continuity_summary_from_profile(athlete_id, raw_profile)
+        return {
+            "backbone": BackboneSlots.empty().to_dict(),
+            "context_notes": [],
+            "continuity_summary": continuity_summary,
+        }
 
-    try:
-        return _update_coach_profile_memory_fields(
-            athlete_id,
-            memory_notes=normalized_notes,
-            continuity_summary=normalized_continuity_summary,
-        )
-    except ClientError as e:
-        logger.error(f"Error replacing memory artifacts for athlete_id={athlete_id}: {e}")
-        return False
+    backbone = get_backbone(athlete_id)
+    context_notes = get_context_notes(athlete_id)
+    continuity_summary = _get_valid_continuity_summary_from_profile(athlete_id, raw_profile)
+
+    return {
+        "backbone": backbone,
+        "context_notes": context_notes,
+        "continuity_summary": continuity_summary,
+    }
 
 
 # ============================================================================

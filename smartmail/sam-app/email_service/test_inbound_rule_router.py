@@ -32,11 +32,11 @@ class TestInboundRuleRouter(unittest.TestCase):
         ) as run_re:
             run_re.return_value = mock.Mock(to_dict=lambda: {"plan_update_status": "updated", "track": "main_build", "risk_flag": "green"})
 
-            check_in = router.route_inbound_with_rule_engine(
+            coaching = router.route_inbound_with_rule_engine(
                 "ath_1",
                 "u@example.com",
                 self._email_data(),
-                {"intent": "check_in"},
+                {"intent": "coaching"},
             )
             question = router.route_inbound_with_rule_engine(
                 "ath_1",
@@ -50,12 +50,6 @@ class TestInboundRuleRouter(unittest.TestCase):
                 self._email_data(),
                 {"intent": "off_topic"},
             )
-            availability_update = router.route_inbound_with_rule_engine(
-                "ath_1",
-                "u@example.com",
-                self._email_data(),
-                {"intent": "availability_update"},
-            )
             safety_concern = router.route_inbound_with_rule_engine(
                 "ath_1",
                 "u@example.com",
@@ -63,10 +57,9 @@ class TestInboundRuleRouter(unittest.TestCase):
                 {"intent": "safety_concern"},
             )
 
-        self.assertEqual(check_in["mode"], "mutate")
+        self.assertEqual(coaching["mode"], "mutate")
         self.assertEqual(question["mode"], "read_only")
         self.assertEqual(off_topic["mode"], "skip")
-        self.assertEqual(availability_update["mode"], "mutate")
         self.assertEqual(safety_concern["mode"], "skip")
         self.assertEqual(safety_concern["reply_strategy"], "safety_concern")
 
@@ -80,7 +73,7 @@ class TestInboundRuleRouter(unittest.TestCase):
                 "ath_1",
                 "u@example.com",
                 self._email_data(),
-                {"intent": "check_in"},
+                {"intent": "coaching"},
             )
 
         self.assertEqual(decision["mode"], "skip")
@@ -117,7 +110,7 @@ class TestInboundRuleRouter(unittest.TestCase):
                 "ath_1",
                 "u@example.com",
                 self._email_data(),
-                {"intent": "check_in"},
+                {"intent": "coaching"},
             )
 
         self.assertTrue(decision["rule_engine_ran"])
@@ -186,7 +179,7 @@ class TestInboundRuleRouter(unittest.TestCase):
                 "ath_1",
                 "u@example.com",
                 self._email_data(),
-                {"intent": "check_in"},
+                {"intent": "coaching"},
             )
 
         self.assertEqual(decision["plan_update_result"]["status"], "skipped")
@@ -207,7 +200,7 @@ class TestInboundRuleRouter(unittest.TestCase):
                 "ath_1",
                 "u@example.com",
                 self._email_data(),
-                {"intent": "check_in"},
+                {"intent": "coaching"},
                 log_outcome=capture,
             )
 
@@ -255,7 +248,7 @@ class TestInboundRuleRouter(unittest.TestCase):
                 "ath_1",
                 "u@example.com",
                 self._email_data(),
-                {"intent": "check_in"},
+                {"intent": "coaching"},
             )
 
         self.assertEqual(decision["mode"], "mutate")
@@ -293,7 +286,7 @@ class TestInboundRuleRouter(unittest.TestCase):
                 "ath_1",
                 "u@example.com",
                 self._email_data(),
-                {"intent": "availability_update"},
+                {"intent": "coaching"},
             )
 
         self.assertEqual(decision["mode"], "mutate")

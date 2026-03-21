@@ -74,7 +74,7 @@ class TestDebugConversationIntelligenceCLI(unittest.TestCase):
                  debug_cli,
                  "analyze_conversation_intelligence",
                  return_value={
-                     "intent": "availability_update",
+                     "intent": "coaching",
                      "complexity_score": 3,
                      "model_name": "gpt-test",
                      "resolution_source": "resolver",
@@ -91,7 +91,7 @@ class TestDebugConversationIntelligenceCLI(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(stderr.getvalue(), "")
         payload = json.loads(stdout.getvalue())
-        self.assertEqual(payload["intent"], "availability_update")
+        self.assertEqual(payload["intent"], "coaching")
         self.assertEqual(payload["raw_message"], "Travel week")
         self.assertIn("elapsed_ms", payload)
 
@@ -103,7 +103,7 @@ class TestDebugConversationIntelligenceCLI(unittest.TestCase):
                  debug_cli,
                  "analyze_conversation_intelligence",
                  return_value={
-                     "intent": "check_in",
+                     "intent": "coaching",
                      "complexity_score": 2,
                      "model_name": "gpt-test",
                      "resolution_source": "judge",

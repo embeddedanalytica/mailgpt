@@ -9,19 +9,26 @@ from typing import Any, Dict, Optional
 
 _ACTIVITY_KEYWORDS = {
     "run": "running",
+    "ran": "running",
     "running": "running",
     "jog": "running",
     "ride": "cycling",
+    "rode": "cycling",
     "bike": "cycling",
     "cycling": "cycling",
     "swim": "swimming",
+    "swam": "swimming",
     "swimming": "swimming",
     "lift": "strength",
+    "lifted": "strength",
     "strength": "strength",
     "gym": "strength",
     "hike": "hiking",
+    "hiked": "hiking",
     "walk": "walking",
+    "walked": "walking",
     "rest": "rest",
+    "rested": "rest",
 }
 
 

@@ -10,20 +10,6 @@ from response_generation_contract import (
 )
 
 
-def _memory_note(note_id: int = 1) -> dict:
-    return {
-        "memory_note_id": note_id,
-        "fact_type": "constraint",
-        "fact_key": f"weekday_before_7am_cutoff_{note_id}",
-        "summary": "Weekday sessions need to finish before 7am",
-        "importance": "high",
-        "status": "active",
-        "created_at": 1773273600,
-        "updated_at": 1773273600,
-        "last_confirmed_at": 1773273600,
-    }
-
-
 def _continuity_summary() -> dict:
     return {
         "summary": "Athlete is rebuilding consistency.",
@@ -31,6 +17,10 @@ def _continuity_summary() -> dict:
         "open_loops": ["How did the quality session feel?"],
         "updated_at": 1773273600,
     }
+
+
+def _context_note(label: str = "Schedule", summary: str = "Weekday sessions need to finish before 7am") -> dict:
+    return {"label": label, "summary": summary, "updated_at": 1773273600}
 
 
 def _valid_brief(reply_mode: str = "normal_coaching") -> dict:
@@ -59,14 +49,11 @@ def _valid_brief(reply_mode: str = "normal_coaching") -> dict:
             "response_channel": "email",
         },
         "memory_context": {
-            "pre_reply_refresh_attempted": True,
-            "post_reply_refresh_eligible": True,
-            "memory_notes": [_memory_note()],
-            "continuity_summary": _continuity_summary(),
             "memory_available": True,
+            "backbone_summaries": {"hard_constraints": "Weekday sessions need to finish before 7am"},
+            "context_notes": [_context_note()],
+            "continuity_summary": _continuity_summary(),
             "continuity_focus": "Athlete is rebuilding consistency.",
-            "priority_memory_notes": [_memory_note()],
-            "supporting_memory_notes": [],
         },
     }
 
@@ -101,11 +88,8 @@ class TestValidateResponseBrief(unittest.TestCase):
         payload["validated_plan"] = {}
         payload["delivery_context"] = {}
         payload["memory_context"] = {
-            "pre_reply_refresh_attempted": False,
-            "post_reply_refresh_eligible": True,
-            "memory_notes": [],
-            "continuity_summary": None,
             "memory_available": False,
+            "continuity_summary": None,
         }
 
         validate_response_brief(payload)
@@ -190,16 +174,16 @@ class TestValidateResponseBrief(unittest.TestCase):
         with self.assertRaises(ResponseGenerationContractError):
             validate_response_brief(payload)
 
-    def test_rejects_priority_memory_notes_not_subset_of_memory_notes(self):
+    def test_rejects_non_dict_backbone_summaries(self):
         payload = _valid_brief()
-        payload["memory_context"]["priority_memory_notes"] = [_memory_note(99)]
+        payload["memory_context"]["backbone_summaries"] = "not a dict"
 
         with self.assertRaises(ResponseGenerationContractError):
             validate_response_brief(payload)
 
-    def test_rejects_empty_priority_memory_notes_when_present(self):
+    def test_rejects_empty_string_backbone_summary_value(self):
         payload = _valid_brief()
-        payload["memory_context"]["priority_memory_notes"] = []
+        payload["memory_context"]["backbone_summaries"] = {"primary_goal": "  "}
 
         with self.assertRaises(ResponseGenerationContractError):
             validate_response_brief(payload)
@@ -218,9 +202,9 @@ class TestValidateResponseBrief(unittest.TestCase):
         with self.assertRaises(ResponseGenerationContractError):
             validate_response_brief(payload)
 
-    def test_memory_available_true_rejects_malformed_memory_notes(self):
+    def test_rejects_malformed_context_notes(self):
         payload = _valid_brief()
-        payload["memory_context"]["memory_notes"] = [{"summary": "Missing required fields"}]
+        payload["memory_context"]["context_notes"] = [{"summary": "Missing label"}]
 
         with self.assertRaises(ResponseGenerationContractError):
             validate_response_brief(payload)
@@ -241,7 +225,7 @@ class TestValidateResponseBrief(unittest.TestCase):
 
     def test_missing_memory_context_required_field_is_rejected(self):
         payload = _valid_brief()
-        del payload["memory_context"]["post_reply_refresh_eligible"]
+        del payload["memory_context"]["continuity_summary"]
 
         with self.assertRaises(ResponseGenerationContractError):
             validate_response_brief(payload)

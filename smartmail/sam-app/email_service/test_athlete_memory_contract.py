@@ -1,38 +1,21 @@
-"""Unit tests for the AM2 athlete memory contract."""
+"""Unit tests for the athlete memory contract (AM3 backbone/context)."""
 
 from decimal import Decimal
 import unittest
 
 from athlete_memory_contract import (
-    ALLOWED_FACT_TYPES,
-    ALLOWED_MEMORY_NOTE_IMPORTANCE,
-    ALLOWED_MEMORY_NOTE_STATUS,
-    FACT_KEY_REFERENCE_EXAMPLES,
-    MAX_MEMORY_NOTES,
+    BACKBONE_SLOT_KEYS,
+    BackboneSlot,
+    BackboneSlots,
+    ContextNote,
+    MAX_CONTEXT_NOTES,
     MAX_OPEN_LOOPS,
     AthleteMemoryContractError,
     ContinuitySummary,
-    MemoryNote,
-    filter_active_memory_notes,
-    normalize_fact_key,
+    validate_backbone_slots,
+    validate_context_note_list,
     validate_continuity_summary,
-    validate_memory_note,
-    validate_memory_note_list,
 )
-
-
-def _valid_note() -> MemoryNote:
-    return MemoryNote(
-        memory_note_id=2,
-        fact_type="constraint",
-        fact_key="weekday_before_7am_cutoff",
-        summary="Can usually train only before 7am on weekdays",
-        importance="medium",
-        status="active",
-        created_at=1772928000,
-        updated_at=1773014400,
-        last_confirmed_at=1773014400,
-    )
 
 
 def _valid_continuity_summary() -> ContinuitySummary:
@@ -45,197 +28,6 @@ def _valid_continuity_summary() -> ContinuitySummary:
         ],
         updated_at=1773014400,
     )
-
-
-class TestMemoryNoteValidation(unittest.TestCase):
-    def test_valid_memory_note_passes(self):
-        note = _valid_note()
-        validate_memory_note(note)
-
-    def test_round_trip_from_dict_passes(self):
-        payload = _valid_note().to_dict()
-        rebuilt = MemoryNote.from_dict(payload)
-        self.assertEqual(rebuilt.to_dict(), payload)
-
-    def test_memory_note_id_must_be_positive_int(self):
-        with self.assertRaises(AthleteMemoryContractError):
-            validate_memory_note(
-                MemoryNote(**{**_valid_note().to_dict(), "memory_note_id": 0})
-            )
-
-    def test_fact_type_must_be_allowed_value(self):
-        self.assertEqual(ALLOWED_FACT_TYPES, {"goal", "constraint", "schedule", "preference", "other"})
-        for fact_type in ALLOWED_FACT_TYPES:
-            note = MemoryNote(**{**_valid_note().to_dict(), "fact_type": fact_type})
-            validate_memory_note(note)
-        with self.assertRaises(AthleteMemoryContractError):
-            validate_memory_note(
-                MemoryNote(**{**_valid_note().to_dict(), "fact_type": "injury"})
-            )
-
-    def test_fact_key_is_normalized_and_strips_type_prefix(self):
-        note = MemoryNote(
-            **{**_valid_note().to_dict(), "fact_key": "Constraint:Weekday Before 7am Cutoff"}
-        )
-        validate_memory_note(note)
-        self.assertEqual(note.fact_key, "weekday_before_7am_cutoff")
-        self.assertEqual(
-            normalize_fact_key("schedule:Saturday Availability"),
-            "saturday_availability",
-        )
-
-    def test_summary_must_be_non_empty(self):
-        with self.assertRaises(AthleteMemoryContractError):
-            validate_memory_note(
-                MemoryNote(**{**_valid_note().to_dict(), "summary": "   "})
-            )
-
-    def test_importance_must_be_allowed_value(self):
-        self.assertEqual(ALLOWED_MEMORY_NOTE_IMPORTANCE, {"high", "medium", "low"})
-        with self.assertRaises(AthleteMemoryContractError):
-            validate_memory_note(
-                MemoryNote(**{**_valid_note().to_dict(), "importance": "critical"})
-            )
-
-    def test_status_must_be_allowed_value(self):
-        self.assertEqual(ALLOWED_MEMORY_NOTE_STATUS, {"active", "inactive"})
-        with self.assertRaises(AthleteMemoryContractError):
-            validate_memory_note(
-                MemoryNote(**{**_valid_note().to_dict(), "status": "archived"})
-            )
-
-    def test_timestamps_must_be_positive_and_ordered(self):
-        with self.assertRaises(AthleteMemoryContractError):
-            validate_memory_note(
-                MemoryNote(**{**_valid_note().to_dict(), "created_at": "03/08/2026"})
-            )
-        with self.assertRaises(AthleteMemoryContractError):
-            validate_memory_note(
-                MemoryNote(
-                    **{
-                        **_valid_note().to_dict(),
-                        "created_at": 1773014400,
-                        "updated_at": 1772928000,
-                    }
-                )
-            )
-
-    def test_decimal_timestamps_from_dynamodb_are_accepted(self):
-        payload = {
-            **_valid_note().to_dict(),
-            "created_at": Decimal("1772928000"),
-            "updated_at": Decimal("1773014400"),
-            "last_confirmed_at": Decimal("1773014400"),
-        }
-        rebuilt = MemoryNote.from_dict(payload)
-        self.assertEqual(rebuilt.created_at, 1772928000)
-        self.assertEqual(rebuilt.updated_at, 1773014400)
-        self.assertEqual(rebuilt.last_confirmed_at, 1773014400)
-
-    def test_decimal_memory_note_id_from_dynamodb_is_accepted(self):
-        payload = {
-            **_valid_note().to_dict(),
-            "memory_note_id": Decimal("2"),
-        }
-        rebuilt = MemoryNote.from_dict(payload)
-        self.assertEqual(rebuilt.memory_note_id, 2)
-
-    def test_fractional_decimal_memory_note_id_is_rejected(self):
-        payload = {
-            **_valid_note().to_dict(),
-            "memory_note_id": Decimal("2.5"),
-        }
-        with self.assertRaises(AthleteMemoryContractError):
-            MemoryNote.from_dict(payload)
-
-    def test_from_dict_rejects_missing_required_fields(self):
-        payload = _valid_note().to_dict()
-        del payload["status"]
-        with self.assertRaises(AthleteMemoryContractError):
-            MemoryNote.from_dict(payload)
-
-    def test_from_dict_ignores_unknown_fields(self):
-        payload = _valid_note().to_dict()
-        payload["unexpected"] = "value"
-        rebuilt = MemoryNote.from_dict(payload)
-        self.assertEqual(rebuilt.to_dict(), _valid_note().to_dict())
-
-    def test_memory_note_list_rejects_duplicate_ids(self):
-        notes = [_valid_note().to_dict(), {**_valid_note().to_dict(), "summary": "other"}]
-        with self.assertRaises(AthleteMemoryContractError):
-            validate_memory_note_list(notes)
-
-    def test_memory_note_list_rejects_duplicate_ids_after_decimal_normalization(self):
-        notes = [
-            {**_valid_note().to_dict(), "memory_note_id": Decimal("2")},
-            {**_valid_note().to_dict(), "memory_note_id": 2, "summary": "other"},
-        ]
-        with self.assertRaises(AthleteMemoryContractError):
-            validate_memory_note_list(notes)
-
-    def test_memory_note_list_rejects_duplicate_active_fact_keys(self):
-        notes = [
-            _valid_note().to_dict(),
-            {
-                **_valid_note().to_dict(),
-                "memory_note_id": 3,
-                "summary": "Updated wording",
-            },
-        ]
-        with self.assertRaises(AthleteMemoryContractError):
-            validate_memory_note_list(notes)
-
-    def test_memory_note_list_allows_inactive_duplicate_fact_key(self):
-        notes = [
-            _valid_note().to_dict(),
-            {
-                **_valid_note().to_dict(),
-                "memory_note_id": 3,
-                "status": "inactive",
-                "summary": "Old wording",
-            },
-        ]
-        normalized = validate_memory_note_list(notes)
-        self.assertEqual(len(normalized), 2)
-        self.assertEqual(len(filter_active_memory_notes(normalized)), 1)
-
-    def test_memory_note_list_rejects_more_than_max_active_notes(self):
-        notes = [
-            {
-                "memory_note_id": idx,
-                "fact_type": "schedule",
-                "fact_key": f"slot_{idx}",
-                "summary": f"note {idx}",
-                "importance": "medium",
-                "status": "active",
-                "created_at": 1772928000,
-                "updated_at": 1772928000,
-                "last_confirmed_at": 1772928000,
-            }
-            for idx in range(1, MAX_MEMORY_NOTES + 2)
-        ]
-        with self.assertRaises(AthleteMemoryContractError):
-            validate_memory_note_list(notes)
-
-    def test_memory_note_list_hard_cutover_rejects_am1_shape(self):
-        with self.assertRaises(AthleteMemoryContractError):
-            validate_memory_note_list(
-                [
-                    {
-                        "memory_note_id": 1,
-                        "category": "schedule",
-                        "summary": "old shape",
-                        "importance": "medium",
-                        "last_confirmed_at": 1772928000,
-                    }
-                ]
-            )
-
-    def test_reference_examples_have_expected_shape(self):
-        self.assertEqual(len(FACT_KEY_REFERENCE_EXAMPLES), 5)
-        for example in FACT_KEY_REFERENCE_EXAMPLES:
-            self.assertIn("canonical_fact_key", example)
-            self.assertIn("fact_type", example)
 
 
 class TestContinuitySummaryValidation(unittest.TestCase):
@@ -320,6 +112,166 @@ class TestContinuitySummaryValidation(unittest.TestCase):
                     }
                 )
             )
+
+
+class TestBackboneSlotValidation(unittest.TestCase):
+    def test_populated_slot_round_trips(self):
+        slot = BackboneSlot(summary="Run a half marathon on 2026-05-17", updated_at=1773014400)
+        rebuilt = BackboneSlot.from_dict(slot.to_dict(), slot_name="primary_goal")
+        self.assertEqual(rebuilt.to_dict(), slot.to_dict())
+
+    def test_null_slot_round_trips(self):
+        slot = BackboneSlot(summary=None, updated_at=None)
+        rebuilt = BackboneSlot.from_dict(slot.to_dict(), slot_name="primary_goal")
+        self.assertIsNone(rebuilt.summary)
+        self.assertIsNone(rebuilt.updated_at)
+
+    def test_none_payload_produces_null_slot(self):
+        slot = BackboneSlot.from_dict(None, slot_name="primary_goal")
+        self.assertIsNone(slot.summary)
+
+    def test_rejects_summary_without_updated_at(self):
+        with self.assertRaises(AthleteMemoryContractError):
+            BackboneSlot.from_dict(
+                {"summary": "half marathon", "updated_at": None},
+                slot_name="primary_goal",
+            )
+
+    def test_rejects_updated_at_without_summary(self):
+        with self.assertRaises(AthleteMemoryContractError):
+            BackboneSlot.from_dict(
+                {"summary": None, "updated_at": 1773014400},
+                slot_name="primary_goal",
+            )
+
+    def test_rejects_empty_summary(self):
+        with self.assertRaises(AthleteMemoryContractError):
+            BackboneSlot.from_dict(
+                {"summary": "   ", "updated_at": 1773014400},
+                slot_name="primary_goal",
+            )
+
+    def test_accepts_decimal_updated_at(self):
+        slot = BackboneSlot.from_dict(
+            {"summary": "goal", "updated_at": Decimal("1773014400")},
+            slot_name="primary_goal",
+        )
+        self.assertEqual(slot.updated_at, 1773014400)
+
+    def test_rejects_non_dict_payload(self):
+        with self.assertRaises(AthleteMemoryContractError):
+            BackboneSlot.from_dict("not a dict", slot_name="primary_goal")
+
+
+class TestBackboneSlotsValidation(unittest.TestCase):
+    def _populated_backbone(self) -> dict:
+        return {
+            "primary_goal": {"summary": "Half marathon in May", "updated_at": 1773014400},
+            "weekly_structure": {"summary": "4 days/week, Mon/Wed/Fri/Sun", "updated_at": 1773014400},
+            "hard_constraints": {"summary": "Mild Achilles tightness, busy mornings Tue", "updated_at": 1773014400},
+            "training_preferences": {"summary": "Prefers structured plans", "updated_at": 1773014400},
+        }
+
+    def test_populated_backbone_round_trips(self):
+        payload = self._populated_backbone()
+        backbone = BackboneSlots.from_dict(payload)
+        self.assertEqual(backbone.to_dict(), payload)
+
+    def test_empty_backbone_has_all_null_slots(self):
+        backbone = BackboneSlots.empty()
+        for key in BACKBONE_SLOT_KEYS:
+            slot = backbone.to_dict()[key]
+            self.assertIsNone(slot["summary"])
+            self.assertIsNone(slot["updated_at"])
+
+    def test_partial_backbone_allows_null_slots(self):
+        payload = self._populated_backbone()
+        payload["training_preferences"] = {"summary": None, "updated_at": None}
+        backbone = BackboneSlots.from_dict(payload)
+        self.assertIsNone(backbone.training_preferences.summary)
+
+    def test_missing_slot_key_treated_as_null(self):
+        payload = self._populated_backbone()
+        del payload["training_preferences"]
+        backbone = BackboneSlots.from_dict(payload)
+        self.assertIsNone(backbone.training_preferences.summary)
+
+    def test_rejects_non_dict(self):
+        with self.assertRaises(AthleteMemoryContractError):
+            BackboneSlots.from_dict("not a dict")
+
+    def test_backbone_slot_keys_constant(self):
+        self.assertEqual(
+            BACKBONE_SLOT_KEYS,
+            ["primary_goal", "weekly_structure", "hard_constraints", "training_preferences"],
+        )
+
+
+class TestContextNoteValidation(unittest.TestCase):
+    def _valid_context_note(self) -> dict:
+        return {
+            "label": "power meter",
+            "summary": "Has a power meter on the road bike",
+            "updated_at": 1773014400,
+        }
+
+    def test_valid_context_note_round_trips(self):
+        payload = self._valid_context_note()
+        note = ContextNote.from_dict(payload, index=0)
+        self.assertEqual(note.to_dict(), payload)
+
+    def test_rejects_empty_label(self):
+        payload = {**self._valid_context_note(), "label": "  "}
+        with self.assertRaises(AthleteMemoryContractError):
+            ContextNote.from_dict(payload, index=0)
+
+    def test_rejects_empty_summary(self):
+        payload = {**self._valid_context_note(), "summary": ""}
+        with self.assertRaises(AthleteMemoryContractError):
+            ContextNote.from_dict(payload, index=0)
+
+    def test_rejects_non_dict(self):
+        with self.assertRaises(AthleteMemoryContractError):
+            ContextNote.from_dict("not a dict", index=0)
+
+    def test_accepts_decimal_updated_at(self):
+        payload = {**self._valid_context_note(), "updated_at": Decimal("1773014400")}
+        note = ContextNote.from_dict(payload, index=0)
+        self.assertEqual(note.updated_at, 1773014400)
+
+
+class TestContextNoteListValidation(unittest.TestCase):
+    def _note(self, label: str, summary: str = "details") -> dict:
+        return {"label": label, "summary": summary, "updated_at": 1773014400}
+
+    def test_valid_list_passes(self):
+        notes = [self._note("power meter"), self._note("Sunday group run")]
+        result = validate_context_note_list(notes)
+        self.assertEqual(len(result), 2)
+
+    def test_empty_list_passes(self):
+        result = validate_context_note_list([])
+        self.assertEqual(result, [])
+
+    def test_max_context_notes_is_4(self):
+        self.assertEqual(MAX_CONTEXT_NOTES, 4)
+        notes = [self._note(f"fact_{i}") for i in range(4)]
+        result = validate_context_note_list(notes)
+        self.assertEqual(len(result), 4)
+
+    def test_rejects_more_than_max(self):
+        notes = [self._note(f"fact_{i}") for i in range(MAX_CONTEXT_NOTES + 1)]
+        with self.assertRaises(AthleteMemoryContractError):
+            validate_context_note_list(notes)
+
+    def test_rejects_duplicate_labels(self):
+        notes = [self._note("power meter"), self._note("Power Meter")]
+        with self.assertRaises(AthleteMemoryContractError):
+            validate_context_note_list(notes)
+
+    def test_rejects_non_list(self):
+        with self.assertRaises(AthleteMemoryContractError):
+            validate_context_note_list("not a list")
 
 
 if __name__ == "__main__":

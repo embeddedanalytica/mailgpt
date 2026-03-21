@@ -25,10 +25,6 @@ def _normalize_optional_memory_artifacts(payload: Dict[str, Any]) -> Dict[str, A
     cleaned_memory_context = dict(memory_context)
     if cleaned_memory_context.get("continuity_focus") is None:
         cleaned_memory_context.pop("continuity_focus", None)
-    if cleaned_memory_context.get("priority_memory_notes") == []:
-        cleaned_memory_context.pop("priority_memory_notes", None)
-    if cleaned_memory_context.get("supporting_memory_notes") == []:
-        cleaned_memory_context.pop("supporting_memory_notes", None)
 
     normalized["memory_context"] = cleaned_memory_context
     return normalized

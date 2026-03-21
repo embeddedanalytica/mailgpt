@@ -50,18 +50,8 @@ def _stub_openai_with_contents(contents):
     return type("OpenAIStubModule", (), {"OpenAI": lambda: _OpenAIClientStub(shared_contents)})
 
 
-def _memory_note(note_id: int = 1) -> dict:
-    return {
-        "memory_note_id": note_id,
-        "fact_type": "constraint",
-        "fact_key": f"weekday_before_7am_cutoff_{note_id}",
-        "summary": "Weekday sessions need to finish before 7am",
-        "importance": "high",
-        "status": "active",
-        "created_at": 1773273600,
-        "updated_at": 1773273600,
-        "last_confirmed_at": 1773273600,
-    }
+def _context_note(label: str = "Schedule", summary: str = "Weekday sessions need to finish before 7am") -> dict:
+    return {"label": label, "summary": summary, "updated_at": 1773273600}
 
 
 def _valid_brief() -> dict:
@@ -89,19 +79,16 @@ def _valid_brief() -> dict:
             "response_channel": "email",
         },
         "memory_context": {
-            "pre_reply_refresh_attempted": True,
-            "post_reply_refresh_eligible": True,
-            "memory_notes": [_memory_note()],
+            "memory_available": True,
+            "backbone_summaries": {"hard_constraints": "Weekday sessions need to finish before 7am"},
+            "context_notes": [_context_note()],
             "continuity_summary": {
                 "summary": "Athlete is rebuilding consistency.",
                 "last_recommendation": "Keep one controlled quality session this week.",
                 "open_loops": ["How did the quality session feel?"],
                 "updated_at": 1773273600,
             },
-            "memory_available": True,
             "continuity_focus": "Athlete is rebuilding consistency.",
-            "priority_memory_notes": [_memory_note()],
-            "supporting_memory_notes": [],
         },
     }
 
@@ -198,18 +185,22 @@ class TestResponseGenerationPromptAndSchema(unittest.TestCase):
         self.assertIn("response_brief JSON object", SYSTEM_PROMPT)
         self.assertIn("Never contradict risk posture", SYSTEM_PROMPT)
         self.assertIn("final_email_body must contain the complete email body", SYSTEM_PROMPT)
-        self.assertIn("continuity_focus is the primary continuity cue", SYSTEM_PROMPT)
-        self.assertIn("priority_memory_notes matter more", SYSTEM_PROMPT)
-        self.assertIn("Do not repeat every memory note mechanically", SYSTEM_PROMPT)
-        self.assertIn("clarification: ask only for the missing information", SYSTEM_PROMPT)
+        self.assertIn("continuity_focus is context from the previous exchange", SYSTEM_PROMPT)
+        self.assertIn("backbone_summaries are durable memory facts", SYSTEM_PROMPT)
+        self.assertIn("Do not repeat every memory fact mechanically", SYSTEM_PROMPT)
+        self.assertIn("clarification: ask only for the specific items listed in decision_context.clarification_questions", SYSTEM_PROMPT)
         self.assertIn("safety_risk_managed: prioritize caution", SYSTEM_PROMPT)
         self.assertIn("lightweight_non_planning: answer the athlete's question", SYSTEM_PROMPT)
         self.assertIn("off_topic_redirect: briefly redirect", SYSTEM_PROMPT)
         self.assertIn("Lead with the most important point", SYSTEM_PROMPT)
+        self.assertIn("When the athlete is struggling", SYSTEM_PROMPT)
         self.assertIn("realistic coaching tone", SYSTEM_PROMPT)
+        self.assertIn("Read the athlete's emotional state from inbound_body", SYSTEM_PROMPT)
+        self.assertIn("Match the athlete's energy", SYSTEM_PROMPT)
         self.assertIn("do not become overly verbose", SYSTEM_PROMPT)
         self.assertIn("Do not contradict the brief", SYSTEM_PROMPT)
         self.assertIn("Avoid boilerplate closers", SYSTEM_PROMPT)
+        self.assertIn("Never open with 'Hi there'", SYSTEM_PROMPT)
 
     def test_schema_matches_final_email_output(self):
         validated = validate_response_generation_output(_valid_output())

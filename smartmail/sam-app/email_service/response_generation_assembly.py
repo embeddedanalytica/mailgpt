@@ -5,9 +5,12 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 from athlete_memory_contract import (
+    BACKBONE_SLOT_KEYS,
     AthleteMemoryContractError,
+    BackboneSlots,
     ContinuitySummary,
-    validate_memory_note_list,
+    validate_backbone_slots,
+    validate_context_note_list,
 )
 from response_generation_contract import ResponseBrief, normalize_reply_mode
 from rule_engine import RuleEngineContractError, validate_rule_engine_output
@@ -37,29 +40,29 @@ def _validated_engine_output(
     return engine_output
 
 
-def _shape_memory_salience(
-    memory_notes: list[dict[str, Any]],
+def _shape_memory_salience_v3(
+    backbone: dict[str, Any],
+    context_notes: list[dict[str, Any]],
     continuity_summary: Optional[dict[str, Any]],
 ) -> dict[str, Any]:
-    priority_memory_notes = [
-        note for note in memory_notes if str(note.get("importance", "")).strip() == "high"
-    ]
-    if not priority_memory_notes and memory_notes:
-        priority_memory_notes = [memory_notes[0]]
-    priority_ids = {
-        int(note["memory_note_id"]) for note in priority_memory_notes if "memory_note_id" in note
-    }
-    supporting_memory_notes = [
-        note for note in memory_notes if int(note.get("memory_note_id", 0)) not in priority_ids
-    ]
+    """Shapes AM3 memory tiers into salience categories for the response LLM."""
+    # Backbone = priority memory (structurally protected, always included)
+    backbone_summaries: dict[str, str] = {}
+    for key in BACKBONE_SLOT_KEYS:
+        slot = backbone.get(key)
+        if isinstance(slot, dict):
+            summary = _string_field(slot.get("summary"))
+            if summary:
+                backbone_summaries[key] = summary
+
     continuity_focus = None
     if isinstance(continuity_summary, dict):
         continuity_focus = _string_field(continuity_summary.get("summary"))
 
     return {
+        "backbone_summaries": backbone_summaries,
+        "context_notes": context_notes,
         "continuity_focus": continuity_focus,
-        "priority_memory_notes": priority_memory_notes,
-        "supporting_memory_notes": supporting_memory_notes,
     }
 
 
@@ -82,15 +85,17 @@ def build_response_brief(
     athlete_id: str,
     reply_kind: str,
     inbound_subject: Optional[str],
+    inbound_body: Optional[str] = None,
     selected_model_name: Optional[str],
     profile_after: Dict[str, Any],
     missing_profile_fields: list[str],
     plan_summary: Optional[str],
     rule_engine_decision: Optional[Dict[str, Any]],
     memory_context: Optional[Dict[str, Any]],
-    pre_reply_refresh_attempted: bool,
-    post_reply_refresh_eligible: bool,
     connect_strava_link: Optional[str] = None,
+    # Legacy kwargs (ignored, kept for backward compat during transition)
+    pre_reply_refresh_attempted: bool = False,
+    post_reply_refresh_eligible: bool = False,
 ) -> ResponseBrief:
     del athlete_id  # reserved for future assembly expansion
 
@@ -111,17 +116,21 @@ def build_response_brief(
         athlete_context["constraints_summary"] = constraints_summary
 
     decision_context: Dict[str, Any] = {}
-    clarification_needed = reply_mode == "clarification" or bool(missing_profile_fields)
-    if isinstance(rule_engine_decision, dict):
-        clarification_needed = clarification_needed or bool(
-            rule_engine_decision.get("clarification_needed")
-        )
-    if clarification_needed:
+    if reply_mode == "intake" and missing_profile_fields:
+        decision_context["missing_profile_fields"] = list(missing_profile_fields)
         decision_context["clarification_needed"] = True
-    if missing_profile_fields:
-        decision_context["clarification_questions"] = build_clarification_questions(missing_profile_fields)
+    else:
+        clarification_needed = reply_mode == "clarification" or bool(missing_profile_fields)
+        if isinstance(rule_engine_decision, dict):
+            clarification_needed = clarification_needed or bool(
+                rule_engine_decision.get("clarification_needed")
+            )
+        if clarification_needed:
+            decision_context["clarification_needed"] = True
+        if missing_profile_fields:
+            decision_context["clarification_questions"] = build_clarification_questions(missing_profile_fields)
 
-    include_decision_fields = reply_mode != "off_topic_redirect"
+    include_decision_fields = reply_mode not in {"off_topic_redirect", "intake"}
     if validated_engine_output is not None and include_decision_fields:
         for field_name in ("track", "phase", "risk_flag", "today_action", "plan_update_status"):
             field_value = _string_field(validated_engine_output.get(field_name))
@@ -179,6 +188,10 @@ def build_response_brief(
     normalized_subject = _string_field(inbound_subject)
     if normalized_subject:
         delivery_context["inbound_subject"] = normalized_subject
+    normalized_body = _string_field(inbound_body)
+    if normalized_body:
+        # Truncate to keep the brief bounded
+        delivery_context["inbound_body"] = normalized_body[:4000] if len(normalized_body) > 4000 else normalized_body
     normalized_model_name = _string_field(selected_model_name)
     if normalized_model_name:
         delivery_context["selected_model_name"] = normalized_model_name
@@ -187,14 +200,26 @@ def build_response_brief(
         delivery_context["connect_strava_link"] = normalized_connect_strava_link
 
     normalized_memory_context = memory_context if isinstance(memory_context, dict) else {}
-    memory_notes = normalized_memory_context.get("memory_notes", [])
-    if not isinstance(memory_notes, list):
-        memory_notes = []
+
+    # AM3 backbone + context_notes model
+    backbone = normalized_memory_context.get("backbone")
+    if not isinstance(backbone, dict):
+        backbone = BackboneSlots.empty().to_dict()
     else:
         try:
-            memory_notes = validate_memory_note_list(memory_notes)
+            backbone = validate_backbone_slots(backbone).to_dict()
         except AthleteMemoryContractError:
-            memory_notes = []
+            backbone = BackboneSlots.empty().to_dict()
+
+    context_notes = normalized_memory_context.get("context_notes")
+    if not isinstance(context_notes, list):
+        context_notes = []
+    else:
+        try:
+            context_notes = validate_context_note_list(context_notes)
+        except AthleteMemoryContractError:
+            context_notes = []
+
     continuity_summary = normalized_memory_context.get("continuity_summary")
     if not isinstance(continuity_summary, dict):
         continuity_summary = None
@@ -203,28 +228,24 @@ def build_response_brief(
             continuity_summary = ContinuitySummary.from_dict(continuity_summary).to_dict()
         except AthleteMemoryContractError:
             continuity_summary = None
-    memory_salience = _shape_memory_salience(memory_notes, continuity_summary)
+
+    memory_salience = _shape_memory_salience_v3(backbone, context_notes, continuity_summary)
     memory_available = bool(
-        memory_notes
-        or continuity_summary
+        memory_salience["backbone_summaries"]
+        or context_notes
         or memory_salience["continuity_focus"]
-        or memory_salience["priority_memory_notes"]
-        or memory_salience["supporting_memory_notes"]
     )
 
-    memory_payload = {
-        "pre_reply_refresh_attempted": pre_reply_refresh_attempted,
-        "post_reply_refresh_eligible": post_reply_refresh_eligible,
-        "memory_notes": memory_notes,
-        "continuity_summary": continuity_summary,
+    memory_payload: Dict[str, Any] = {
         "memory_available": memory_available,
+        "continuity_summary": continuity_summary,
     }
+    if memory_salience["backbone_summaries"]:
+        memory_payload["backbone_summaries"] = memory_salience["backbone_summaries"]
+    if memory_salience["context_notes"]:
+        memory_payload["context_notes"] = memory_salience["context_notes"]
     if memory_salience["continuity_focus"]:
         memory_payload["continuity_focus"] = memory_salience["continuity_focus"]
-    if memory_salience["priority_memory_notes"]:
-        memory_payload["priority_memory_notes"] = memory_salience["priority_memory_notes"]
-    if memory_salience["supporting_memory_notes"]:
-        memory_payload["supporting_memory_notes"] = memory_salience["supporting_memory_notes"]
 
     payload = {
         "reply_mode": reply_mode,
