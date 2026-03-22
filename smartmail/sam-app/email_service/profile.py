@@ -11,12 +11,31 @@ from skills.planner import (
 )
 
 
-def _contains_unknown_marker(text: str) -> bool:
-    lowered = text.lower()
-    return any(
-        marker in lowered
-        for marker in ("unknown", "not sure", "skip", "n/a", "na", "prefer not")
-    )
+def _normalize_constraint_list(raw_list: Any) -> List[Dict[str, Any]]:
+    """Normalize a raw constraint list from the extractor. Returns empty list if invalid."""
+    if not isinstance(raw_list, list):
+        return []
+    normalized: List[Dict[str, Any]] = []
+    for item in raw_list:
+        if not isinstance(item, dict):
+            continue
+        summary = str(item.get("summary", "")).strip()
+        if not summary:
+            continue
+        constraint_type = str(item.get("type", "other")).strip().lower() or "other"
+        severity = str(item.get("severity", "medium")).strip().lower() or "medium"
+        active = item.get("active")
+        if not isinstance(active, bool):
+            active = True
+        normalized.append(
+            {
+                "type": constraint_type,
+                "summary": summary,
+                "severity": severity,
+                "active": active,
+            }
+        )
+    return normalized
 
 
 def parse_profile_updates_from_email(
@@ -38,7 +57,6 @@ def parse_profile_updates_from_email(
     try:
         raw = run_profile_extraction_workflow(body, missing_fields=missing_fields)
     except ProfileExtractionProposalError:
-        # Fail closed: do not apply any profile updates if extraction fails.
         return {}
 
     primary_goal = raw.get("primary_goal")
@@ -67,31 +85,24 @@ def parse_profile_updates_from_email(
     if isinstance(experience_level_note, str) and experience_level_note.strip():
         updates["experience_level_note"] = experience_level_note.strip()
 
+    # General (non-injury) constraints — opportunistic, not required for intake completion.
     constraints = raw.get("constraints")
-    if isinstance(constraints, list):
-        normalized_constraints: List[Dict[str, Any]] = []
-        for item in constraints:
-            if not isinstance(item, dict):
-                continue
-            summary = str(item.get("summary", "")).strip()
-            if not summary:
-                continue
-            constraint_type = str(item.get("type", "other")).strip().lower() or "other"
-            severity = str(item.get("severity", "medium")).strip().lower() or "medium"
-            active = item.get("active")
-            if not isinstance(active, bool):
-                active = True
-            normalized_constraints.append(
-                {
-                    "type": constraint_type,
-                    "summary": summary,
-                    "severity": severity,
-                    "active": active,
-                }
-            )
-        updates["constraints"] = normalized_constraints
-    elif _contains_unknown_marker(body) and "constraints" in body.lower():
-        updates["constraints"] = []
+    if isinstance(constraints, list) and constraints:
+        normalized = _normalize_constraint_list(constraints)
+        if normalized:
+            updates["constraints"] = normalized
+
+    # Injury status gate — simple boolean answered by the athlete.
+    injury_status = raw.get("injury_status")
+    if isinstance(injury_status, dict) and isinstance(injury_status.get("has_injuries"), bool):
+        updates["injury_status"] = {"has_injuries": injury_status["has_injuries"]}
+
+    # Injury constraints — optional structured detail, only when has_injuries is true.
+    injury_constraints = raw.get("injury_constraints")
+    if isinstance(injury_constraints, list) and injury_constraints:
+        normalized_injury = _normalize_constraint_list(injury_constraints)
+        if normalized_injury:
+            updates["injury_constraints"] = normalized_injury
 
     return updates
 
@@ -120,8 +131,14 @@ def get_missing_required_profile_fields(profile: Optional[Dict[str, Any]]) -> Li
     if experience_level not in {"beginner", "intermediate", "advanced", "unknown"}:
         missing.append("experience_level")
 
-    constraints = profile.get("constraints")
-    if not isinstance(constraints, list):
-        missing.append("constraints")
+    # Injury gate: athlete must have explicitly addressed their physical health.
+    # injury_status is set by the extractor when the athlete says yes or no to injuries.
+    injury_status = profile.get("injury_status")
+    injury_addressed = (
+        isinstance(injury_status, dict)
+        and isinstance(injury_status.get("has_injuries"), bool)
+    )
+    if not injury_addressed:
+        missing.append("injury_status")
 
     return missing

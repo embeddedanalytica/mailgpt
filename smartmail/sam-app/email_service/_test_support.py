@@ -96,6 +96,7 @@ def valid_engine_output_payload(**overrides):
         "today_action": "do planned but conservative",
         "plan_update_status": "updated",
         "adjustments": ["reduce intensity", "no make-up intensity"],
+        "risk_recent_history": [],
         "next_email_payload": {
             "subject_hint": "This week: stay consistent, reduce intensity",
             "summary": "Short summary.",

@@ -11,6 +11,8 @@ Narrow responsibility. Isolated tests. Strict schema validation before output pr
 |---|---|---|
 | `planner/` | Conversation intelligence, profile extraction, session check-in | refactoring target |
 | `response_generation/` | Final email body generation, reply-mode prompting | refactoring target |
+| `coaching_reasoning/` | Coaching strategy (stage 1): decides WHAT to say using doctrine | new |
+| `coaching_reasoning/doctrine/` | Sport-specific coaching methodology files + manifest loader | new |
 | `memory/unified/` | Unified memory notes + continuity refresh | refactoring target |
 
 ## Design Rules

@@ -322,7 +322,7 @@ def run_single_scenario(scenario: Dict[str, Any]) -> Dict[str, Any]:
                         "retrieval_context": None,
                     }
 
-                current_notes = dynamodb_models.get_active_memory_notes(athlete_id)
+                current_notes = short_bench.get_benchmark_memory_notes(athlete_id)
                 continuity_summary = dynamodb_models.get_continuity_summary(athlete_id)
                 step_results.append(
                     {
@@ -341,7 +341,7 @@ def run_single_scenario(scenario: Dict[str, Any]) -> Dict[str, Any]:
                     }
                 )
 
-            phase_notes = dynamodb_models.get_active_memory_notes(athlete_id)
+            phase_notes = short_bench.get_benchmark_memory_notes(athlete_id)
             phase_continuity = dynamodb_models.get_continuity_summary(athlete_id)
             checkpoint = evaluate_checkpoint_result(
                 current_notes=phase_notes,
@@ -357,9 +357,9 @@ def run_single_scenario(scenario: Dict[str, Any]) -> Dict[str, Any]:
                 }
             )
 
-        retrieval_context = dynamodb_models.get_memory_context_for_response_generation(athlete_id)
+        retrieval_context = short_bench.get_benchmark_retrieval_context(athlete_id)
         final_evaluation = short_bench.evaluate_final_retrieval(
-            current_notes=dynamodb_models.get_active_memory_notes(athlete_id),
+            current_notes=short_bench.get_benchmark_memory_notes(athlete_id),
             retrieval_context=retrieval_context,
             final_assertions=scenario["final_assertions"],
         )

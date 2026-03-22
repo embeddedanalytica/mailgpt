@@ -35,6 +35,7 @@ _ATHLETE_CONTEXT_FIELDS = {
     "experience_level",
     "structure_preference",
     "constraints_summary",
+    "primary_sport",
 }
 _DECISION_CONTEXT_FIELDS = {
     "track",
@@ -45,6 +46,9 @@ _DECISION_CONTEXT_FIELDS = {
     "clarification_questions",
     "missing_profile_fields",
     "plan_update_status",
+    "risk_recent_history",
+    "weeks_in_coaching",
+    "intake_completed_this_turn",
 }
 _VALIDATED_PLAN_FIELDS = {
     "weekly_skeleton",
@@ -220,6 +224,23 @@ def _validate_decision_context(payload: Dict[str, Any]) -> Dict[str, Any]:
         normalized["plan_update_status"] = _require_string(
             "decision_context.plan_update_status",
             context["plan_update_status"],
+        )
+    if "risk_recent_history" in context:
+        normalized["risk_recent_history"] = _require_string_list(
+            "decision_context.risk_recent_history",
+            context["risk_recent_history"],
+        )
+    if "weeks_in_coaching" in context:
+        val = context["weeks_in_coaching"]
+        if not isinstance(val, int) or val < 1:
+            raise ResponseGenerationContractError(
+                "decision_context.weeks_in_coaching must be a positive integer"
+            )
+        normalized["weeks_in_coaching"] = val
+    if "intake_completed_this_turn" in context:
+        normalized["intake_completed_this_turn"] = _require_bool(
+            "decision_context.intake_completed_this_turn",
+            context["intake_completed_this_turn"],
         )
     return normalized
 
@@ -575,3 +596,116 @@ class FinalEmailResponse:
         if self.model_name:
             payload["model_name"] = self.model_name
         return payload
+
+
+# --- WriterBrief: directive-guided response generation input ---
+
+_WRITER_BRIEF_TOP_LEVEL_FIELDS = {
+    "reply_mode",
+    "coaching_directive",
+    "plan_data",
+    "delivery_context",
+}
+
+_COACHING_DIRECTIVE_FIELDS = {
+    "opening",
+    "main_message",
+    "content_plan",
+    "avoid",
+    "tone",
+    "recommend_material",
+}
+
+
+def is_directive_input(payload: Dict[str, Any]) -> bool:
+    """Check if a payload is a WriterBrief (directive-guided) vs a ResponseBrief."""
+    if not isinstance(payload, dict):
+        return False
+    return set(payload.keys()) == _WRITER_BRIEF_TOP_LEVEL_FIELDS
+
+
+def _validate_coaching_directive_for_writer(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Validate the coaching_directive section of a WriterBrief.
+
+    Note: rationale should already be stripped before reaching the writer.
+    """
+    directive = _require_dict("coaching_directive", payload)
+    _validate_allowed_fields(
+        payload=directive,
+        allowed_fields=_COACHING_DIRECTIVE_FIELDS,
+        object_name="coaching_directive",
+    )
+
+    normalized: Dict[str, Any] = {}
+    for str_field in ("opening", "main_message", "tone"):
+        if str_field in directive:
+            normalized[str_field] = _require_non_empty_string(
+                f"coaching_directive.{str_field}", directive[str_field]
+            )
+
+    if "content_plan" in directive:
+        normalized["content_plan"] = _require_non_empty_string_list(
+            "coaching_directive.content_plan", directive["content_plan"]
+        )
+
+    if "avoid" in directive:
+        normalized["avoid"] = _require_string_list(
+            "coaching_directive.avoid", directive["avoid"]
+        )
+
+    recommend_material = directive.get("recommend_material")
+    if recommend_material is not None and not isinstance(recommend_material, str):
+        raise ResponseGenerationContractError(
+            "coaching_directive.recommend_material must be a string or null"
+        )
+    normalized["recommend_material"] = recommend_material
+    return normalized
+
+
+def validate_writer_brief(payload: Dict[str, Any]) -> None:
+    """Validate a WriterBrief payload."""
+    if not isinstance(payload, dict):
+        raise ResponseGenerationContractError("payload must be a dict")
+
+    if set(payload.keys()) != _WRITER_BRIEF_TOP_LEVEL_FIELDS:
+        extra = sorted(set(payload.keys()) - _WRITER_BRIEF_TOP_LEVEL_FIELDS)
+        missing = sorted(_WRITER_BRIEF_TOP_LEVEL_FIELDS - set(payload.keys()))
+        parts = []
+        if missing:
+            parts.append(f"missing: {', '.join(missing)}")
+        if extra:
+            parts.append(f"unexpected: {', '.join(extra)}")
+        raise ResponseGenerationContractError(
+            f"writer_brief field mismatch: {'; '.join(parts)}"
+        )
+
+    normalize_reply_mode(payload["reply_mode"])
+    _validate_coaching_directive_for_writer(payload["coaching_directive"])
+    _validate_validated_plan(payload["plan_data"])
+    _validate_delivery_context(payload["delivery_context"])
+
+
+@dataclass(frozen=True)
+class WriterBrief:
+    reply_mode: str
+    coaching_directive: Dict[str, Any]
+    plan_data: Dict[str, Any]
+    delivery_context: Dict[str, Any]
+
+    @classmethod
+    def from_dict(cls, payload: Dict[str, Any]) -> "WriterBrief":
+        validate_writer_brief(payload)
+        return cls(
+            reply_mode=normalize_reply_mode(payload["reply_mode"]),
+            coaching_directive=_validate_coaching_directive_for_writer(payload["coaching_directive"]),
+            plan_data=_validate_validated_plan(payload["plan_data"]),
+            delivery_context=_validate_delivery_context(payload["delivery_context"]),
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "reply_mode": self.reply_mode,
+            "coaching_directive": dict(self.coaching_directive),
+            "plan_data": dict(self.plan_data),
+            "delivery_context": dict(self.delivery_context),
+        }

@@ -34,7 +34,7 @@ class TestGetReplyForInbound(unittest.TestCase):
                     "primary_goal": "10k",
                     "time_availability": {"hours_per_week": 2.0},
                     "experience_level": "unknown",
-                    "constraints": [],
+                    "injury_status": {"has_injuries": False},
                 },
             ),
             mock.patch.object(coaching, "parse_profile_updates_from_email", return_value={}),

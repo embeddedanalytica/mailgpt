@@ -12,7 +12,8 @@ from skills.response_generation.errors import (
     ResponseGenerationContractError,
     ResponseGenerationProposalError,
 )
-from skills.response_generation.prompt import SYSTEM_PROMPT
+from response_generation_contract import is_directive_input
+from skills.response_generation.prompt import DIRECTIVE_SYSTEM_PROMPT, SYSTEM_PROMPT
 from skills.response_generation.schema import JSON_SCHEMA, JSON_SCHEMA_NAME
 from skills.response_generation.validator import (
     validate_response_generation_brief,
@@ -28,6 +29,12 @@ class ResponseGenerationLLM:
     SYSTEM_PROMPT = SYSTEM_PROMPT
 
     @staticmethod
+    def _select_prompt(brief: Dict[str, Any]) -> str:
+        if is_directive_input(brief):
+            return DIRECTIVE_SYSTEM_PROMPT
+        return SYSTEM_PROMPT
+
+    @staticmethod
     def generate_final_email_response(
         response_brief: Dict[str, Any],
         *,
@@ -41,10 +48,11 @@ class ResponseGenerationLLM:
 
         try:
             selected_model = str(model_name or LANGUAGE_RENDER_MODEL).strip() or LANGUAGE_RENDER_MODEL
+            selected_prompt = ResponseGenerationLLM._select_prompt(response_brief)
             payload, raw_content = skill_runtime.execute_json_schema(
                 logger=logger,
                 model_name=selected_model,
-                system_prompt=SYSTEM_PROMPT,
+                system_prompt=selected_prompt,
                 user_content=json.dumps(brief, separators=(",", ":"), ensure_ascii=True),
                 schema_name=JSON_SCHEMA_NAME,
                 schema=JSON_SCHEMA,

@@ -216,6 +216,14 @@ def normalize_profile_updates(updates: Dict[str, Any]) -> Dict[str, Any]:
     if isinstance(constraints, list):
         normalized["constraints"] = _dedupe_constraints(constraints)
 
+    injury_status = updates.get("injury_status")
+    if isinstance(injury_status, dict) and isinstance(injury_status.get("has_injuries"), bool):
+        normalized["injury_status"] = {"has_injuries": injury_status["has_injuries"]}
+
+    injury_constraints = updates.get("injury_constraints")
+    if isinstance(injury_constraints, list) and injury_constraints:
+        normalized["injury_constraints"] = _dedupe_constraints(injury_constraints)
+
     for field_name in _PROFILE_TEXT_FIELDS:
         value = _normalize_profile_text_field(updates.get(field_name))
         if value:
@@ -236,7 +244,6 @@ def normalize_profile_record(profile: Optional[Dict[str, Any]]) -> Dict[str, Any
         "primary_goal": str(profile.get("primary_goal", "")).strip(),
         "time_availability": {},
         "experience_level": "unknown",
-        "constraints": [],
         "goal_why": "",
         "success_definition": "",
         "barriers_summary": "",
@@ -265,8 +272,16 @@ def normalize_profile_record(profile: Optional[Dict[str, Any]]) -> Dict[str, Any
         normalized["experience_level_note"] = experience_level_note.strip()
 
     constraints = profile.get("constraints")
-    if isinstance(constraints, list):
+    if isinstance(constraints, list) and constraints:
         normalized["constraints"] = _dedupe_constraints(constraints)
+
+    injury_constraints = profile.get("injury_constraints")
+    if isinstance(injury_constraints, list) and injury_constraints:
+        normalized["injury_constraints"] = _dedupe_constraints(injury_constraints)
+
+    injury_status = profile.get("injury_status")
+    if isinstance(injury_status, dict) and isinstance(injury_status.get("has_injuries"), bool):
+        normalized["injury_status"] = {"has_injuries": injury_status["has_injuries"]}
 
     for field_name in _PROFILE_TEXT_FIELDS:
         normalized[field_name] = _normalize_profile_text_field(profile.get(field_name))
@@ -274,6 +289,11 @@ def normalize_profile_record(profile: Optional[Dict[str, Any]]) -> Dict[str, Any
     cadence = str(profile.get("response_cadence_expectation", "")).strip().lower()
     if cadence in _RESPONSE_CADENCE_EXPECTATIONS:
         normalized["response_cadence_expectation"] = cadence
+
+    # Expose created_at for coaching tenure computation (weeks_in_coaching)
+    created_at = profile.get("created_at")
+    if isinstance(created_at, (int, float, Decimal)) and float(created_at) > 0:
+        normalized["created_at"] = int(created_at)
 
     return normalized
 

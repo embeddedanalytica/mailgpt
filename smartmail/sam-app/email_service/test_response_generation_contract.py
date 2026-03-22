@@ -4,9 +4,12 @@ from response_generation_contract import (
     FinalEmailResponse,
     ResponseBrief,
     ResponseGenerationContractError,
+    WriterBrief,
+    is_directive_input,
     normalize_reply_mode,
     validate_final_email_response,
     validate_response_brief,
+    validate_writer_brief,
 )
 
 
@@ -287,6 +290,106 @@ class TestValidateFinalEmailResponse(unittest.TestCase):
         rebuilt = FinalEmailResponse.from_dict(payload)
 
         self.assertEqual(rebuilt.to_dict()["model_name"], "gpt-5-nano")
+
+
+def _valid_writer_brief():
+    return {
+        "reply_mode": "normal_coaching",
+        "coaching_directive": {
+            "opening": "Great week — the Achilles is responding well.",
+            "main_message": "Stay conservative one more week.",
+            "content_plan": ["Acknowledge recovery", "Present easy week"],
+            "avoid": ["Do not suggest tempo"],
+            "tone": "Calm, direct",
+            "recommend_material": None,
+        },
+        "plan_data": {"weekly_skeleton": ["easy_aerobic", "easy_aerobic", "strength"]},
+        "delivery_context": {"inbound_body": "Good week, ran three times."},
+    }
+
+
+class TestIsDirectiveInput(unittest.TestCase):
+    def test_writer_brief_detected(self):
+        self.assertTrue(is_directive_input(_valid_writer_brief()))
+
+    def test_response_brief_not_detected(self):
+        self.assertFalse(is_directive_input(_valid_brief()))
+
+    def test_non_dict_returns_false(self):
+        self.assertFalse(is_directive_input("not a dict"))
+
+    def test_extra_field_not_detected(self):
+        payload = _valid_writer_brief()
+        payload["extra"] = "field"
+        self.assertFalse(is_directive_input(payload))
+
+
+class TestValidateWriterBrief(unittest.TestCase):
+    def test_accepts_valid_writer_brief(self):
+        validate_writer_brief(_valid_writer_brief())
+
+    def test_round_trips_writer_brief(self):
+        rebuilt = WriterBrief.from_dict(_valid_writer_brief())
+        self.assertEqual(rebuilt.reply_mode, "normal_coaching")
+        self.assertNotIn("rationale", rebuilt.coaching_directive)
+
+    def test_rejects_missing_field(self):
+        payload = _valid_writer_brief()
+        del payload["coaching_directive"]
+        with self.assertRaises(ResponseGenerationContractError):
+            validate_writer_brief(payload)
+
+    def test_rejects_extra_field(self):
+        payload = _valid_writer_brief()
+        payload["memory_context"] = {}
+        with self.assertRaises(ResponseGenerationContractError):
+            validate_writer_brief(payload)
+
+    def test_rejects_invalid_reply_mode(self):
+        payload = _valid_writer_brief()
+        payload["reply_mode"] = "invalid_mode"
+        with self.assertRaises(ResponseGenerationContractError):
+            validate_writer_brief(payload)
+
+    def test_rejects_non_dict_coaching_directive(self):
+        payload = _valid_writer_brief()
+        payload["coaching_directive"] = "not a dict"
+        with self.assertRaises(ResponseGenerationContractError):
+            validate_writer_brief(payload)
+
+
+class TestExpandedDecisionContextFields(unittest.TestCase):
+    def test_accepts_risk_recent_history(self):
+        payload = _valid_brief()
+        payload["decision_context"]["risk_recent_history"] = ["yellow", "green"]
+        brief = ResponseBrief.from_dict(payload)
+        self.assertEqual(brief.decision_context["risk_recent_history"], ["yellow", "green"])
+
+    def test_accepts_weeks_in_coaching(self):
+        payload = _valid_brief()
+        payload["decision_context"]["weeks_in_coaching"] = 12
+        brief = ResponseBrief.from_dict(payload)
+        self.assertEqual(brief.decision_context["weeks_in_coaching"], 12)
+
+    def test_rejects_zero_weeks_in_coaching(self):
+        payload = _valid_brief()
+        payload["decision_context"]["weeks_in_coaching"] = 0
+        with self.assertRaises(ResponseGenerationContractError):
+            validate_response_brief(payload)
+
+    def test_rejects_non_int_weeks_in_coaching(self):
+        payload = _valid_brief()
+        payload["decision_context"]["weeks_in_coaching"] = "twelve"
+        with self.assertRaises(ResponseGenerationContractError):
+            validate_response_brief(payload)
+
+
+class TestExpandedAthleteContextFields(unittest.TestCase):
+    def test_accepts_primary_sport(self):
+        payload = _valid_brief()
+        payload["athlete_context"]["primary_sport"] = "running"
+        brief = ResponseBrief.from_dict(payload)
+        self.assertEqual(brief.athlete_context["primary_sport"], "running")
 
 
 if __name__ == "__main__":

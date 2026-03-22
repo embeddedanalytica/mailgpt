@@ -70,12 +70,6 @@ class EmailCopy:
 
     FALLBACK_AI_ERROR_REPLY = "I'm sorry, but I couldn't generate a response at this time."
 
-    INTAKE_COMPLETION_REPLY = (
-        "Great \u2014 I have everything I need to start building your plan. "
-        "I'll have your first week ready for you shortly. "
-        "Just reply to this email anytime you want to check in."
-    )
-
     @staticmethod
     def render_verify_email(
         verification_link: str, verify_token_ttl_minutes: int

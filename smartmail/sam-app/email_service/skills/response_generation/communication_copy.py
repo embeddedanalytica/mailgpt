@@ -10,8 +10,8 @@ _PROFILE_PROMPT_TIME_AVAILABILITY = "- Your time availability (sessions/week and
 _PROFILE_PROMPT_EXPERIENCE_LEVEL = (
     "- Your experience level (beginner, intermediate, advanced, or unknown)"
 )
-_PROFILE_PROMPT_CONSTRAINTS = (
-    "- Any constraints (injury, schedule, equipment, medical, preference). Empty is okay."
+_PROFILE_PROMPT_INJURY_CONSTRAINTS = (
+    "- Any current injuries, pains, or physical limitations (perfectly fine if there are none — just let me know either way)"
 )
 
 
@@ -23,6 +23,6 @@ def build_clarification_questions(missing_fields: List[str]) -> List[str]:
         lines.append(_PROFILE_PROMPT_TIME_AVAILABILITY)
     if "experience_level" in missing_fields:
         lines.append(_PROFILE_PROMPT_EXPERIENCE_LEVEL)
-    if "constraints" in missing_fields:
-        lines.append(_PROFILE_PROMPT_CONSTRAINTS)
+    if "injury_status" in missing_fields:
+        lines.append(_PROFILE_PROMPT_INJURY_CONSTRAINTS)
     return lines

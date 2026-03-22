@@ -22,6 +22,7 @@ try:  # pragma: no cover - import style depends on runner context
         derive_phase,
         derive_risk,
         is_valid_phase,
+        is_valid_risk_flag,
         resolve_effective_performance_intent,
         resolve_main_sport_after_guardrails,
         route_today_action,
@@ -51,6 +52,7 @@ except ImportError:  # pragma: no cover
         derive_phase,
         derive_risk,
         is_valid_phase,
+        is_valid_risk_flag,
         resolve_effective_performance_intent,
         resolve_main_sport_after_guardrails,
         route_today_action,
@@ -105,6 +107,21 @@ def _phase_history_from_rule_state(rule_state: Dict[str, Any]) -> list[str]:
         if is_valid_phase(phase):
             phases.append(phase)
     return phases
+
+
+def _risk_history_from_rule_state(rule_state: Dict[str, Any]) -> list[str]:
+    """Extract recent risk flags from rule state for coaching reasoning context."""
+    history = rule_state.get("phase_risk_time_last_6", [])
+    flags: list[str] = []
+    if not isinstance(history, list):
+        return flags
+    for item in history:
+        if not isinstance(item, dict):
+            continue
+        flag = str(item.get("risk_flag", "")).strip().lower()
+        if is_valid_risk_flag(flag):
+            flags.append(flag)
+    return flags
 
 
 def _next_phase_upgrade_streak(
@@ -361,6 +378,7 @@ def run_rule_engine_for_week(
         except (LanguageRenderError, RuleEngineContractError):
             next_email_payload = dict(deterministic_payload)
 
+    risk_recent_history = _risk_history_from_rule_state(rule_state)
     output_payload = {
         "classification_label": "deterministic_re4",
         "track": track,
@@ -371,6 +389,7 @@ def run_rule_engine_for_week(
         "plan_update_status": plan_update_status,
         "adjustments": adjustments,
         "next_email_payload": next_email_payload,
+        "risk_recent_history": risk_recent_history,
     }
     validate_rule_engine_output(output_payload)
 

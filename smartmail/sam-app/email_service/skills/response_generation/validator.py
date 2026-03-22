@@ -7,8 +7,11 @@ from typing import Any, Dict
 from response_generation_contract import (
     FinalEmailResponse,
     ResponseBrief,
+    WriterBrief,
+    is_directive_input,
     validate_final_email_response,
     validate_response_brief,
+    validate_writer_brief,
 )
 from skills.response_generation.errors import ResponseGenerationContractError
 
@@ -32,6 +35,9 @@ def _normalize_optional_memory_artifacts(payload: Dict[str, Any]) -> Dict[str, A
 
 def validate_response_generation_brief(payload: Dict[str, Any]) -> Dict[str, Any]:
     try:
+        if is_directive_input(payload):
+            validate_writer_brief(payload)
+            return WriterBrief.from_dict(payload).to_dict()
         normalized_payload = _normalize_optional_memory_artifacts(payload)
         validate_response_brief(normalized_payload)
         return ResponseBrief.from_dict(normalized_payload).to_dict()

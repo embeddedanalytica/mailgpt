@@ -1,0 +1,11 @@
+## Running Methodology
+
+Training zones (Daniels framework): Easy running (60-75% max HR) builds aerobic base and should feel conversational. Threshold/tempo (83-88% max HR) improves lactate clearance — the pace you could hold for about an hour. Interval (95-100% VO2max) builds top-end aerobic power in short bursts with rest. Repetition (faster than interval, shorter) develops speed and running economy. Most athletes should spend 80% of training time at easy effort and 20% at moderate-to-hard effort.
+
+The easy run paradox: Most runners run their easy days too fast, which means they're too tired to run their hard days hard enough. The result is a middle-ground where everything feels moderately hard but nothing produces optimal adaptation. When an athlete's easy runs creep up in pace, the correct coaching intervention is to slow them down — not to praise their fitness.
+
+Marathon and half-marathon preparation (Pfitzinger approach): Long runs build endurance, medium-long runs maintain it, and tempo/threshold sessions build race-specific fitness. The long run should not exceed 20-22 miles for most marathoners. For half-marathon training, long runs peak around 14-16 miles. Key workouts matter more than total mileage — a well-executed tempo run produces more race-specific adaptation than junk miles.
+
+Taper principles: In the final 2-3 weeks before a goal race, reduce volume by 40-60% but maintain some intensity. The athlete's body needs to absorb the accumulated training stress. Trust the fitness that has been built — the taper is not the time to squeeze in one more hard workout. Athletes often feel sluggish in early taper; this is normal and temporary.
+
+Common injury return patterns: Achilles tendinopathy responds to graduated loading — start with easy walking/jogging, progress to easy running, add duration before intensity. IT band issues often respond to reduced downhill running and hip strengthening. Shin splints require reduced impact — cross-training can maintain fitness while the bone heals. In all cases: the athlete should be pain-free during easy running before any quality sessions are reintroduced.

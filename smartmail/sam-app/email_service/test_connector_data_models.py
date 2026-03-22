@@ -337,7 +337,7 @@ class TestConnectorDataModels(unittest.TestCase):
         )
         self.assertEqual(normalized["primary_goal"], "")
         self.assertEqual(normalized["experience_level"], "unknown")
-        self.assertEqual(normalized["constraints"], [])
+        self.assertNotIn("constraints", normalized)
         self.assertEqual(normalized["time_availability"], {})
         self.assertEqual(normalized["goal_why"], "")
         self.assertEqual(normalized["success_definition"], "")

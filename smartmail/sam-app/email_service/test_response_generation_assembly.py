@@ -320,6 +320,30 @@ class TestBuildResponseBrief(unittest.TestCase):
         self.assertEqual(brief.validated_plan, {})
         self.assertEqual(brief.decision_context["track"], "main_build")
 
+    def test_lightweight_non_planning_with_missing_injury_uses_targeted_followup(self):
+        brief = build_response_brief(
+            athlete_id="ath_q1",
+            reply_kind="lightweight_non_planning",
+            inbound_subject="Easy run question",
+            selected_model_name="gpt-5-nano",
+            profile_after={"primary_goal": "10k", "experience_level": "intermediate"},
+            missing_profile_fields=["injury_status"],
+            plan_summary="Current plan - Goal: 10k.",
+            rule_engine_decision={"intent": "question"},
+            memory_context=_empty_memory_context(),
+        )
+
+        self.assertEqual(brief.reply_mode, "lightweight_non_planning")
+        self.assertEqual(brief.validated_plan, {})
+        self.assertNotIn("missing_profile_fields", brief.decision_context)
+        self.assertNotIn("clarification_needed", brief.decision_context)
+        self.assertEqual(
+            brief.decision_context["clarification_questions"],
+            [
+                "- Any current injuries, pains, or physical limitations (perfectly fine if there are none — just let me know either way)"
+            ],
+        )
+
     def test_missing_plan_summary_and_memory_context_degrade_gracefully(self):
         brief = build_response_brief(
             athlete_id="ath_1",

@@ -62,7 +62,7 @@ class TestBuildProfileGatedReply(unittest.TestCase):
                 "primary_goal": "10k",
                 "time_availability": {"hours_per_week": 2.0},
                 "experience_level": "unknown",
-                "constraints": [],
+                "injury_status": {"has_injuries": False},
             }
             parse_updates.return_value = {}
             merge.return_value = True
@@ -114,7 +114,7 @@ class TestBuildProfileGatedReply(unittest.TestCase):
             self.assertEqual(brief["reply_mode"], "intake")
             self.assertEqual(
                 sorted(brief["decision_context"]["missing_profile_fields"]),
-                ["constraints", "experience_level", "primary_goal", "time_availability"],
+                ["experience_level", "injury_status", "primary_goal", "time_availability"],
             )
             ensure_plan.assert_called_once_with("ath_1", fallback_goal=None)
 
@@ -135,13 +135,13 @@ class TestBuildProfileGatedReply(unittest.TestCase):
                     "primary_goal": "",
                     "time_availability": {"sessions_per_week": 4},
                     "experience_level": "intermediate",
-                    "constraints": [],
+                    "injury_status": {"has_injuries": False},
                 },
             ]
             parse_updates.return_value = {
                 "time_availability": {"sessions_per_week": 4},
                 "experience_level": "intermediate",
-                "constraints": [],
+                "injury_status": {"has_injuries": False},
             }
             merge.return_value = True
             ensure_plan.return_value = True
@@ -234,14 +234,14 @@ class TestBuildProfileGatedReply(unittest.TestCase):
                     "primary_goal": "marathon",
                     "time_availability": {"sessions_per_week": 4},
                     "experience_level": "unknown",
-                    "constraints": [],
+                    "injury_status": {"has_injuries": False},
                 },
             ]
             parse_updates.return_value = {
                 "primary_goal": "marathon",
                 "time_availability": {"sessions_per_week": 4},
                 "experience_level": "unknown",
-                "constraints": [],
+                "injury_status": {"has_injuries": False},
             }
             merge.return_value = True
             ensure_plan.return_value = True
@@ -255,9 +255,11 @@ class TestBuildProfileGatedReply(unittest.TestCase):
                 selected_model_name="gpt-5-nano",
                 log_outcome=None,
             )
-            # Profile just became complete: deterministic intake completion reply
-            self.assertIn("everything I need", reply)
-            run_response_generation_workflow.assert_not_called()
+            # Profile just became complete: LLM generates first plan with transition flag
+            self.assertEqual(reply, "Composed ready reply")
+            run_response_generation_workflow.assert_called_once()
+            brief = run_response_generation_workflow.call_args.args[0]
+            self.assertTrue(brief["decision_context"].get("intake_completed_this_turn"))
             merge.assert_called_once()
             ensure_plan.assert_called_once_with("ath_1", fallback_goal="marathon")
 
@@ -282,7 +284,7 @@ class TestBuildProfileGatedReply(unittest.TestCase):
                 "primary_goal": "10k",
                 "time_availability": {"hours_per_week": 1.0},
                 "experience_level": "unknown",
-                "constraints": [],
+                "injury_status": {"has_injuries": False},
             }
             parse_updates.return_value = {}
             merge.return_value = True
@@ -317,7 +319,7 @@ class TestBuildProfileGatedReply(unittest.TestCase):
                 "primary_goal": "10k",
                 "time_availability": {"hours_per_week": 2.0},
                 "experience_level": "unknown",
-                "constraints": [],
+                "injury_status": {"has_injuries": False},
             }
             parse_updates.return_value = {}
             merge.return_value = True
@@ -354,7 +356,7 @@ class TestBuildProfileGatedReply(unittest.TestCase):
                 "primary_goal": "10k",
                 "time_availability": {"hours_per_week": 2.0},
                 "experience_level": "unknown",
-                "constraints": [],
+                "injury_status": {"has_injuries": False},
             }
             parse_updates.return_value = {}
             merge.return_value = True
@@ -445,7 +447,7 @@ class TestBuildProfileGatedReply(unittest.TestCase):
                 "primary_goal": "10k",
                 "time_availability": {"hours_per_week": 2.0},
                 "experience_level": "unknown",
-                "constraints": [],
+                "injury_status": {"has_injuries": False},
             }
             run_response_generation_workflow.return_value = _final_email_response(
                 "This week: keep the quality controlled\n\n"
@@ -487,7 +489,7 @@ class TestBuildProfileGatedReply(unittest.TestCase):
                 "primary_goal": "Half marathon",
                 "time_availability": {"hours_per_week": 5.0},
                 "experience_level": "intermediate",
-                "constraints": [],
+                "injury_status": {"has_injuries": False},
             }
             parse_updates.return_value = {}
             merge.return_value = True
@@ -580,7 +582,7 @@ class TestBuildProfileGatedReply(unittest.TestCase):
                 "primary_goal": "Half marathon",
                 "time_availability": {"hours_per_week": 5.0},
                 "experience_level": "intermediate",
-                "constraints": [],
+                "injury_status": {"has_injuries": False},
             }
             parse_updates.return_value = {}
             merge.return_value = True
@@ -620,7 +622,7 @@ class TestBuildProfileGatedReply(unittest.TestCase):
                 "primary_goal": "10k",
                 "time_availability": {"hours_per_week": 2.0},
                 "experience_level": "unknown",
-                "constraints": [],
+                "injury_status": {"has_injuries": False},
             }
             parse_updates.return_value = {}
             merge.return_value = True
@@ -682,7 +684,7 @@ class TestBuildProfileGatedReply(unittest.TestCase):
                 "primary_goal": "10k",
                 "time_availability": {"hours_per_week": 2.0},
                 "experience_level": "unknown",
-                "constraints": [],
+                "injury_status": {"has_injuries": False},
             }
             parse_updates.return_value = {}
             merge.return_value = True
@@ -730,7 +732,7 @@ class TestBuildProfileGatedReply(unittest.TestCase):
                 "primary_goal": "10k",
                 "time_availability": {"hours_per_week": 2.0},
                 "experience_level": "unknown",
-                "constraints": [],
+                "injury_status": {"has_injuries": False},
             }
             run_response_generation_workflow.return_value = _final_email_response(
                 "This week: keep the quality controlled\n\n"
@@ -795,7 +797,7 @@ class TestBuildProfileGatedReply(unittest.TestCase):
                 "primary_goal": "10k",
                 "time_availability": {"hours_per_week": 2.0},
                 "experience_level": "unknown",
-                "constraints": [],
+                "injury_status": {"has_injuries": False},
             }
             run_response_generation_workflow.return_value = _final_email_response(
                 "Please send your event date, available days, and pain score."
@@ -837,7 +839,7 @@ class TestBuildProfileGatedReply(unittest.TestCase):
                 "primary_goal": "10k",
                 "time_availability": {"hours_per_week": 2.0},
                 "experience_level": "unknown",
-                "constraints": [],
+                "injury_status": {"has_injuries": False},
             }
             parse_updates.return_value = {}
             merge.return_value = True
@@ -910,7 +912,7 @@ class TestBuildProfileGatedReply(unittest.TestCase):
                 "primary_goal": "10k",
                 "time_availability": {"hours_per_week": 2.0},
                 "experience_level": "unknown",
-                "constraints": [],
+                "injury_status": {"has_injuries": False},
             }
             parse_updates.return_value = {}
             merge.return_value = True
@@ -951,7 +953,7 @@ class TestBuildProfileGatedReply(unittest.TestCase):
                 "primary_goal": "10k",
                 "time_availability": {"hours_per_week": 2.0},
                 "experience_level": "unknown",
-                "constraints": [],
+                "injury_status": {"has_injuries": False},
             }
             run_response_generation_workflow.return_value = _final_email_response(
                 "I can help with training, recovery, and plan adjustments. Share your latest workout update or coaching question."
@@ -977,7 +979,7 @@ class TestBuildProfileGatedReply(unittest.TestCase):
             "primary_goal": "10k",
             "time_availability": {"hours_per_week": 2.0},
             "experience_level": "unknown",
-            "constraints": [],
+            "injury_status": {"has_injuries": False},
         }), \
              mock.patch.object(coaching, "parse_profile_updates_from_email", return_value={}), \
              mock.patch.object(coaching, "parse_manual_activity_snapshot_from_email", return_value=None), \
@@ -1006,12 +1008,55 @@ class TestBuildProfileGatedReply(unittest.TestCase):
             self.assertEqual(brief["reply_mode"], "lightweight_non_planning")
             self.assertEqual(brief["validated_plan"], {})
 
+    def test_question_intent_with_only_missing_injury_stays_lightweight(self):
+        # Profile has everything except injury_status — question intent should stay lightweight
+        with mock.patch.object(coaching, "get_coach_profile", return_value={
+            "primary_goal": "10k",
+            "time_availability": {"hours_per_week": 2.0},
+            "experience_level": "unknown",
+        }), \
+             mock.patch.object(coaching, "parse_profile_updates_from_email", return_value={}), \
+             mock.patch.object(coaching, "parse_manual_activity_snapshot_from_email", return_value=None), \
+             mock.patch.object(coaching, "put_manual_activity_snapshot", return_value=True), \
+             mock.patch.object(coaching, "get_progress_snapshot", return_value={"data_quality": "low"}), \
+             mock.patch.object(coaching, "merge_coach_profile_fields", return_value=True), \
+             mock.patch.object(coaching, "ensure_current_plan", return_value=True), \
+             mock.patch.object(coaching, "fetch_current_plan_summary", return_value="Current plan - Goal: 10k."), \
+             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"backbone": {}, "context_notes": [], "continuity_summary": None}), \
+             mock.patch.object(coaching, "maybe_post_reply_unified_refresh"), \
+             mock.patch.object(coaching, "create_action_token", return_value=None), \
+             mock.patch.object(coaching, "run_response_generation_workflow") as run_response_generation_workflow:
+            run_response_generation_workflow.return_value = _final_email_response(
+                "Keep easy runs easy for now."
+            )
+
+            coaching.build_profile_gated_reply(
+                "ath_1",
+                "user@example.com",
+                "Should I add strides after an easy run?",
+                inbound_subject="Question",
+                selected_model_name="gpt-5-nano",
+                rule_engine_decision={"intent": "question", "mode": "read_only"},
+                log_outcome=None,
+            )
+
+            brief = run_response_generation_workflow.call_args.args[0]
+            self.assertEqual(brief["reply_mode"], "lightweight_non_planning")
+            self.assertNotIn("missing_profile_fields", brief["decision_context"])
+            self.assertNotIn("clarification_needed", brief["decision_context"])
+            self.assertEqual(
+                brief["decision_context"]["clarification_questions"],
+                [
+                    "- Any current injuries, pains, or physical limitations (perfectly fine if there are none — just let me know either way)"
+                ],
+            )
+
     def test_milestone_update_intent_uses_lightweight_non_planning_mode(self):
         with mock.patch.object(coaching, "get_coach_profile", return_value={
             "primary_goal": "10k",
             "time_availability": {"hours_per_week": 2.0},
             "experience_level": "unknown",
-            "constraints": [],
+            "injury_status": {"has_injuries": False},
         }), \
              mock.patch.object(coaching, "parse_profile_updates_from_email", return_value={}), \
              mock.patch.object(coaching, "parse_manual_activity_snapshot_from_email", return_value=None), \
@@ -1044,7 +1089,7 @@ class TestBuildProfileGatedReply(unittest.TestCase):
             "primary_goal": "10k",
             "time_availability": {"hours_per_week": 2.0},
             "experience_level": "unknown",
-            "constraints": [],
+            "injury_status": {"has_injuries": False},
         }), \
              mock.patch.object(coaching, "parse_profile_updates_from_email", return_value={}), \
              mock.patch.object(coaching, "parse_manual_activity_snapshot_from_email", return_value=None), \
@@ -1077,7 +1122,7 @@ class TestBuildProfileGatedReply(unittest.TestCase):
             "primary_goal": "10k",
             "time_availability": {"hours_per_week": 2.0},
             "experience_level": "unknown",
-            "constraints": [],
+            "injury_status": {"has_injuries": False},
         }), \
              mock.patch.object(coaching, "parse_profile_updates_from_email", return_value={}), \
              mock.patch.object(coaching, "parse_manual_activity_snapshot_from_email", return_value=None), \
@@ -1114,7 +1159,7 @@ class TestBuildProfileGatedReply(unittest.TestCase):
             "primary_goal": "10k",
             "time_availability": {"hours_per_week": 2.0},
             "experience_level": "unknown",
-            "constraints": [],
+            "injury_status": {"has_injuries": False},
         }), \
              mock.patch.object(coaching, "parse_profile_updates_from_email", return_value={}), \
              mock.patch.object(coaching, "parse_manual_activity_snapshot_from_email", return_value=None), \

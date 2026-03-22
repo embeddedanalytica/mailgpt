@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import sys
+import time
 import threading
 import traceback
 from collections import Counter
@@ -27,11 +28,12 @@ if str(EMAIL_SERVICE_PATH) not in sys.path:
     sys.path.insert(0, str(EMAIL_SERVICE_PATH))
 
 import dynamodb_models
+from athlete_memory_reducer import apply_unified_refresh
 from athlete_memory_bench_fixture import (
     DEFAULT_BENCH_PATH,
     load_athlete_memory_bench_scenarios,
 )
-from skills.memory import MemoryRefreshError, run_memory_refresh, run_memory_router
+from skills.memory import MemoryRefreshError, run_unified_memory_refresh
 
 
 logger = logging.getLogger(__name__)
@@ -164,6 +166,10 @@ class _BenchCoachProfilesTable:
                 item["updated_at"] = values[":updated_at"]
             if ":memory_notes" in values:
                 item["memory_notes"] = values[":memory_notes"]
+            if ":backbone" in values:
+                item["backbone"] = values[":backbone"]
+            if ":context_notes" in values:
+                item["context_notes"] = values[":context_notes"]
             if ":continuity_summary" in values:
                 item["continuity_summary"] = values[":continuity_summary"]
             self.items[athlete_id] = item
@@ -290,6 +296,58 @@ def _content_match_tokens(text: str) -> List[str]:
 
 def _note_texts(notes: Iterable[Dict[str, Any]]) -> List[str]:
     return [_normalize_text(note.get("summary", "")) for note in notes if isinstance(note, dict)]
+
+
+def get_benchmark_memory_notes(athlete_id: str) -> List[Dict[str, Any]]:
+    """Flatten unified memory into note-shaped records for benchmark matching."""
+    backbone = dynamodb_models.get_backbone(athlete_id)
+    context_notes = dynamodb_models.get_context_notes(athlete_id)
+    flattened: List[Dict[str, Any]] = []
+    for slot_name in ("primary_goal", "weekly_structure", "hard_constraints", "training_preferences"):
+        slot = backbone.get(slot_name)
+        if not isinstance(slot, dict):
+            continue
+        summary = str(slot.get("summary") or "").strip()
+        if not summary:
+            continue
+        flattened.append(
+            {
+                "label": slot_name,
+                "summary": summary,
+                "updated_at": slot.get("updated_at"),
+            }
+        )
+    for note in context_notes:
+        if isinstance(note, dict) and str(note.get("summary") or "").strip():
+            flattened.append(note)
+    return flattened
+
+
+def get_benchmark_retrieval_context(athlete_id: str) -> Dict[str, Any]:
+    retrieval_context = dynamodb_models.get_memory_context_for_response_generation(athlete_id)
+    flattened_notes: List[Dict[str, Any]] = []
+    backbone = retrieval_context.get("backbone") or {}
+    for slot_name in ("primary_goal", "weekly_structure", "hard_constraints", "training_preferences"):
+        slot = backbone.get(slot_name)
+        if not isinstance(slot, dict):
+            continue
+        summary = str(slot.get("summary") or "").strip()
+        if not summary:
+            continue
+        flattened_notes.append(
+            {
+                "label": slot_name,
+                "summary": summary,
+                "updated_at": slot.get("updated_at"),
+            }
+        )
+    context_notes = retrieval_context.get("context_notes")
+    if isinstance(context_notes, list):
+        for note in context_notes:
+            if isinstance(note, dict) and str(note.get("summary") or "").strip():
+                flattened_notes.append(note)
+    retrieval_context["memory_notes"] = flattened_notes
+    return retrieval_context
 
 
 def _continuity_texts(continuity_summary: Dict[str, Any] | None) -> Dict[str, List[str] | str]:
@@ -774,84 +832,41 @@ def apply_benchmark_memory_refresh(
     athlete_id: str,
     latest_interaction_context: Dict[str, Any],
 ) -> Dict[str, Any]:
-    long_term_debug = {
-        "pre_reply": None,
-        "post_reply": None,
-    }
-    routing_debug = {
-        "pre_reply": None,
-        "post_reply": None,
-    }
-    pre_reply_context = dict(latest_interaction_context)
-    pre_reply_context.pop("coach_reply", None)
+    current_backbone = dynamodb_models.get_backbone(athlete_id)
+    current_context_notes = dynamodb_models.get_context_notes(athlete_id)
+    current_continuity = dynamodb_models.get_continuity_summary(athlete_id)
 
-    prior_memory_notes = dynamodb_models.get_memory_notes(athlete_id)
-    prior_continuity_summary = dynamodb_models.get_continuity_summary(athlete_id)
-    pre_reply_routing = run_memory_router(
-        prior_memory_notes=dynamodb_models.get_active_memory_notes(athlete_id),
-        prior_continuity_summary=prior_continuity_summary,
-        latest_interaction_context=pre_reply_context,
+    refreshed = run_unified_memory_refresh(
+        current_backbone=current_backbone,
+        current_context_notes=current_context_notes,
+        current_continuity=current_continuity,
+        interaction_context=latest_interaction_context,
     )
-    pre_reply_route = str(pre_reply_routing.get("route", "")).strip().lower()
-    routing_debug["pre_reply"] = {
-        "latest_interaction_context": pre_reply_context,
-        "prior_memory_notes": dynamodb_models.get_active_memory_notes(athlete_id),
-        "prior_continuity_summary": prior_continuity_summary,
-        "raw_response_text": pre_reply_routing.get("raw_response_text", ""),
-        "raw_llm_data": pre_reply_routing.get("raw_llm_data"),
-        "parsed_routing": pre_reply_routing,
-        "long_term_ran": pre_reply_route in {"long_term", "both"},
-        "short_term_ran": False,
-    }
-    if pre_reply_route in {"long_term", "both"}:
-        refreshed = run_memory_refresh(
-            prior_memory_notes=prior_memory_notes,
-            prior_continuity_summary=prior_continuity_summary,
-            latest_interaction_context=pre_reply_context,
-            routing_decision={"route": "long_term"},
-        )
-        long_term_debug["pre_reply"] = refreshed.get("long_term_debug")
-        if not dynamodb_models.replace_memory_notes(athlete_id, refreshed["memory_notes"]):
-            raise MemoryRefreshError("memory note persistence failed")
-
-    prior_memory_notes = dynamodb_models.get_memory_notes(athlete_id)
-    prior_continuity_summary = dynamodb_models.get_continuity_summary(athlete_id)
-    post_reply_routing = run_memory_router(
-        prior_memory_notes=dynamodb_models.get_active_memory_notes(athlete_id),
-        prior_continuity_summary=prior_continuity_summary,
-        latest_interaction_context=latest_interaction_context,
-    )
-    post_reply_route = str(post_reply_routing.get("route", "")).strip().lower()
-    routing_debug["post_reply"] = {
-        "latest_interaction_context": latest_interaction_context,
-        "prior_memory_notes": dynamodb_models.get_active_memory_notes(athlete_id),
-        "prior_continuity_summary": prior_continuity_summary,
-        "raw_response_text": post_reply_routing.get("raw_response_text", ""),
-        "raw_llm_data": post_reply_routing.get("raw_llm_data"),
-        "parsed_routing": post_reply_routing,
-        "long_term_ran": False,
-        "short_term_ran": post_reply_route in {"short_term", "both"},
-    }
-    if post_reply_route in {"short_term", "both"}:
-        refreshed = run_memory_refresh(
-            prior_memory_notes=prior_memory_notes,
-            prior_continuity_summary=prior_continuity_summary,
-            latest_interaction_context=latest_interaction_context,
-            routing_decision={"route": "short_term"},
-        )
-        if not dynamodb_models.replace_continuity_summary(
-            athlete_id,
-            refreshed["continuity_summary"],
-        ):
-            raise MemoryRefreshError("continuity_summary persistence failed")
+    persisted = apply_unified_refresh(refreshed, int(time.time()))
+    if not dynamodb_models.replace_unified_memory(
+        athlete_id,
+        persisted["backbone"],
+        persisted["context_notes"],
+        persisted["continuity_summary"],
+    ):
+        raise MemoryRefreshError("unified memory persistence failed")
 
     return {
-        "memory_notes": dynamodb_models.get_memory_notes(athlete_id),
+        "memory_notes": get_benchmark_memory_notes(athlete_id),
         "continuity_summary": dynamodb_models.get_continuity_summary(athlete_id),
-        "pre_reply_route": pre_reply_route,
-        "post_reply_route": post_reply_route,
-        "long_term_debug": long_term_debug,
-        "routing_debug": routing_debug,
+        "pre_reply_route": "unified",
+        "post_reply_route": "unified",
+        "long_term_debug": {
+            "pre_reply": None,
+            "post_reply": refreshed,
+        },
+        "routing_debug": {
+            "pre_reply": None,
+            "post_reply": {
+                "latest_interaction_context": latest_interaction_context,
+                "mode": "unified",
+            },
+        },
     }
 
 
@@ -938,7 +953,7 @@ def run_single_scenario(
                         "retrieval_context": None,
                 }
 
-            current_notes = dynamodb_models.get_active_memory_notes(athlete_id)
+            current_notes = get_benchmark_memory_notes(athlete_id)
             continuity_summary = dynamodb_models.get_continuity_summary(athlete_id)
             evaluation = evaluate_step_result(
                 previous_notes=previous_notes,
@@ -969,9 +984,9 @@ def run_single_scenario(
             )
             previous_notes = current_notes
 
-        retrieval_context = dynamodb_models.get_memory_context_for_response_generation(athlete_id)
+        retrieval_context = get_benchmark_retrieval_context(athlete_id)
         final_evaluation = evaluate_final_retrieval(
-            current_notes=dynamodb_models.get_active_memory_notes(athlete_id),
+            current_notes=get_benchmark_memory_notes(athlete_id),
             retrieval_context=retrieval_context,
             final_assertions=scenario["final_assertions"],
         )

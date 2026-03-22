@@ -76,6 +76,9 @@ _REQUIRED_TOP_LEVEL_FIELDS = {
     "adjustments",
     "next_email_payload",
 }
+_OPTIONAL_TOP_LEVEL_FIELDS = {
+    "risk_recent_history",
+}
 _REQUIRED_NEXT_EMAIL_PAYLOAD_FIELDS = {
     "subject_hint",
     "summary",
@@ -237,6 +240,8 @@ def _validate_required_fields_only(
     payload: Dict[str, Any],
     required_fields: set[str],
     field_scope: str,
+    *,
+    optional_fields: set[str] | None = None,
 ) -> None:
     provided = set(payload.keys())
     missing = required_fields - provided
@@ -244,7 +249,8 @@ def _validate_required_fields_only(
         raise RuleEngineContractError(
             f"{field_scope} missing required fields: {', '.join(sorted(missing))}"
         )
-    extra = provided - required_fields
+    allowed = required_fields | (optional_fields or set())
+    extra = provided - allowed
     if extra:
         raise RuleEngineContractError(
             f"{field_scope} has unknown fields: {', '.join(sorted(extra))}"
@@ -326,6 +332,7 @@ class RuleEngineOutput:
     plan_update_status: str
     adjustments: List[str]
     next_email_payload: Dict[str, Any]
+    risk_recent_history: List[str] = ()  # type: ignore[assignment]
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -338,12 +345,14 @@ class RuleEngineOutput:
             "plan_update_status": self.plan_update_status,
             "adjustments": list(self.adjustments),
             "next_email_payload": dict(self.next_email_payload),
+            "risk_recent_history": list(self.risk_recent_history),
         }
 
     @classmethod
     def from_dict(cls, payload: Dict[str, Any]) -> "RuleEngineOutput":
         normalized = dict(payload)
         normalized["track"] = normalize_track_name(normalized.get("track"))
+        normalized.setdefault("risk_recent_history", [])
         validate_rule_engine_output(normalized)
         return cls(
             classification_label=normalized["classification_label"],
@@ -355,6 +364,7 @@ class RuleEngineOutput:
             plan_update_status=normalized["plan_update_status"],
             adjustments=list(normalized["adjustments"]),
             next_email_payload=dict(normalized["next_email_payload"]),
+            risk_recent_history=list(normalized["risk_recent_history"]),
         )
 
 
@@ -362,7 +372,10 @@ def validate_rule_engine_output(payload: Dict[str, Any]) -> None:
     if not isinstance(payload, dict):
         raise RuleEngineContractError("payload must be a dict")
 
-    _validate_required_fields_only(payload, _REQUIRED_TOP_LEVEL_FIELDS, "rule_engine_output")
+    _validate_required_fields_only(
+        payload, _REQUIRED_TOP_LEVEL_FIELDS, "rule_engine_output",
+        optional_fields=_OPTIONAL_TOP_LEVEL_FIELDS,
+    )
     _require_non_empty_string("classification_label", payload["classification_label"])
     _require_non_empty_string("today_action", payload["today_action"])
 
@@ -381,6 +394,9 @@ def validate_rule_engine_output(payload: Dict[str, Any]) -> None:
 
     _require_string_list("weekly_skeleton", payload["weekly_skeleton"])
     _require_string_list("adjustments", payload["adjustments"])
+
+    if "risk_recent_history" in payload:
+        _require_string_list("risk_recent_history", payload["risk_recent_history"])
 
     next_email_payload = payload["next_email_payload"]
     if not isinstance(next_email_payload, dict):

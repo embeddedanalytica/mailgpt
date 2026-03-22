@@ -22,7 +22,6 @@ from dynamodb_models import (
     get_progress_snapshot,
 )
 from config import ACTION_BASE_URL
-from email_copy import EmailCopy
 from activity_snapshot import parse_manual_activity_snapshot_from_email
 from ai_extraction_contract import (
     list_missing_or_low_confidence_critical_fields,
@@ -32,7 +31,7 @@ from profile import (
     parse_profile_updates_from_email,
     get_missing_required_profile_fields,
 )
-from config import ENABLE_SESSION_CHECKIN_EXTRACTION
+from config import ENABLE_COACHING_REASONING, ENABLE_SESSION_CHECKIN_EXTRACTION
 from rule_engine import RuleEngineContractError, validate_rule_engine_output
 from skills.planner import (
     SessionCheckinExtractionProposalError,
@@ -43,7 +42,8 @@ from coaching_memory import (
     should_attempt_memory_refresh,
 )
 from response_generation_contract import normalize_reply_mode
-from response_generation_assembly import build_response_brief
+from response_generation_assembly import build_response_brief, build_response_generation_input
+from skills.coaching_reasoning import CoachingReasoningError, run_coaching_reasoning_workflow
 from skills.response_generation import (
     ResponseGenerationProposalError,
     run_response_generation_workflow,
@@ -55,6 +55,10 @@ _READ_ONLY_REPLY_INTENTS = {"question"}
 
 def _type_map(payload: Dict[str, Any]) -> Dict[str, str]:
     return {key: type(value).__name__ for key, value in payload.items()}
+
+
+def _missing_injury_only(missing_profile_fields: list[str]) -> bool:
+    return set(missing_profile_fields) == {"injury_status"}
 
 
 def _build_connect_strava_link(from_email: str) -> Optional[str]:
@@ -77,9 +81,9 @@ def _resolve_reply_mode(
     missing_profile_fields: list[str],
     rule_engine_decision: Optional[Dict[str, Any]],
 ) -> str:
-    if missing_profile_fields:
-        return normalize_reply_mode("intake")
     if not isinstance(rule_engine_decision, dict):
+        if missing_profile_fields:
+            return normalize_reply_mode("intake")
         return normalize_reply_mode("normal_coaching")
 
     reply_strategy = str(rule_engine_decision.get("reply_strategy", "")).strip().lower()
@@ -91,6 +95,10 @@ def _resolve_reply_mode(
         return normalize_reply_mode("clarification")
 
     intent = str(rule_engine_decision.get("intent", "")).strip().lower()
+    if intent in _READ_ONLY_REPLY_INTENTS and _missing_injury_only(missing_profile_fields):
+        return normalize_reply_mode("lightweight_non_planning")
+    if missing_profile_fields:
+        return normalize_reply_mode("intake")
     if intent in _READ_ONLY_REPLY_INTENTS:
         return normalize_reply_mode("lightweight_non_planning")
     return normalize_reply_mode("normal_coaching")
@@ -112,6 +120,7 @@ def _generate_llm_reply(
     from_email: str,
     inbound_message_id: Optional[str],
     connect_strava_link: Optional[str] = None,
+    intake_just_completed: bool = False,
 ) -> Optional[str]:
     reply_mode = _resolve_reply_mode(
         missing_profile_fields=missing_profile_fields,
@@ -132,10 +141,36 @@ def _generate_llm_reply(
         rule_engine_decision=rule_engine_decision,
         memory_context=memory_context,
         connect_strava_link=connect_strava_link,
+        intake_completed_this_turn=intake_just_completed and reply_mode == "normal_coaching",
     )
+    # Two-stage pipeline: coaching reasoning → response generation (if enabled)
+    coaching_result = None
+    if ENABLE_COACHING_REASONING:
+        try:
+            coaching_result = run_coaching_reasoning_workflow(
+                response_brief.to_dict(), model_name=selected_model_name,
+            )
+            logger.info(
+                "coaching_directive athlete_id=%s rationale=%s doctrine_files=%s",
+                athlete_id,
+                coaching_result["directive"].get("rationale", ""),
+                coaching_result.get("doctrine_files_loaded", []),
+            )
+        except CoachingReasoningError as exc:
+            logger.warning(
+                "coaching_reasoning_fallback athlete_id=%s error=%s", athlete_id, exc,
+            )
+
+    if coaching_result is not None:
+        rg_input = build_response_generation_input(
+            directive=coaching_result["directive"], brief=response_brief,
+        )
+    else:
+        rg_input = response_brief.to_dict()
+
     try:
         generated_response = run_response_generation_workflow(
-            response_brief.to_dict(),
+            rg_input,
             model_name=selected_model_name,
         )
         reply = str(generated_response["final_email_body"]).strip()
@@ -395,6 +430,8 @@ def build_profile_gated_reply(
     )
     connect_link = _build_connect_strava_link(from_email)
 
+    intake_just_completed = bool(missing_before and not missing_after)
+
     if missing_after:
         log(
             result="profile_missing_context",
@@ -404,7 +441,7 @@ def build_profile_gated_reply(
         if not selected_model_name:
             logger.error("selected_model_name is required for profile-gated athlete replies")
             return None
-        return _generate_llm_reply(
+        reply = _generate_llm_reply(
             athlete_id=athlete_id,
             inbound_body=inbound_body,
             inbound_subject=inbound_subject,
@@ -420,17 +457,10 @@ def build_profile_gated_reply(
             inbound_message_id=inbound_message_id,
             connect_strava_link=connect_link,
         )
+        return reply
 
-    if missing_before:
-        # Profile just became complete on this turn — send deterministic
-        # acknowledgment instead of immediately generating a coaching plan.
+    if intake_just_completed:
         log(result="intake_completed")
-        log(
-            result="profile_gate_evaluated",
-            missing_before=len(missing_before),
-            missing_after=len(missing_after),
-        )
-        return EmailCopy.INTAKE_COMPLETION_REPLY
 
     log(result="profile_ready_for_coaching")
     log(
@@ -465,4 +495,5 @@ def build_profile_gated_reply(
         from_email=from_email,
         inbound_message_id=inbound_message_id,
         connect_strava_link=connect_link,
+        intake_just_completed=intake_just_completed,
     )

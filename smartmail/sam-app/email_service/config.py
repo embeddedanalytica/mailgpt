@@ -50,3 +50,8 @@ ENABLE_SESSION_CHECKIN_EXTRACTION = (
 # RE4 planning/rendering models
 PLANNING_LLM_MODEL = os.getenv("PLANNING_LLM_MODEL", OPENAI_GENERIC_MODEL)
 LANGUAGE_RENDER_MODEL = os.getenv("LANGUAGE_RENDER_MODEL", OPENAI_GENERIC_MODEL)
+
+# Coaching reasoning (two-stage pipeline)
+ENABLE_COACHING_REASONING = (
+    os.getenv("ENABLE_COACHING_REASONING", "").strip().lower() == "true"
+)
