@@ -88,6 +88,7 @@ JUDGE_SCHEMA: Dict[str, Any] = {
         "scores",
         "what_landed",
         "what_missed",
+        "improved_reply_example",
         "hallucinations_or_unwarranted_assumptions",
         "athlete_likely_experience",
         "issue_tags",
@@ -117,6 +118,12 @@ JUDGE_SCHEMA: Dict[str, Any] = {
         },
         "what_landed": {"type": "array", "items": {"type": "string", "minLength": 1}},
         "what_missed": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "improved_reply_example": {
+            "anyOf": [
+                {"type": "string", "minLength": 1},
+                {"type": "null"},
+            ]
+        },
         "hallucinations_or_unwarranted_assumptions": {"type": "array", "items": {"type": "string", "minLength": 1}},
         "athlete_likely_experience": {"type": "string", "minLength": 1},
         "issue_tags": {
@@ -222,6 +229,12 @@ def _normalize_tag_list(value: Any, *, field_name: str, allowed: set[str]) -> Li
     return normalized
 
 
+def _normalize_optional_string(value: Any, *, field_name: str) -> Optional[str]:
+    if value is None:
+        return None
+    return _require_non_empty_string(value, field_name=field_name)
+
+
 def validate_athlete_opening_output(payload: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("athlete opening output must be an object.")
@@ -296,6 +309,10 @@ def validate_judge_output(payload: Dict[str, Any]) -> Dict[str, Any]:
         "scores": normalized_scores,
         "what_landed": _normalize_string_list(payload.get("what_landed"), field_name="what_landed"),
         "what_missed": _normalize_string_list(payload.get("what_missed"), field_name="what_missed"),
+        "improved_reply_example": _normalize_optional_string(
+            payload.get("improved_reply_example"),
+            field_name="improved_reply_example",
+        ),
         "hallucinations_or_unwarranted_assumptions": _normalize_string_list(
             payload.get("hallucinations_or_unwarranted_assumptions"),
             field_name="hallucinations_or_unwarranted_assumptions",

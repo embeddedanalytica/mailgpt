@@ -6,15 +6,15 @@ Email-first coaching service built on AWS SAM. Inbound email is the primary UI. 
 
 ## Document Map
 
-Use the repository docs with these roles:
+Use the repository docs with these roles (paths are repo-relative from the SmartMail project root):
 
 - This README is the current implementation and runtime overview.
-- [`/Users/levonsh/Projects/smartmail/spec.md`](/Users/levonsh/Projects/smartmail/spec.md) is the source of truth for rule behavior.
-- [`/Users/levonsh/Projects/smartmail/sam-app/DECISIONS.md`](/Users/levonsh/Projects/smartmail/sam-app/DECISIONS.md) records durable architectural decisions only.
-- [`/Users/levonsh/Projects/smartmail/rule-engine-epic.md`](/Users/levonsh/Projects/smartmail/rule-engine-epic.md) is the completed implementation record for the rule engine.
-- [`/Users/levonsh/Projects/smartmail/athlete-memory-epic.md`](/Users/levonsh/Projects/smartmail/athlete-memory-epic.md) is the implemented design record for athlete memory and conversation continuity.
-- [`/Users/levonsh/Projects/smartmail/response-generation-epic.md`](/Users/levonsh/Projects/smartmail/response-generation-epic.md) is the planned replacement for the current MVP response-composition path.
-- [`/Users/levonsh/Projects/smartmail/BACKLOG.md`](/Users/levonsh/Projects/smartmail/BACKLOG.md) is the early/foundational backlog and should not be treated as the current product spec.
+- [`spec.md`](../spec.md) is the source of truth for rule behavior (see also **Authority** note at top of that file: code validators win on conflict).
+- [`sam-app/DECISIONS.md`](DECISIONS.md) records durable architectural decisions only.
+- [`rule-engine-epic.md`](../rule-engine-epic.md) is the completed implementation record for the rule engine.
+- [`athlete-memory-epic.md`](../athlete-memory-epic.md) is the implemented design record for athlete memory and conversation continuity.
+- [`response-generation-epic.md`](../response-generation-epic.md) is the planned replacement for the current MVP response-composition path.
+- [`BACKLOG.md`](../BACKLOG.md) is **archived** early/foundational backlog—do not use it for current prioritization (see banner in that file).
 
 The current codebase goes beyond the original verification MVP. It now includes:
 
@@ -47,7 +47,7 @@ This is the code-accurate state as of the current repository:
 
 ## Next Planned Area
 
-The next major capability under active design is the dedicated response-generation layer. That design lives in [`/Users/levonsh/Projects/smartmail/response-generation-epic.md`](/Users/levonsh/Projects/smartmail/response-generation-epic.md). The current reply path is still MVP scaffolding and is expected to be replaced by RG1.
+The next major capability under active design is the dedicated response-generation layer. That design lives in [`response-generation-epic.md`](../response-generation-epic.md). The current reply path is still MVP scaffolding and is expected to be replaced by RG1.
 
 ## LLM Skill Architecture
 
@@ -60,12 +60,7 @@ SmartMail uses specialized LLM workflow skills for bounded tasks in the coaching
 
 A workflow may use the same model as other skills or a different model depending on task needs. Model choice is an implementation detail; the stable contract is the skill boundary plus prompt/schema.
 
-Current athlete-memory skills:
-- **Skill A**: extract atomic facts/events from athlete email
-- **Skill B**: decide whether memory refresh should run
-- **Skill C**: refresh `memory_notes` and `continuity_summary`
-
-These skill boundaries keep athlete-memory behavior isolated, testable, and easier to evolve without changing the lightweight memory storage model.
+Athlete-memory LLM workflow is implemented under `skills/memory/unified/` (candidate refresh with strict schema + validation). Orchestration and persistence are in `coaching_memory.py` and `dynamodb_models.py` (`memory_notes` + `continuity_summary` on `coach_profiles`). That keeps refresh behavior isolated and testable without a separate memory database.
 
 ## Runtime Architecture
 
@@ -131,10 +126,9 @@ SES inbound -> SNS -> EmailServiceFunction
   -> conversation intelligence + model routing
   -> optional rule-engine orchestration + current-plan update
   -> profile/manual-activity extraction
-  -> optional pre-reply memory refresh when durable context changed
   -> bounded athlete-memory retrieval for LLM reply path
-  -> optional post-reply memory refresh for meaningful interactions
   -> final reply via SES
+  -> optional post-reply memory refresh (`coaching_memory` + `skills/memory/unified`) when gate allows
 ```
 
 ### Registration
@@ -173,7 +167,7 @@ ready-for-coaching reply
 
 ## Rule Engine Scope
 
-The deterministic rule engine in `sam-app/email_service` currently covers RE1-RE4 described in [`/Users/levonsh/Projects/smartmail/rule-engine-epic.md`](/Users/levonsh/Projects/smartmail/rule-engine-epic.md) and [`/Users/levonsh/Projects/smartmail/spec.md`](/Users/levonsh/Projects/smartmail/spec.md):
+The deterministic rule engine in `sam-app/email_service` currently covers RE1-RE4 described in [`rule-engine-epic.md`](../rule-engine-epic.md) and [`spec.md`](../spec.md):
 
 - canonical contracts and validation
 - event-date guards
@@ -199,26 +193,22 @@ What is not fully shipped yet:
 
 ## Athlete Memory Scope
 
-Athlete memory is now implemented as lightweight continuity state on `coach_profiles`:
+Athlete memory is lightweight state on `coach_profiles`:
 
-- `memory_notes`
-  - durable or semi-durable athlete context
-  - each note has a stable integer `memory_note_id`
-  - stored with Unix timestamps
-- `continuity_summary`
-  - short-lived recent coaching context and follow-up state
-  - stored as one rolling record per athlete
+- **`memory_notes`** — durable or semi-durable facts; each note has a stable integer `memory_note_id`; Unix timestamps in storage.
+- **`continuity_summary`** — one rolling record per athlete for short-lived coaching continuity.
 
-Current behavior:
+The **response-generation** path receives a bounded, contract-shaped `memory_context` (see `response_generation_assembly.py` and `athlete_memory_contract.py`) built from persisted data—not a raw dump of the DynamoDB item.
 
-- at most 7 memory notes may remain active for one athlete
-- retrieval is bounded to all `high` notes plus up to 3 additional recent notes
-- retrieval degrades gracefully on missing or invalid persisted memory artifacts
-- memory refresh is LLM-assisted and runs only for interactions classified as meaningful
-- memory refresh may run before reply generation when newly observed durable context should shape the current reply
-- memory refresh may also run after reply generation so persisted continuity stays current for future exchanges
-- invalid refresh payloads fail closed and do not overwrite stored memory
-- readable date strings are rendered only in LLM-facing prompts; storage remains Unix timestamps
+**Refresh:** Post-reply refresh is LLM-assisted via `skills/memory/unified/`, orchestrated by `coaching_memory.py`, and persisted with `replace_memory` when validation succeeds.
+
+**Current behavior:**
+
+- At most 7 memory notes may remain active for one athlete.
+- Retrieval for the note list is bounded to all `high` notes plus up to 3 additional recent notes.
+- Retrieval degrades gracefully on missing or invalid persisted memory artifacts.
+- Invalid refresh payloads fail closed and do not overwrite stored memory.
+- Readable date strings appear only in LLM-facing prompts; storage remains Unix timestamps.
 
 ## API Surface
 
@@ -276,7 +266,7 @@ Behavior:
 
 - `coach_profiles`
   - PK: `athlete_id`
-  - athlete profile plus `current_plan`, `memory_notes`, and `continuity_summary`
+  - athlete profile, `current_plan`, and memory fields including at least `memory_notes` and `continuity_summary` (see `dynamodb_models.py` / `athlete_memory_contract.py` for the full shape used today)
 - `athlete_identities`
   - PK: `email`
   - maps email to `athlete_id`
@@ -354,7 +344,7 @@ SAM provisions the Lambdas, API routes, SNS topic, and DynamoDB tables listed ab
 - Missing profile fields trigger a profile-collection reply
 - Manual activity snapshots can be extracted from email and roll into progress snapshots
 - Athlete memory survives across threads and can personalize the current LLM reply path
-- Memory refresh updates durable notes and rolling continuity around meaningful interactions when the trigger boundary is met
+- Post-reply memory refresh can update `memory_notes` and `continuity_summary` when `coaching_memory.should_attempt_memory_refresh` allows it
 - Ready-for-coaching replies can include a Strava connect link
 
 ## Project Layout
@@ -376,13 +366,14 @@ Inside `email_service/`, the most relevant modules are:
 - `rate_limits.py` - verified quota and notice throttling
 - `business.py` - conversation intelligence and routing orchestration
 - `coaching.py` - profile gate, manual snapshots, final reply path
+- `coaching_phases.py` - phase helpers for profile-gated pipeline (wired from `coaching.py` for testability)
 - `athlete_memory_contract.py` - memory-note and continuity-summary contracts/guardrails
-- `memory_refresh_eligibility.py` - refresh trigger classification
+- `coaching_memory.py` - post-reply memory refresh orchestration and gate (`should_attempt_memory_refresh`)
 - `inbound_rule_router.py` - mutate/read-only rule-engine routing
 - `rule_engine_*` - deterministic rule-engine implementation
 - `skills/planner/*` - planner and coach-like inference skill workflows (classification/extraction/planning)
+- `skills/memory/unified/*` - athlete-memory refresh LLM workflow (schema + validation)
 - `skills/response_generation/*` - communication and response-generation workflows/prompts
-- `openai_responder.py` - compatibility shims only (legacy import surface)
 - `dynamodb_models.py` - profile, memory, plan, connector, and snapshot persistence helpers
 
 ## Local Development
@@ -422,7 +413,7 @@ sam local invoke EmailServiceFunction --event events/sns-email-event.json
 
 ## Testing
 
-Before considering a change done, run:
+Before considering a change done, run the full gate (same commands as repo [`AGENTS.md`](../AGENTS.md)). During development, run **`sam-app/email_service` unit tests** frequently; reserve **`sam-app/e2e/test_live_endpoints.py`** for pre-merge or when validating live AWS behavior.
 
 ```bash
 python3 -m unittest discover -v -s sam-app/action_link_handler -p "test_*.py"

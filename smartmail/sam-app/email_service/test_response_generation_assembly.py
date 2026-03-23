@@ -5,16 +5,27 @@ import response_generation_assembly
 from response_generation_assembly import build_response_brief
 
 
-def _backbone_with(**slots) -> dict:
-    """Helper to build a backbone dict with named slot summaries."""
-    result = {}
-    for key, summary in slots.items():
-        result[key] = {"summary": summary, "updated_at": 1773273600}
-    return result
-
-
-def _context_note(label: str = "Gear", summary: str = "Owns a power meter", updated_at: int = 1773273600) -> dict:
-    return {"label": label, "summary": summary, "updated_at": updated_at}
+def _memory_note(
+    *,
+    memory_note_id: str = "f1",
+    fact_type: str = "goal",
+    fact_key: str = "goal:half-marathon",
+    summary: str = "Half marathon in October",
+    importance: str = "high",
+    created_at: int = 1773273600,
+    updated_at: int = 1773273600,
+    last_confirmed_at: int = 1773273600,
+) -> dict:
+    return {
+        "memory_note_id": memory_note_id,
+        "fact_type": fact_type,
+        "fact_key": fact_key,
+        "summary": summary,
+        "importance": importance,
+        "created_at": created_at,
+        "updated_at": updated_at,
+        "last_confirmed_at": last_confirmed_at,
+    }
 
 
 def _continuity_summary() -> dict:
@@ -27,7 +38,7 @@ def _continuity_summary() -> dict:
 
 
 def _empty_memory_context() -> dict:
-    return {"backbone": {}, "context_notes": [], "continuity_summary": None}
+    return {"memory_notes": [], "continuity_summary": None}
 
 
 class TestBuildResponseBrief(unittest.TestCase):
@@ -89,10 +100,21 @@ class TestBuildResponseBrief(unittest.TestCase):
             plan_summary="Current plan - Goal: Half marathon.",
             rule_engine_decision=None,
             memory_context={
-                "backbone": _backbone_with(
-                    hard_constraints="Weekday sessions need to finish before 7am",
-                ),
-                "context_notes": [_context_note()],
+                "memory_notes": [
+                    _memory_note(
+                        memory_note_id="f1",
+                        fact_type="constraint",
+                        fact_key="constraint:early-finish",
+                        summary="Weekday sessions need to finish before 7am",
+                    ),
+                    _memory_note(
+                        memory_note_id="f2",
+                        fact_type="preference",
+                        fact_key="preference:gear",
+                        summary="Owns a power meter",
+                        importance="medium",
+                    ),
+                ],
                 "continuity_summary": _continuity_summary(),
             },
             connect_strava_link="https://geniml.com/action/tok_123",
@@ -114,11 +136,9 @@ class TestBuildResponseBrief(unittest.TestCase):
             brief.memory_context["continuity_focus"],
             "Athlete is rebuilding consistency.",
         )
-        self.assertEqual(
-            brief.memory_context["backbone_summaries"]["hard_constraints"],
-            "Weekday sessions need to finish before 7am",
-        )
-        self.assertEqual(len(brief.memory_context["context_notes"]), 1)
+        # Constraint is in priority_facts, preference in context_facts
+        self.assertIn("Weekday sessions need to finish before 7am", brief.memory_context["priority_facts"])
+        self.assertIn("Owns a power meter", brief.memory_context["context_facts"])
 
     def test_rule_engine_guided_includes_validated_engine_fields(self):
         brief = build_response_brief(
@@ -186,7 +206,7 @@ class TestBuildResponseBrief(unittest.TestCase):
             "No hard sessions when risk is red-tier.",
         )
 
-    def test_memory_salience_uses_backbone_as_priority(self):
+    def test_memory_salience_groups_facts_by_type(self):
         brief = build_response_brief(
             athlete_id="ath_4",
             reply_kind="coaching_reply",
@@ -197,30 +217,46 @@ class TestBuildResponseBrief(unittest.TestCase):
             plan_summary=None,
             rule_engine_decision=None,
             memory_context={
-                "backbone": _backbone_with(
-                    primary_goal="Half marathon in October",
-                    hard_constraints="Weekday sessions need to finish before 7am",
-                ),
-                "context_notes": [
-                    _context_note("Calf watch", "Watch for calf tightness when adding speed"),
-                    _context_note("Reply format", "Prefers concise bullets"),
+                "memory_notes": [
+                    _memory_note(
+                        memory_note_id="f1",
+                        fact_type="goal",
+                        fact_key="goal:half-marathon",
+                        summary="Half marathon in October",
+                    ),
+                    _memory_note(
+                        memory_note_id="f2",
+                        fact_type="constraint",
+                        fact_key="constraint:early-finish",
+                        summary="Weekday sessions need to finish before 7am",
+                    ),
+                    _memory_note(
+                        memory_note_id="f3",
+                        fact_type="preference",
+                        fact_key="preference:calf-watch",
+                        summary="Watch for calf tightness when adding speed",
+                        importance="medium",
+                    ),
+                    _memory_note(
+                        memory_note_id="f4",
+                        fact_type="preference",
+                        fact_key="preference:format",
+                        summary="Prefers concise bullets",
+                        importance="medium",
+                    ),
                 ],
                 "continuity_summary": _continuity_summary(),
             },
         )
 
-        self.assertEqual(
-            brief.memory_context["backbone_summaries"]["primary_goal"],
-            "Half marathon in October",
-        )
-        self.assertEqual(
-            brief.memory_context["backbone_summaries"]["hard_constraints"],
-            "Weekday sessions need to finish before 7am",
-        )
-        self.assertEqual(len(brief.memory_context["context_notes"]), 2)
+        # goal + constraint → priority_facts
+        self.assertIn("Half marathon in October", brief.memory_context["priority_facts"])
+        self.assertIn("Weekday sessions need to finish before 7am", brief.memory_context["priority_facts"])
+        # preference → context_facts
+        self.assertEqual(len(brief.memory_context["context_facts"]), 2)
         self.assertTrue(brief.memory_context["memory_available"])
 
-    def test_empty_backbone_and_context_with_continuity_still_available(self):
+    def test_empty_memory_notes_with_continuity_still_available(self):
         brief = build_response_brief(
             athlete_id="ath_5",
             reply_kind="coaching_reply",
@@ -231,14 +267,14 @@ class TestBuildResponseBrief(unittest.TestCase):
             plan_summary=None,
             rule_engine_decision=None,
             memory_context={
-                "backbone": {},
-                "context_notes": [],
+                "memory_notes": [],
                 "continuity_summary": _continuity_summary(),
             },
         )
 
-        self.assertNotIn("backbone_summaries", brief.memory_context)
-        self.assertNotIn("context_notes", brief.memory_context)
+        self.assertNotIn("priority_facts", brief.memory_context)
+        self.assertNotIn("structure_facts", brief.memory_context)
+        self.assertNotIn("context_facts", brief.memory_context)
         self.assertEqual(
             brief.memory_context["continuity_focus"],
             "Athlete is rebuilding consistency.",
@@ -310,8 +346,14 @@ class TestBuildResponseBrief(unittest.TestCase):
                 },
             },
             memory_context={
-                "backbone": _backbone_with(hard_constraints="Weekday sessions need to finish before 7am"),
-                "context_notes": [_context_note()],
+                "memory_notes": [
+                    _memory_note(
+                        memory_note_id="f1",
+                        fact_type="constraint",
+                        fact_key="constraint:early-finish",
+                        summary="Weekday sessions need to finish before 7am",
+                    ),
+                ],
                 "continuity_summary": _continuity_summary(),
             },
         )
@@ -391,14 +433,14 @@ class TestBuildResponseBrief(unittest.TestCase):
             plan_summary=None,
             rule_engine_decision=None,
             memory_context={
-                "backbone": "not a dict",
-                "context_notes": "not a list",
+                "memory_notes": "not a list",
                 "continuity_summary": {"summary": " "},
             },
         )
 
-        self.assertNotIn("backbone_summaries", brief.memory_context)
-        self.assertNotIn("context_notes", brief.memory_context)
+        self.assertNotIn("priority_facts", brief.memory_context)
+        self.assertNotIn("structure_facts", brief.memory_context)
+        self.assertNotIn("context_facts", brief.memory_context)
         self.assertIsNone(brief.memory_context["continuity_summary"])
         self.assertFalse(brief.memory_context["memory_available"])
 

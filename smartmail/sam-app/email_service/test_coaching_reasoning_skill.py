@@ -35,6 +35,7 @@ def _minimal_brief(**overrides):
             "experience_level": "intermediate",
             "structure_preference": "flexibility",
             "primary_sport": "running",
+            "constraints_summary": "",
         },
         "decision_context": {
             "track": "main_build",
@@ -49,6 +50,24 @@ def _minimal_brief(**overrides):
         "memory_context": {},
         "delivery_context": {"inbound_body": "Shin feels much better this week."},
     }
+    base.update(overrides)
+    return base
+
+
+def _neutral_running_brief(**overrides):
+    """Stable green history and neutral copy — no situational doctrine triggers."""
+    base = _minimal_brief(
+        decision_context={
+            "track": "main_build",
+            "phase": "build",
+            "risk_flag": "green",
+            "today_action": "do planned",
+            "clarification_needed": False,
+            "risk_recent_history": ["green", "green", "green", "green"],
+            "weeks_in_coaching": 8,
+        },
+        delivery_context={"inbound_body": "Solid week — legs feel good."},
+    )
     base.update(overrides)
     return base
 
@@ -127,23 +146,36 @@ class TestValidateCoachingDirective(unittest.TestCase):
 class TestBuildSystemPrompt(unittest.TestCase):
 
     def test_includes_base_prompt(self):
-        prompt = build_system_prompt("running")
+        prompt = build_system_prompt(_neutral_running_brief())
         self.assertIn("expert coaching strategist", prompt)
         self.assertIn("coaching_directive", prompt)
 
     def test_includes_running_doctrine(self):
-        prompt = build_system_prompt("running")
+        prompt = build_system_prompt(_neutral_running_brief())
         self.assertIn("Daniels", prompt)
         self.assertIn("easy run paradox", prompt.lower())
 
-    def test_no_sport_includes_universal_only(self):
-        prompt = build_system_prompt(None)
+    def test_no_sport_includes_core_only_not_running_methodology(self):
+        brief = _neutral_running_brief()
+        del brief["athlete_context"]["primary_sport"]
+        prompt = build_system_prompt(brief)
         self.assertIn("periodization", prompt.lower())
         self.assertNotIn("Daniels", prompt)
 
     def test_includes_methodology_header(self):
-        prompt = build_system_prompt("running")
+        prompt = build_system_prompt(_neutral_running_brief())
         self.assertIn("Coaching methodology:", prompt)
+
+    def test_neutral_brief_omits_situational_doctrine(self):
+        prompt = build_system_prompt(_neutral_running_brief())
+        self.assertNotIn("Return From Setback", prompt)
+        self.assertNotIn("Common Running Prescription Errors", prompt)
+
+    def test_setback_brief_includes_return_doctrine(self):
+        brief = _neutral_running_brief(
+            delivery_context={"inbound_body": "Pain flared again after Tuesday's workout."},
+        )
+        self.assertIn("Return From Setback", build_system_prompt(brief))
 
 
 class TestRunnerWithMockedLLM(unittest.TestCase):

@@ -1,5 +1,5 @@
 """
-Sending replies via SES: format (HTML), evaluate via ResponseEvaluation, send.
+Sending replies via SES: format as HTML and send.
 Depends on business/LLM only for the reply content; no auth or rate-limit logic here.
 """
 import logging
@@ -11,7 +11,6 @@ from email.mime.text import MIMEText
 import boto3  # type: ignore
 
 from config import AWS_REGION
-from response_evaluator import ResponseEvaluation
 from email_copy import EmailCopy
 logger = logging.getLogger(__name__)
 ses_client = boto3.client("ses", region_name=AWS_REGION)
@@ -51,7 +50,7 @@ class EmailReplySender:
 
     @staticmethod
     def send_reply(email_data, reply_content, include_thread_context=None):
-        """Sends a reply email using AWS SES; evaluates and stores the reply via ResponseEvaluation."""
+        """Sends a reply email using AWS SES."""
         try:
             should_include_thread_context = (
                 EmailReplySender._is_existing_thread(email_data)
@@ -63,7 +62,6 @@ class EmailReplySender:
                 reply_content,
                 include_thread_context=should_include_thread_context,
             )
-            #ResponseEvaluation.evaluate_response(email_data["body"], reply_content) #TODO: Uncomment this when we have a way to store the evaluation results
 
             from_ai_address = EmailReplySender.get_geniml_email(
                 email_data["to_recipients"] + email_data["cc_recipients"]

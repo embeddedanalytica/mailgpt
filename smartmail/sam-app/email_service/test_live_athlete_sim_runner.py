@@ -129,6 +129,11 @@ class TestLiveAthleteSimRunner(unittest.TestCase):
         selected = live_athlete_sim_runner.select_scenarios(scenarios, ["las-test-002"])
         self.assertEqual([item["id"] for item in selected], ["LAS-TEST-002"])
 
+    def test_build_parser_defaults_to_long_horizon_turn_counts(self):
+        args = live_athlete_sim_runner.build_parser().parse_args([])
+        self.assertEqual(args.min_turns, 100)
+        self.assertEqual(args.max_turns, 100)
+
     def test_run_single_attempt_enforces_min_turns_before_stop(self):
         athlete_client = _AthleteClientStub(
             reactions=[

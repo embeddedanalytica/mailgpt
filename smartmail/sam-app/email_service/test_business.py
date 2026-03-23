@@ -330,10 +330,10 @@ class TestGetReplyForInbound(unittest.TestCase):
                 mock.patch.object(
                     coaching,
                     "get_memory_context_for_response_generation",
-                    return_value={"backbone": {}, "context_notes": [], "continuity_summary": None},
+                    return_value={"memory_notes": [], "continuity_summary": None},
                 )
             )
-            stack.enter_context(mock.patch.object(coaching, "maybe_post_reply_unified_refresh"))
+            stack.enter_context(mock.patch.object(coaching, "maybe_post_reply_memory_refresh"))
             runner = stack.enter_context(mock.patch.object(coaching, "run_response_generation_workflow"))
             for patcher in self._profile_ready_patches():
                 stack.enter_context(patcher)
@@ -413,10 +413,10 @@ class TestGetReplyForInbound(unittest.TestCase):
                 mock.patch.object(
                     coaching,
                     "get_memory_context_for_response_generation",
-                    return_value={"backbone": {}, "context_notes": [], "continuity_summary": None},
+                    return_value={"memory_notes": [], "continuity_summary": None},
                 )
             )
-            stack.enter_context(mock.patch.object(coaching, "maybe_post_reply_unified_refresh"))
+            stack.enter_context(mock.patch.object(coaching, "maybe_post_reply_memory_refresh"))
             runner = stack.enter_context(mock.patch.object(coaching, "run_response_generation_workflow"))
             for patcher in self._profile_ready_patches():
                 stack.enter_context(patcher)

@@ -97,13 +97,22 @@ Current runtime status belongs in [README.md](/Users/levonsh/Projects/smartmail/
 ---
 
 ## D13 — Athlete Memory Stays Lightweight and Athlete-Scoped
-**Decision:** Athlete memory is persisted only on `coach_profiles` as two bounded artifacts:
-- `memory_notes` for durable or semi-durable athlete context
-- `continuity_summary` for short-lived recent coaching continuity
+**Decision:** Athlete memory is persisted only on `coach_profiles` as bounded artifacts—no separate memory database.
+
+**Persisted shape (AM2 list + continuity):** `memory_notes` and `continuity_summary` are read/written via `dynamodb_models.get_memory_notes`, `replace_memory`, and related helpers.
+
+**Refresh path:** Post-reply refresh is orchestrated in `coaching_memory.py`: the LLM workflow lives under `skills/memory/unified/` (`run_candidate_memory_refresh`), outputs are reduced in `athlete_memory_reducer.py`, and successful writes go through `replace_memory` (same DynamoDB fields as above).
+
+**Response-generation view:** `get_memory_context_for_response_generation` and `response_generation_assembly.build_response_brief` shape memory into the bounded structures the response LLM sees (e.g. salience / backbone-style summaries in the `ResponseBrief` contract). Those structures are contract-level, not a second persistence system.
+
 **Storage rule:** Memory artifact timestamps use Unix seconds in storage. Human-readable dates are rendered only in LLM-facing prompts when needed.
-**Retrieval rule:** Response-time retrieval is bounded to all active `high` notes plus up to 3 additional recent active notes.
-**Refresh rule:** Memory refresh is LLM-assisted and may run both before reply generation and after a completed interaction, but only when the interaction meaningfully changes durable context, coaching recommendation, or coaching state.
+
+**Retrieval rule:** Response-time retrieval is bounded to all active `high` notes plus up to 3 additional recent active notes (for the durable note list).
+
+**Refresh rule:** Memory refresh is LLM-assisted and runs after reply generation when the deterministic gate in `coaching_memory.should_attempt_memory_refresh` allows it.
+
 **Guardrail rule:** At most 7 memory notes may remain active for one athlete.
+
 **Why:** Preserve continuity without introducing a separate memory subsystem, semantic search, embeddings, or heavyweight history management.
 
 ---
@@ -116,5 +125,5 @@ Current runtime status belongs in [README.md](/Users/levonsh/Projects/smartmail/
 ---
 
 ## D15 — Prompt Ownership Lives in Skill Packages, Not `email_copy.py`
-**Decision:** `email_service/email_copy.py` is transactional outbound copy only. LLM prompt text and communication helpers must live under skill packages (`skills/planner/*`, `skills/response_generation/*`).
+**Decision:** `email_service/email_copy.py` is transactional outbound copy only. LLM prompt text and communication helpers must live under skill packages (`skills/planner/*`, `skills/response_generation/*`, `skills/coaching_reasoning/*`, `skills/memory/*`).
 **Why:** Keeps coach-like reasoning and communication boundaries explicit, testable, and aligned with skill ownership contracts.

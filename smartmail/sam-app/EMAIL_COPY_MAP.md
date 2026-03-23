@@ -76,4 +76,4 @@ This map points to the source of truth for outbound user-facing email copy and s
 
 ## Compatibility Note
 
-`email_service/openai_responder.py` is now a compatibility shim only. Active LLM prompt ownership is in skill packages.
+Legacy `openai_responder.py` has been removed. LLM prompt ownership lives in skill packages (`skills/planner/*`, `skills/response_generation/*`, etc.).

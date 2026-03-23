@@ -150,41 +150,14 @@ def _log_router_decision(
     )
 
 
-def route_inbound_with_rule_engine(
-    athlete_id: str,
-    from_email: str,
-    email_data: Dict[str, Any],
-    conversation_intelligence: Dict[str, Any],
+def _extract_checkin_for_routing(
     *,
-    aws_request_id: Optional[str] = None,
-    log_outcome: Optional[Callable[..., None]] = None,
-) -> Dict[str, Any]:
-    if not isinstance(athlete_id, str) or not athlete_id.strip():
-        raise InboundRuleRouterError("athlete_id must be a non-empty string")
-    if not isinstance(from_email, str) or not from_email.strip():
-        raise InboundRuleRouterError("from_email must be a non-empty string")
-    if not isinstance(email_data, dict):
-        raise InboundRuleRouterError("email_data must be a dict")
-    if not isinstance(conversation_intelligence, dict):
-        raise InboundRuleRouterError("conversation_intelligence must be a dict")
-
-    intent = str(conversation_intelligence.get("intent", "coaching")).strip().lower() or "coaching"
-    decision = _base_decision(intent)
-    special_behavior = _SPECIAL_INTENT_BEHAVIOR.get(intent)
-    if special_behavior is not None:
-        decision.update(special_behavior)
-        _log_router_decision(
-            decision=decision,
-            from_email=from_email,
-            aws_request_id=aws_request_id,
-            log_outcome=log_outcome,
-        )
-        return decision
-
-    inbound_body = str(email_data.get("body", ""))
-    inbound_message_id = str(email_data.get("message_id", "")).strip() or None
-    profile = get_coach_profile(athlete_id) or {}
-
+    inbound_body: str,
+    intent: str,
+    from_email: str,
+    aws_request_id: Optional[str],
+    log_outcome: Optional[Callable[..., None]],
+) -> tuple[Dict[str, Any], bool, list[str]]:
     extracted_checkin: Dict[str, Any] = {}
     extraction_failed = False
     missing_or_low: list[str] = []
@@ -224,6 +197,89 @@ def route_inbound_with_rule_engine(
                 aws_request_id=aws_request_id,
                 intent=intent,
             )
+    return extracted_checkin, extraction_failed, missing_or_low
+
+
+def _run_rule_engine_route(
+    *,
+    decision: Dict[str, Any],
+    athlete_id: str,
+    profile: Dict[str, Any],
+    extracted_checkin: Dict[str, Any],
+    inbound_message_id: Optional[str],
+    intent: str,
+) -> None:
+    checkin_payload = _enrich_checkin_payload(extracted_checkin, profile)
+    engine_output = run_rule_engine_for_week(
+        athlete_id=athlete_id,
+        profile=profile,
+        checkin=checkin_payload,
+        today_date=date.today(),
+        persist_state=(decision["mode"] == "mutate"),
+    )
+    decision["engine_output"] = engine_output.to_dict()
+    decision["rule_engine_ran"] = True
+    decision["reply_strategy"] = "rule_engine_guided"
+    decision["rule_engine_status"] = "ok"
+
+    if decision["mode"] == "mutate":
+        if decision["engine_output"].get("plan_update_status") == "updated":
+            plan_update_result = apply_rule_engine_plan_update(
+                athlete_id=athlete_id,
+                engine_output=engine_output,
+                logical_request_id=_logical_request_id(inbound_message_id, intent),
+            )
+            decision["plan_update_result"] = plan_update_result
+        else:
+            decision["plan_update_result"] = {
+                "status": "skipped",
+                "plan_version": None,
+                "error_code": None,
+            }
+
+
+def route_inbound_with_rule_engine(
+    athlete_id: str,
+    from_email: str,
+    email_data: Dict[str, Any],
+    conversation_intelligence: Dict[str, Any],
+    *,
+    aws_request_id: Optional[str] = None,
+    log_outcome: Optional[Callable[..., None]] = None,
+) -> Dict[str, Any]:
+    if not isinstance(athlete_id, str) or not athlete_id.strip():
+        raise InboundRuleRouterError("athlete_id must be a non-empty string")
+    if not isinstance(from_email, str) or not from_email.strip():
+        raise InboundRuleRouterError("from_email must be a non-empty string")
+    if not isinstance(email_data, dict):
+        raise InboundRuleRouterError("email_data must be a dict")
+    if not isinstance(conversation_intelligence, dict):
+        raise InboundRuleRouterError("conversation_intelligence must be a dict")
+
+    intent = str(conversation_intelligence.get("intent", "coaching")).strip().lower() or "coaching"
+    decision = _base_decision(intent)
+    special_behavior = _SPECIAL_INTENT_BEHAVIOR.get(intent)
+    if special_behavior is not None:
+        decision.update(special_behavior)
+        _log_router_decision(
+            decision=decision,
+            from_email=from_email,
+            aws_request_id=aws_request_id,
+            log_outcome=log_outcome,
+        )
+        return decision
+
+    inbound_body = str(email_data.get("body", ""))
+    inbound_message_id = str(email_data.get("message_id", "")).strip() or None
+    profile = get_coach_profile(athlete_id) or {}
+
+    extracted_checkin, extraction_failed, missing_or_low = _extract_checkin_for_routing(
+        inbound_body=inbound_body,
+        intent=intent,
+        from_email=from_email,
+        aws_request_id=aws_request_id,
+        log_outcome=log_outcome,
+    )
 
     clarification_needed = extraction_failed
     decision["clarification_needed"] = clarification_needed
@@ -234,34 +290,15 @@ def route_inbound_with_rule_engine(
         decision["reply_strategy"] = "clarification"
 
     if decision["mode"] in {"mutate", "read_only"}:
-        checkin_payload = _enrich_checkin_payload(extracted_checkin, profile)
         try:
-            engine_output = run_rule_engine_for_week(
+            _run_rule_engine_route(
+                decision=decision,
                 athlete_id=athlete_id,
                 profile=profile,
-                checkin=checkin_payload,
-                today_date=date.today(),
-                persist_state=(decision["mode"] == "mutate"),
+                extracted_checkin=extracted_checkin,
+                inbound_message_id=inbound_message_id,
+                intent=intent,
             )
-            decision["engine_output"] = engine_output.to_dict()
-            decision["rule_engine_ran"] = True
-            decision["reply_strategy"] = "rule_engine_guided"
-            decision["rule_engine_status"] = "ok"
-
-            if decision["mode"] == "mutate":
-                if decision["engine_output"].get("plan_update_status") == "updated":
-                    plan_update_result = apply_rule_engine_plan_update(
-                        athlete_id=athlete_id,
-                        engine_output=engine_output,
-                        logical_request_id=_logical_request_id(inbound_message_id, intent),
-                    )
-                    decision["plan_update_result"] = plan_update_result
-                else:
-                    decision["plan_update_result"] = {
-                        "status": "skipped",
-                        "plan_version": None,
-                        "error_code": None,
-                    }
         except RuleEngineOrchestratorError:
             decision["rule_engine_status"] = "orchestrator_error"
             decision["reply_strategy"] = "clarification"

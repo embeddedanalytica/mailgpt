@@ -145,8 +145,9 @@ def _base_brief(*, reply_mode: str = "normal_coaching", inbound_body: str = "") 
         },
         "memory_context": {
             "memory_available": True,
-            "backbone_summaries": {},
-            "context_notes": [],
+            "priority_facts": [],
+            "structure_facts": [],
+            "context_facts": [],
             "continuity_summary": {
                 "summary": "Athlete is in a steady build phase.",
                 "last_recommendation": "Continue 4-day rhythm with one quality session.",
@@ -210,8 +211,7 @@ SCENARIOS: list[dict[str, Any]] = [
             ),
             "memory_context": {
                 "memory_available": True,
-                "backbone_summaries": {"hard_constraints": "Right hip flexor tightness — avoid speed work"},
-                "context_notes": [],
+                "priority_facts": ["Right hip flexor tightness — avoid speed work"],
                 "continuity_summary": {
                     "summary": "Monitoring hip flexor issue, keeping intensity low.",
                     "last_recommendation": "Easy aerobic only until hip settles.",
@@ -343,11 +343,10 @@ def _run_response_generation(brief: dict, *, model_name: str | None) -> dict:
 
 
 def _run_memory_refresh(payload: dict) -> dict:
-    from skills.memory.unified.runner import run_unified_memory_refresh
-    return run_unified_memory_refresh(
-        current_backbone=payload["current_backbone"],
-        current_context_notes=payload["current_context_notes"],
-        current_continuity=payload["current_continuity"],
+    from skills.memory.unified.runner import run_candidate_memory_refresh
+    return run_candidate_memory_refresh(
+        current_memory_notes=payload.get("current_memory_notes", []),
+        current_continuity=payload.get("current_continuity"),
         interaction_context=payload["interaction_context"],
     )
 
@@ -378,8 +377,8 @@ def _format_input_for_judge(skill: str, inp: Any) -> str:
             parts.append(f"Athlete message: {dc['inbound_body']}")
         parts.append(f"Reply mode: {inp.get('reply_mode')}")
         mc = inp.get("memory_context", {})
-        if mc.get("backbone_summaries"):
-            parts.append(f"Backbone: {json.dumps(mc['backbone_summaries'])}")
+        if mc.get("priority_facts"):
+            parts.append(f"Priority facts: {json.dumps(mc['priority_facts'])}")
         if mc.get("continuity_focus"):
             parts.append(f"Continuity focus: {mc['continuity_focus']}")
         dctx = inp.get("decision_context", {})

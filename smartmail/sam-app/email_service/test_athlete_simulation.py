@@ -33,6 +33,7 @@ def _valid_judge_payload() -> dict:
         },
         "what_landed": ["The coach simplified the week well."],
         "what_missed": ["The reply missed the athlete's protected Friday."],
+        "improved_reply_example": "Protect Friday as the light day and keep the harder session earlier in the week.",
         "hallucinations_or_unwarranted_assumptions": ["None."],
         "athlete_likely_experience": "Likely feels mostly understood but not fully seen.",
         "issue_tags": ["missed_fact"],
@@ -53,6 +54,25 @@ class TestAthleteSimulationValidation(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unsupported tag"):
             athlete_simulation.validate_judge_output(payload)
 
+    def test_validate_judge_output_allows_missing_improved_reply_example(self):
+        payload = _valid_judge_payload()
+        del payload["improved_reply_example"]
+        validated = athlete_simulation.validate_judge_output(payload)
+        self.assertIsNone(validated["improved_reply_example"])
+
+    def test_validate_judge_output_rejects_invalid_improved_reply_example(self):
+        payload = _valid_judge_payload()
+        payload["improved_reply_example"] = 123
+        with self.assertRaisesRegex(ValueError, "improved_reply_example"):
+            athlete_simulation.validate_judge_output(payload)
+
+    def test_validate_judge_output_preserves_improved_reply_example(self):
+        validated = athlete_simulation.validate_judge_output(_valid_judge_payload())
+        self.assertEqual(
+            validated["improved_reply_example"],
+            "Protect Friday as the light day and keep the harder session earlier in the week.",
+        )
+
 
 class TestAthleteSimulationRunnerCalls(unittest.TestCase):
     def test_schemas_bound_scores_to_one_through_five(self):
@@ -70,6 +90,18 @@ class TestAthleteSimulationRunnerCalls(unittest.TestCase):
         self.assertEqual(sorted(trust_delta_schema["enum"]), sorted(athlete_simulation.TRUST_DELTAS))
         self.assertEqual(sorted(issue_tags_schema["items"]["enum"]), sorted(athlete_simulation.ISSUE_TAGS))
         self.assertEqual(sorted(strength_tags_schema["items"]["enum"]), sorted(athlete_simulation.STRENGTH_TAGS))
+
+    def test_judge_schema_marks_improved_reply_example_required_but_nullable(self):
+        required = athlete_simulation.JUDGE_SCHEMA["required"]
+        improved_reply_example_schema = athlete_simulation.JUDGE_SCHEMA["properties"]["improved_reply_example"]
+        self.assertIn("improved_reply_example", required)
+        self.assertEqual(
+            improved_reply_example_schema["anyOf"],
+            [
+                {"type": "string", "minLength": 1},
+                {"type": "null"},
+            ],
+        )
 
     def test_render_payload_serializes_decimal_values(self):
         rendered = athlete_simulation._render_payload(  # type: ignore[attr-defined]

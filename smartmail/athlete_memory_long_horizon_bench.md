@@ -602,7 +602,11 @@ Final assertions include:
               "label": "swim is the limiter",
               "signals": [
                 "swimming is my limiter",
-                "swim emphasis"
+                "swim emphasis",
+                "limiting discipline",
+                "swimming is the limiter",
+                "swim is the limiting",
+                "central emphasis"
               ],
               "importance": "high"
             },
@@ -916,7 +920,12 @@ Final assertions include:
               "label": "swim is the limiter",
               "signals": [
                 "Swimming is still the limiter",
-                "swim-first"
+                "swim-first",
+                "limiting discipline",
+                "swimming is the limiter",
+                "swim is the limiting",
+                "central emphasis",
+                "swim emphasis"
               ],
               "importance": "high"
             },
@@ -1013,7 +1022,12 @@ Final assertions include:
           "label": "swim is the limiter",
           "signals": [
             "Swimming is still the limiter",
-            "swim-first"
+            "swim-first",
+            "limiting discipline",
+            "swimming is the limiter",
+            "swim is the limiting",
+            "central emphasis",
+            "swim emphasis"
           ],
           "importance": "high"
         },
@@ -1084,7 +1098,9 @@ Final assertions include:
               "label": "Indoor trainer weekdays",
               "signals": [
                 "indoor trainer",
-                "weekday anchor"
+                "weekday anchor",
+                "weekday mornings",
+                "before work"
               ],
               "importance": "high"
             },
@@ -1152,8 +1168,9 @@ Final assertions include:
             {
               "label": "Indoor trainer weekdays",
               "signals": [
-                "weekday trainer work",
-                "indoor trainer"
+                "weekday trainer",
+                "indoor trainer",
+                "before work"
               ],
               "importance": "high"
             },
@@ -1239,7 +1256,9 @@ Final assertions include:
               "label": "Indoor trainer weekdays",
               "signals": [
                 "trainer",
-                "usual trainer"
+                "usual trainer",
+                "indoor trainer",
+                "weekday"
               ],
               "importance": "high"
             },
@@ -1316,16 +1335,23 @@ Final assertions include:
             {
               "label": "Indoor trainer weekdays",
               "signals": [
-                "weekday trainer pattern",
-                "trainer pattern"
+                "weekday trainer",
+                "trainer pattern",
+                "indoor trainer",
+                "before work",
+                "weekday anchor"
               ],
               "importance": "high"
             },
             {
               "label": "Weekend outdoor flexibility",
               "signals": [
-                "not Sunday-only anymore",
-                "full weekend flexibility"
+                "not Sunday-only",
+                "weekend flexibility",
+                "Saturday",
+                "weekend outdoor",
+                "no longer restricted to Sunday",
+                "both days"
               ],
               "importance": "high"
             },
@@ -1420,16 +1446,23 @@ Final assertions include:
             {
               "label": "Indoor trainer weekdays",
               "signals": [
-                "trainer-before-work pattern",
-                "trainer backbone"
+                "trainer-before-work",
+                "trainer backbone",
+                "indoor trainer",
+                "weekday trainer",
+                "weekday anchor",
+                "before work"
               ],
               "importance": "high"
             },
             {
               "label": "Weekend outdoor flexibility",
               "signals": [
-                "weekend outdoor flexibility",
-                "flexible weekend outdoor options"
+                "weekend outdoor",
+                "weekend flexibility",
+                "Saturday",
+                "no longer restricted to Sunday",
+                "not Sunday-only"
               ],
               "importance": "high"
             },
@@ -1506,16 +1539,23 @@ Final assertions include:
         {
           "label": "Indoor trainer weekdays",
           "signals": [
-            "trainer-before-work pattern",
-            "trainer backbone"
+            "trainer-before-work",
+            "trainer backbone",
+            "indoor trainer",
+            "weekday trainer",
+            "weekday anchor",
+            "before work"
           ],
           "importance": "high"
         },
         {
           "label": "Weekend outdoor flexibility",
           "signals": [
-            "weekend outdoor flexibility",
-            "flexible weekend outdoor options"
+            "weekend outdoor",
+            "weekend flexibility",
+            "Saturday",
+            "no longer restricted to Sunday",
+            "not Sunday-only"
           ],
           "importance": "high"
         }
@@ -1525,15 +1565,20 @@ Final assertions include:
           "label": "120-mile gravel goal",
           "signals": [
             "September 120-mile race",
-            "north star"
+            "north star",
+            "120-mile gravel",
+            "gravel race"
           ],
           "importance": "high"
         },
         {
           "label": "Weekend outdoor flexibility",
           "signals": [
-            "weekend outdoor flexibility",
-            "flexible weekend outdoor options"
+            "weekend outdoor",
+            "weekend flexibility",
+            "Saturday",
+            "no longer restricted to Sunday",
+            "not Sunday-only"
           ],
           "importance": "high"
         }

@@ -3,7 +3,7 @@
 import json
 import logging
 import os
-from typing import Any, Dict, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple, TypeVar
 
 try:
     import openai  # type: ignore
@@ -95,3 +95,58 @@ def execute_json_schema(
         code="invalid_json_response",
         raw_response=raw_content,
     )
+
+
+TValidated = TypeVar("TValidated")
+
+
+def run_validated_json_schema_workflow(
+    *,
+    logger: logging.Logger,
+    model_name: str,
+    system_prompt: str,
+    user_content: str,
+    schema_name: str,
+    schema: Dict[str, Any],
+    disabled_message: str,
+    warning_log_name: str,
+    validate_payload: Callable[[Dict[str, Any]], TValidated],
+    workflow_label: str,
+    proposal_error_factory: Callable[[str], Exception],
+    retries: int = 0,
+    require_live_llm: bool = True,
+    on_raw_llm_response: Optional[Callable[[str], None]] = None,
+) -> TValidated:
+    raw_content = ""
+    try:
+        payload, raw_content = execute_json_schema(
+            logger=logger,
+            model_name=model_name,
+            system_prompt=system_prompt,
+            user_content=user_content,
+            schema_name=schema_name,
+            schema=schema,
+            disabled_message=disabled_message,
+            warning_log_name=warning_log_name,
+            retries=retries,
+            require_live_llm=require_live_llm,
+        )
+        if on_raw_llm_response is not None:
+            on_raw_llm_response(raw_content)
+        return validate_payload(payload)
+    except SkillExecutionError as exc:
+        logger.error(
+            "%s failed: %s (raw_response_preview=%s)",
+            workflow_label,
+            exc,
+            preview_text(exc.raw_response or raw_content),
+        )
+        raise proposal_error_factory(f"{workflow_label}_failed") from exc
+    except Exception as exc:
+        logger.error(
+            "%s failed: %s (raw_response_preview=%s)",
+            workflow_label,
+            exc,
+            preview_text(raw_content),
+        )
+        raise proposal_error_factory(f"{workflow_label}_failed") from exc

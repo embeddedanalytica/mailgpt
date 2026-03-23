@@ -43,12 +43,15 @@ def _base_brief(**overrides):
             "plan_summary": "4 sessions/week, building toward half marathon.",
         },
         "memory_context": {
-            "backbone_summaries": [
+            "priority_facts": [
                 "Athlete has mild Achilles tightness history",
-                "Prefers structured plans",
+            ],
+            "structure_facts": [
                 "4 days/week runner",
             ],
-            "context_notes": [],
+            "context_facts": [
+                "Prefers structured plans",
+            ],
             "continuity_summary": {
                 "summary": "Athlete has been rebuilding consistently.",
                 "last_recommendation": "Keep sessions easy, monitor Achilles.",

@@ -1,5 +1,7 @@
 # Recommendation Engine Spec (from `decision-tree.txt`)
 
+**Authority:** This document describes intended rule-engine behavior and contracts. If anything here disagrees with validators and orchestration in `sam-app/email_service/rule_engine.py`, `rule_engine_orchestrator.py`, `rule_engine_state.py`, and related tests, **the code wins**—update the spec when you change behavior on purpose. Example JSON shapes are illustrative, not a guarantee of every persisted DynamoDB field name.
+
 ## 1. Purpose
 Translate weekly athlete check-in inputs into:
 1. Athlete classification (stable profile + weekly risk state)

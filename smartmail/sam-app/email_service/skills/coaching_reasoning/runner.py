@@ -28,11 +28,10 @@ def run_coaching_reasoning_workflow(
         {"directive": <validated CoachingDirective dict>, "doctrine_files_loaded": [str, ...]}
     """
     raw_content = ""
-    sport = _extract_sport(response_brief)
 
     try:
         selected_model = str(model_name or LANGUAGE_RENDER_MODEL).strip() or LANGUAGE_RENDER_MODEL
-        system_prompt = build_system_prompt(sport)
+        system_prompt = build_system_prompt(response_brief)
 
         payload, raw_content = skill_runtime.execute_json_schema(
             logger=logger,
@@ -49,7 +48,7 @@ def run_coaching_reasoning_workflow(
         directive = validate_coaching_directive(payload)
         return {
             "directive": directive,
-            "doctrine_files_loaded": list_loaded_files(sport),
+            "doctrine_files_loaded": list_loaded_files(response_brief),
         }
 
     except CoachingReasoningError:

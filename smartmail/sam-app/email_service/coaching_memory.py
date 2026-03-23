@@ -1,15 +1,16 @@
 """Memory-refresh orchestration helpers for coaching.
 
-AM3: single post-reply unified refresh replaces the old pre+post dual-refresh
-pipeline. The deterministic gate (should_attempt_memory_refresh) is unchanged.
+AM2: single post-reply candidate-operation refresh replaces the old full-state
+replacement pipeline. The deterministic gate (should_attempt_memory_refresh) is
+unchanged.
 """
 
 import logging
 import time
 from typing import Any, Callable, Dict, List, Optional
 
-from athlete_memory_reducer import apply_unified_refresh
-from skills.memory.unified import run_unified_memory_refresh
+from athlete_memory_reducer import apply_candidate_refresh, CandidateReducerError
+from skills.memory.unified import run_candidate_memory_refresh
 from skills.memory.unified.errors import MemoryRefreshError
 
 logger = logging.getLogger(__name__)
@@ -57,7 +58,7 @@ def build_memory_refresh_context(
     return context
 
 
-def maybe_post_reply_unified_refresh(
+def maybe_post_reply_memory_refresh(
     *,
     athlete_id: str,
     inbound_body: str,
@@ -69,12 +70,11 @@ def maybe_post_reply_unified_refresh(
     selected_model_name: Optional[str],
     rule_engine_decision: Optional[Dict[str, Any]],
     log: Callable[..., None],
-    get_backbone_fn: Callable[[str], Dict[str, Any]],
-    get_context_notes_fn: Callable[[str], List[Dict[str, Any]]],
+    get_memory_notes_fn: Callable[[str], List[Dict[str, Any]]],
     get_continuity_summary_fn: Callable[[str], Optional[Dict[str, Any]]],
-    replace_unified_memory_fn: Callable[[str, Dict[str, Any], List[Dict[str, Any]], Dict[str, Any]], bool],
+    replace_memory_fn: Callable[[str, List[Dict[str, Any]], Dict[str, Any]], bool],
 ) -> None:
-    """Runs unified memory refresh after response generation.
+    """Runs candidate-operation memory refresh after response generation.
 
     Fail-closed: on any error, logs and returns without propagating.
     """
@@ -92,44 +92,36 @@ def maybe_post_reply_unified_refresh(
         reply_text=reply_text,
     )
 
-    current_backbone = get_backbone_fn(athlete_id)
-    current_context_notes = get_context_notes_fn(athlete_id)
+    current_memory_notes = get_memory_notes_fn(athlete_id)
     current_continuity = get_continuity_summary_fn(athlete_id)
 
     try:
-        validated = run_unified_memory_refresh(
-            current_backbone=current_backbone,
-            current_context_notes=current_context_notes,
+        validated = run_candidate_memory_refresh(
+            current_memory_notes=current_memory_notes,
             current_continuity=current_continuity,
             interaction_context=interaction_context,
         )
 
         now_epoch = int(time.time())
-        persisted = apply_unified_refresh(validated, now_epoch)
+        persisted = apply_candidate_refresh(validated, current_memory_notes, now_epoch)
 
-        write_ok = replace_unified_memory_fn(
+        write_ok = replace_memory_fn(
             athlete_id,
-            persisted["backbone"],
-            persisted["context_notes"],
+            persisted["memory_notes"],
             persisted["continuity_summary"],
         )
         if not write_ok:
-            raise MemoryRefreshError("unified memory persistence failed")
+            raise MemoryRefreshError("memory persistence failed")
 
-    except MemoryRefreshError:
+    except (MemoryRefreshError, CandidateReducerError):
         log(result="memory_refresh_failed")
         return
     except Exception:
-        logger.exception("Unexpected error during unified memory refresh")
+        logger.exception("Unexpected error during candidate memory refresh")
         log(result="memory_refresh_failed")
         return
 
     log(
         result="memory_refresh_persisted",
-        backbone_populated=sum(
-            1 for v in persisted["backbone"].values()
-            if isinstance(v, dict) and v.get("summary") is not None
-        ),
-        context_note_count=len(persisted["context_notes"]),
+        active_fact_count=len(persisted["memory_notes"]),
     )
-

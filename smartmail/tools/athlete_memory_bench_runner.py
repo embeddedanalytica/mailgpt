@@ -28,12 +28,12 @@ if str(EMAIL_SERVICE_PATH) not in sys.path:
     sys.path.insert(0, str(EMAIL_SERVICE_PATH))
 
 import dynamodb_models
-from athlete_memory_reducer import apply_unified_refresh
+from athlete_memory_reducer import apply_candidate_refresh
 from athlete_memory_bench_fixture import (
     DEFAULT_BENCH_PATH,
     load_athlete_memory_bench_scenarios,
 )
-from skills.memory import MemoryRefreshError, run_unified_memory_refresh
+from skills.memory import MemoryRefreshError, run_candidate_memory_refresh
 
 
 logger = logging.getLogger(__name__)
@@ -166,10 +166,6 @@ class _BenchCoachProfilesTable:
                 item["updated_at"] = values[":updated_at"]
             if ":memory_notes" in values:
                 item["memory_notes"] = values[":memory_notes"]
-            if ":backbone" in values:
-                item["backbone"] = values[":backbone"]
-            if ":context_notes" in values:
-                item["context_notes"] = values[":context_notes"]
             if ":continuity_summary" in values:
                 item["continuity_summary"] = values[":continuity_summary"]
             self.items[athlete_id] = item
@@ -299,54 +295,13 @@ def _note_texts(notes: Iterable[Dict[str, Any]]) -> List[str]:
 
 
 def get_benchmark_memory_notes(athlete_id: str) -> List[Dict[str, Any]]:
-    """Flatten unified memory into note-shaped records for benchmark matching."""
-    backbone = dynamodb_models.get_backbone(athlete_id)
-    context_notes = dynamodb_models.get_context_notes(athlete_id)
-    flattened: List[Dict[str, Any]] = []
-    for slot_name in ("primary_goal", "weekly_structure", "hard_constraints", "training_preferences"):
-        slot = backbone.get(slot_name)
-        if not isinstance(slot, dict):
-            continue
-        summary = str(slot.get("summary") or "").strip()
-        if not summary:
-            continue
-        flattened.append(
-            {
-                "label": slot_name,
-                "summary": summary,
-                "updated_at": slot.get("updated_at"),
-            }
-        )
-    for note in context_notes:
-        if isinstance(note, dict) and str(note.get("summary") or "").strip():
-            flattened.append(note)
-    return flattened
+    """Read AM2 durable facts for benchmark matching."""
+    return dynamodb_models.get_memory_notes(athlete_id)
 
 
 def get_benchmark_retrieval_context(athlete_id: str) -> Dict[str, Any]:
     retrieval_context = dynamodb_models.get_memory_context_for_response_generation(athlete_id)
-    flattened_notes: List[Dict[str, Any]] = []
-    backbone = retrieval_context.get("backbone") or {}
-    for slot_name in ("primary_goal", "weekly_structure", "hard_constraints", "training_preferences"):
-        slot = backbone.get(slot_name)
-        if not isinstance(slot, dict):
-            continue
-        summary = str(slot.get("summary") or "").strip()
-        if not summary:
-            continue
-        flattened_notes.append(
-            {
-                "label": slot_name,
-                "summary": summary,
-                "updated_at": slot.get("updated_at"),
-            }
-        )
-    context_notes = retrieval_context.get("context_notes")
-    if isinstance(context_notes, list):
-        for note in context_notes:
-            if isinstance(note, dict) and str(note.get("summary") or "").strip():
-                flattened_notes.append(note)
-    retrieval_context["memory_notes"] = flattened_notes
+    # memory_notes is already a flat list of DurableFact dicts from AM2
     return retrieval_context
 
 
@@ -832,39 +787,36 @@ def apply_benchmark_memory_refresh(
     athlete_id: str,
     latest_interaction_context: Dict[str, Any],
 ) -> Dict[str, Any]:
-    current_backbone = dynamodb_models.get_backbone(athlete_id)
-    current_context_notes = dynamodb_models.get_context_notes(athlete_id)
+    current_memory_notes = dynamodb_models.get_memory_notes(athlete_id)
     current_continuity = dynamodb_models.get_continuity_summary(athlete_id)
 
-    refreshed = run_unified_memory_refresh(
-        current_backbone=current_backbone,
-        current_context_notes=current_context_notes,
+    validated = run_candidate_memory_refresh(
+        current_memory_notes=current_memory_notes,
         current_continuity=current_continuity,
         interaction_context=latest_interaction_context,
     )
-    persisted = apply_unified_refresh(refreshed, int(time.time()))
-    if not dynamodb_models.replace_unified_memory(
+    persisted = apply_candidate_refresh(validated, current_memory_notes, int(time.time()))
+    if not dynamodb_models.replace_memory(
         athlete_id,
-        persisted["backbone"],
-        persisted["context_notes"],
+        persisted["memory_notes"],
         persisted["continuity_summary"],
     ):
-        raise MemoryRefreshError("unified memory persistence failed")
+        raise MemoryRefreshError("memory persistence failed")
 
     return {
         "memory_notes": get_benchmark_memory_notes(athlete_id),
         "continuity_summary": dynamodb_models.get_continuity_summary(athlete_id),
-        "pre_reply_route": "unified",
-        "post_reply_route": "unified",
+        "pre_reply_route": "candidate",
+        "post_reply_route": "candidate",
         "long_term_debug": {
             "pre_reply": None,
-            "post_reply": refreshed,
+            "post_reply": validated,
         },
         "routing_debug": {
             "pre_reply": None,
             "post_reply": {
                 "latest_interaction_context": latest_interaction_context,
-                "mode": "unified",
+                "mode": "candidate",
             },
         },
     }

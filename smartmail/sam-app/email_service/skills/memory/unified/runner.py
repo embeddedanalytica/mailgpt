@@ -1,70 +1,83 @@
-"""Runner for the unified memory refresh workflow (AM3)."""
+"""Runner for the candidate-operation memory refresh workflow (AM2)."""
 
 import json
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
-from athlete_memory_contract import (
-    BACKBONE_SLOT_KEYS,
-    BackboneSlots,
-    ContinuitySummary,
-    format_unix_timestamp_for_prompt,
-)
+from athlete_memory_contract import format_unix_timestamp_for_prompt
 from config import PROFILE_EXTRACTION_MODEL
 from skills.memory.unified.errors import MemoryRefreshError, MemoryRefreshPromptError
 from skills.memory.unified.prompt import SYSTEM_PROMPT
 from skills.memory.unified.schema import JSON_SCHEMA, JSON_SCHEMA_NAME
-from skills.memory.unified.validator import validate_unified_memory_response
+from skills.memory.unified.validator import validate_candidate_memory_response
 from skills.runtime import SkillExecutionError, execute_json_schema, preview_text
 
 logger = logging.getLogger(__name__)
 
-
-def _format_backbone_for_prompt(backbone: Dict[str, Any]) -> Dict[str, Any]:
-    """Formats backbone slots for the LLM prompt, adding readable timestamps."""
-    formatted: Dict[str, Any] = {}
-    for key in BACKBONE_SLOT_KEYS:
-        slot = backbone.get(key)
-        if not isinstance(slot, dict) or slot.get("summary") is None:
-            formatted[key] = None
-            continue
-        entry: Dict[str, Any] = {"summary": slot["summary"]}
-        updated_at = slot.get("updated_at")
-        if updated_at is not None:
-            try:
-                entry["updated_at_readable"] = format_unix_timestamp_for_prompt(updated_at)
-            except Exception:
-                pass
-        formatted[key] = entry
-    return formatted
+# Reversal-cue patterns for the backstop check
+_REVERSAL_CUE_PATTERNS = [
+    re.compile(r"\bno longer\b", re.IGNORECASE),
+    re.compile(r"\bused to\b", re.IGNORECASE),
+    re.compile(r"\bnow\b.{0,30}\binstead\b", re.IGNORECASE),
+    re.compile(r"\bopened up\b", re.IGNORECASE),
+    re.compile(r"\bnot anymore\b", re.IGNORECASE),
+    re.compile(r"\bswitched\b.{0,20}\bto\b", re.IGNORECASE),
+    re.compile(r"\bchanged\b.{0,20}\bto\b", re.IGNORECASE),
+    re.compile(r"\bmoved\b.{0,20}\bto\b", re.IGNORECASE),
+]
 
 
-def _format_context_notes_for_prompt(context_notes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Formats context notes for the LLM prompt."""
+def _has_reversal_cues(text: str) -> bool:
+    """Returns True if the text contains explicit reversal language."""
+    return any(p.search(text) for p in _REVERSAL_CUE_PATTERNS)
+
+
+def _candidates_target_schedule_or_constraint(
+    candidates: List[Dict[str, Any]],
+) -> bool:
+    """Returns True if any candidate retires or updates a schedule/constraint fact."""
+    for c in candidates:
+        action = c.get("action")
+        if action == "retire":
+            return True
+        if action == "upsert" and c.get("target_id"):
+            # Targeted upsert — we can't check fact_type here (it's on the existing fact),
+            # but a targeted upsert signals the LLM is updating an existing fact.
+            return True
+        if action == "upsert" and not c.get("target_id"):
+            ft = c.get("fact_type", "")
+            if ft in ("schedule", "constraint"):
+                return True
+    return False
+
+
+def _format_memory_notes_for_prompt(memory_notes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Formats active durable facts for the LLM prompt."""
     formatted: List[Dict[str, Any]] = []
-    for note in context_notes:
+    for note in memory_notes:
         if not isinstance(note, dict):
             continue
         entry: Dict[str, Any] = {
-            "label": str(note.get("label", "")).strip(),
-            "summary": str(note.get("summary", "")).strip(),
+            "memory_note_id": str(note.get("memory_note_id", "")),
+            "fact_type": str(note.get("fact_type", "")),
+            "fact_key": str(note.get("fact_key", "")),
+            "summary": str(note.get("summary", "")),
         }
-        updated_at = note.get("updated_at")
-        if updated_at is not None:
+        last_confirmed = note.get("last_confirmed_at")
+        if last_confirmed is not None:
             try:
-                entry["updated_at_readable"] = format_unix_timestamp_for_prompt(updated_at)
+                entry["last_confirmed_readable"] = format_unix_timestamp_for_prompt(last_confirmed)
             except Exception:
                 pass
-        if entry["label"] and entry["summary"]:
+        if entry["memory_note_id"] and entry["summary"]:
             formatted.append(entry)
     return formatted
 
 
 def _format_continuity_for_prompt(continuity: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """Formats continuity summary for the LLM prompt."""
-    if continuity is None:
-        return None
-    if not isinstance(continuity, dict):
+    if continuity is None or not isinstance(continuity, dict):
         return None
     formatted: Dict[str, Any] = {}
     for field in ("summary", "last_recommendation"):
@@ -85,67 +98,83 @@ def _format_continuity_for_prompt(continuity: Optional[Dict[str, Any]]) -> Optio
     return formatted if formatted else None
 
 
-def build_unified_memory_user_payload(
+def build_memory_refresh_user_payload(
     *,
-    current_backbone: Dict[str, Any],
-    current_context_notes: List[Dict[str, Any]],
+    current_memory_notes: List[Dict[str, Any]],
     current_continuity: Optional[Dict[str, Any]],
     interaction_context: Dict[str, Any],
 ) -> str:
-    """Builds the JSON user-message payload for the unified memory refresh LLM call."""
+    """Builds the JSON user-message payload for the candidate memory refresh LLM call."""
     if not isinstance(interaction_context, dict):
         raise MemoryRefreshPromptError("interaction_context must be a dict")
 
     payload = {
-        "current_backbone": _format_backbone_for_prompt(current_backbone),
-        "current_context_notes": _format_context_notes_for_prompt(current_context_notes),
+        "current_active_facts": _format_memory_notes_for_prompt(current_memory_notes),
         "current_continuity": _format_continuity_for_prompt(current_continuity),
         "interaction_context": interaction_context,
     }
     return json.dumps(payload, separators=(",", ":"), ensure_ascii=True)
 
 
-def run_unified_memory_refresh(
+def _run_single_attempt(
     *,
-    current_backbone: Dict[str, Any],
-    current_context_notes: List[Dict[str, Any]],
+    user_payload: str,
+) -> Dict[str, Any]:
+    """Runs a single LLM call and validates the response."""
+    data, raw_content = execute_json_schema(
+        logger=logger,
+        model_name=PROFILE_EXTRACTION_MODEL,
+        system_prompt=SYSTEM_PROMPT,
+        user_content=user_payload,
+        schema_name=JSON_SCHEMA_NAME,
+        schema=JSON_SCHEMA,
+        disabled_message="live candidate memory refresh LLM calls are disabled",
+        warning_log_name="memory_refresh_candidates",
+    )
+    return validate_candidate_memory_response(data)
+
+
+def run_candidate_memory_refresh(
+    *,
+    current_memory_notes: List[Dict[str, Any]],
     current_continuity: Optional[Dict[str, Any]],
     interaction_context: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """Runs the unified memory refresh skill (single LLM call).
+    """Runs the candidate-operation memory refresh skill.
 
-    Returns a validated dict with keys: backbone, context_notes, continuity.
+    Returns a validated dict with keys: candidates, continuity.
     Raises MemoryRefreshError on failure.
     """
     raw_content = ""
     try:
-        user_payload = build_unified_memory_user_payload(
-            current_backbone=current_backbone,
-            current_context_notes=current_context_notes,
+        user_payload = build_memory_refresh_user_payload(
+            current_memory_notes=current_memory_notes,
             current_continuity=current_continuity,
             interaction_context=interaction_context,
         )
         logger.info(
-            "Unified memory refresh starting payload_chars=%s",
+            "Candidate memory refresh starting payload_chars=%s",
             len(user_payload),
         )
 
-        data, raw_content = execute_json_schema(
-            logger=logger,
-            model_name=PROFILE_EXTRACTION_MODEL,
-            system_prompt=SYSTEM_PROMPT,
-            user_content=user_payload,
-            schema_name=JSON_SCHEMA_NAME,
-            schema=JSON_SCHEMA,
-            disabled_message="live unified memory refresh LLM calls are disabled",
-            warning_log_name="memory_refresh_unified",
-        )
+        validated = _run_single_attempt(user_payload=user_payload)
 
-        validated = validate_unified_memory_response(data)
+        # --- Reversal backstop ---
+        inbound_email = interaction_context.get("inbound_email", "")
+        if (
+            isinstance(inbound_email, str)
+            and _has_reversal_cues(inbound_email)
+            and not _candidates_target_schedule_or_constraint(validated["candidates"])
+        ):
+            logger.warning(
+                "reversal_backstop: reversal cues detected but no retire/update on "
+                "schedule or constraint — retrying once"
+            )
+            validated = _run_single_attempt(user_payload=user_payload)
+
         logger.info(
-            "Unified memory refresh completed backbone_populated=%s context_count=%s open_loops=%s",
-            sum(1 for k in BACKBONE_SLOT_KEYS if validated["backbone"].get(k)),
-            len(validated["context_notes"]),
+            "Candidate memory refresh completed candidate_count=%s open_loops=%s",
+            len(validated["candidates"]),
             len(validated["continuity"]["open_loops"]),
         )
         return validated
@@ -156,12 +185,12 @@ def run_unified_memory_refresh(
         if not raw_content and isinstance(exc, SkillExecutionError):
             raw_content = exc.raw_response
         logger.error(
-            "Unified memory refresh failed: %s (raw_response_preview=%s)",
+            "Candidate memory refresh failed: %s (raw_response_preview=%s)",
             exc,
             preview_text(raw_content),
         )
         raise MemoryRefreshError(
-            "LLM unified memory refresh failed",
+            "LLM candidate memory refresh failed",
             raw_response=raw_content,
             cause_message=str(exc),
         ) from exc

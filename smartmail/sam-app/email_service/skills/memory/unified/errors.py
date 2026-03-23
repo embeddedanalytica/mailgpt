@@ -1,8 +1,13 @@
-"""Error types for the unified memory refresh workflow."""
+"""Error types for the memory refresh workflow."""
 
 
 class MemoryRefreshError(Exception):
-    """Raised when the unified memory refresh fails."""
+    """Raised when the memory refresh fails."""
+
+    def __init__(self, message: str = "", *, raw_response: str = "", cause_message: str = ""):
+        super().__init__(message)
+        self.raw_response = raw_response
+        self.cause_message = cause_message
 
 
 class MemoryRefreshPromptError(MemoryRefreshError):

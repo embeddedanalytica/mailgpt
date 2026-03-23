@@ -1,0 +1,16 @@
+{
+  "version": "v1-proposal",
+  "created_at": "2026-03-23T05:39:03.124430+00:00",
+  "parent_version": "v1",
+  "editable_surfaces": [
+    "response_generation.system_prompt",
+    "response_generation.directive_system_prompt",
+    "coaching_reasoning.base_prompt"
+  ],
+  "notes": [
+    "Initial prompt-pack artifact mirror of current inline prompt content. Runtime is not yet wired to load from this pack.",
+    "Materialized from proposal.json via prompt_patch_apply.py."
+  ],
+  "source_proposal": "/private/var/folders/tq/x_jrjp411ygcy5rzy5n_1q340000gn/T/tmprmuoheyd/workflow/proposal.json",
+  "proposal_applied_at": "2026-03-23T05:39:03.124499+00:00"
+}

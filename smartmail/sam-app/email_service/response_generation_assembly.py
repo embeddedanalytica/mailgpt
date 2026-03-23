@@ -6,12 +6,9 @@ import time as _time
 from typing import Any, Dict, Optional
 
 from athlete_memory_contract import (
-    BACKBONE_SLOT_KEYS,
     AthleteMemoryContractError,
-    BackboneSlots,
     ContinuitySummary,
-    validate_backbone_slots,
-    validate_context_note_list,
+    validate_memory_notes,
 )
 from response_generation_contract import ResponseBrief, normalize_reply_mode
 from rule_engine import RuleEngineContractError, validate_rule_engine_output
@@ -41,28 +38,51 @@ def _validated_engine_output(
     return engine_output
 
 
-def _shape_memory_salience_v3(
-    backbone: dict[str, Any],
-    context_notes: list[dict[str, Any]],
+# Fact type ordering for deterministic salience
+_FACT_TYPE_ORDER = {"goal": 0, "constraint": 1, "schedule": 2, "preference": 3, "other": 4}
+
+
+def _shape_memory_salience_v4(
+    memory_notes: list[dict[str, Any]],
     continuity_summary: Optional[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Shapes AM3 memory tiers into salience categories for the response LLM."""
-    # Backbone = priority memory (structurally protected, always included)
-    backbone_summaries: dict[str, str] = {}
-    for key in BACKBONE_SLOT_KEYS:
-        slot = backbone.get(key)
-        if isinstance(slot, dict):
-            summary = _string_field(slot.get("summary"))
-            if summary:
-                backbone_summaries[key] = summary
+    """Shapes AM2 durable facts into salience categories for the response LLM.
+
+    Deterministic ordering: goal before constraint within priority tier,
+    then by most recent last_confirmed_at. Schedule next. Preference/other last.
+    """
+    # Sort all facts by (type_order, -last_confirmed_at) for stable ordering
+    def _sort_key(f: dict[str, Any]) -> tuple:
+        type_order = _FACT_TYPE_ORDER.get(f.get("fact_type", "other"), 4)
+        last_confirmed = f.get("last_confirmed_at", 0)
+        return (type_order, -last_confirmed)
+
+    sorted_facts = sorted(memory_notes, key=_sort_key)
+
+    priority_facts: list[str] = []  # goal + constraint
+    structure_facts: list[str] = []  # schedule
+    context_facts: list[str] = []  # preference + other
+
+    for fact in sorted_facts:
+        summary = _string_field(fact.get("summary"))
+        if not summary:
+            continue
+        fact_type = fact.get("fact_type", "other")
+        if fact_type in ("goal", "constraint"):
+            priority_facts.append(summary)
+        elif fact_type == "schedule":
+            structure_facts.append(summary)
+        else:
+            context_facts.append(summary)
 
     continuity_focus = None
     if isinstance(continuity_summary, dict):
         continuity_focus = _string_field(continuity_summary.get("summary"))
 
     return {
-        "backbone_summaries": backbone_summaries,
-        "context_notes": context_notes,
+        "priority_facts": priority_facts,
+        "structure_facts": structure_facts,
+        "context_facts": context_facts,
         "continuity_focus": continuity_focus,
     }
 
@@ -249,24 +269,15 @@ def build_response_brief(
 
     normalized_memory_context = memory_context if isinstance(memory_context, dict) else {}
 
-    # AM3 backbone + context_notes model
-    backbone = normalized_memory_context.get("backbone")
-    if not isinstance(backbone, dict):
-        backbone = BackboneSlots.empty().to_dict()
+    # AM2 durable fact model
+    memory_notes = normalized_memory_context.get("memory_notes")
+    if not isinstance(memory_notes, list):
+        memory_notes = []
     else:
         try:
-            backbone = validate_backbone_slots(backbone).to_dict()
+            memory_notes = validate_memory_notes(memory_notes)
         except AthleteMemoryContractError:
-            backbone = BackboneSlots.empty().to_dict()
-
-    context_notes = normalized_memory_context.get("context_notes")
-    if not isinstance(context_notes, list):
-        context_notes = []
-    else:
-        try:
-            context_notes = validate_context_note_list(context_notes)
-        except AthleteMemoryContractError:
-            context_notes = []
+            memory_notes = []
 
     continuity_summary = normalized_memory_context.get("continuity_summary")
     if not isinstance(continuity_summary, dict):
@@ -277,10 +288,11 @@ def build_response_brief(
         except AthleteMemoryContractError:
             continuity_summary = None
 
-    memory_salience = _shape_memory_salience_v3(backbone, context_notes, continuity_summary)
+    memory_salience = _shape_memory_salience_v4(memory_notes, continuity_summary)
     memory_available = bool(
-        memory_salience["backbone_summaries"]
-        or context_notes
+        memory_salience["priority_facts"]
+        or memory_salience["structure_facts"]
+        or memory_salience["context_facts"]
         or memory_salience["continuity_focus"]
     )
 
@@ -288,10 +300,12 @@ def build_response_brief(
         "memory_available": memory_available,
         "continuity_summary": continuity_summary,
     }
-    if memory_salience["backbone_summaries"]:
-        memory_payload["backbone_summaries"] = memory_salience["backbone_summaries"]
-    if memory_salience["context_notes"]:
-        memory_payload["context_notes"] = memory_salience["context_notes"]
+    if memory_salience["priority_facts"]:
+        memory_payload["priority_facts"] = memory_salience["priority_facts"]
+    if memory_salience["structure_facts"]:
+        memory_payload["structure_facts"] = memory_salience["structure_facts"]
+    if memory_salience["context_facts"]:
+        memory_payload["context_facts"] = memory_salience["context_facts"]
     if memory_salience["continuity_focus"]:
         memory_payload["continuity_focus"] = memory_salience["continuity_focus"]
 

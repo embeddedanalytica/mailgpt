@@ -80,8 +80,8 @@ def _valid_brief() -> dict:
         },
         "memory_context": {
             "memory_available": True,
-            "backbone_summaries": {"hard_constraints": "Weekday sessions need to finish before 7am"},
-            "context_notes": [_context_note()],
+            "priority_facts": ["Weekday sessions need to finish before 7am"],
+            "context_facts": ["Prefers concise bullets"],
             "continuity_summary": {
                 "summary": "Athlete is rebuilding consistency.",
                 "last_recommendation": "Keep one controlled quality session this week.",
@@ -186,7 +186,7 @@ class TestResponseGenerationPromptAndSchema(unittest.TestCase):
         self.assertIn("Never contradict risk posture", SYSTEM_PROMPT)
         self.assertIn("final_email_body must contain the complete email body", SYSTEM_PROMPT)
         self.assertIn("continuity_focus is context from the previous exchange", SYSTEM_PROMPT)
-        self.assertIn("backbone_summaries are durable memory facts", SYSTEM_PROMPT)
+        self.assertIn("priority_facts are the athlete's most important durable facts", SYSTEM_PROMPT)
         self.assertIn("Do not repeat every memory fact mechanically", SYSTEM_PROMPT)
         self.assertIn("clarification: ask only for the specific items listed in decision_context.clarification_questions", SYSTEM_PROMPT)
         self.assertIn("safety_risk_managed: prioritize caution", SYSTEM_PROMPT)

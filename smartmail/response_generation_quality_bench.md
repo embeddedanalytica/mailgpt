@@ -242,10 +242,10 @@ Each scenario in the machine-readable block includes:
           ],
           "updated_at": 1773273600
         },
-        "backbone_summaries": {
-          "hard_constraints": "Weekday sessions need to finish before 7am due to school drop-off."
-        },
-        "continuity_focus": "Consistency is good; preserve freshness with conservative quality."
+        "continuity_focus": "Consistency is good; preserve freshness with conservative quality.",
+        "priority_facts": [
+          "Weekday sessions need to finish before 7am due to school drop-off."
+        ]
       }
     },
     "review_focus": [
@@ -305,9 +305,9 @@ Each scenario in the machine-readable block includes:
           ],
           "updated_at": 1773273600
         },
-        "backbone_summaries": {
-          "weekly_structure": "Sunday is usually the long-run anchor."
-        }
+        "structure_facts": [
+          "Sunday is usually the long-run anchor."
+        ]
       }
     },
     "review_focus": [
@@ -370,9 +370,9 @@ Each scenario in the machine-readable block includes:
           ],
           "updated_at": 1773273600
         },
-        "backbone_summaries": {
-          "hard_constraints": "Right Achilles tends to flare after two hard run days in a row."
-        }
+        "priority_facts": [
+          "Right Achilles tends to flare after two hard run days in a row."
+        ]
       }
     },
     "review_focus": [
@@ -452,12 +452,8 @@ Each scenario in the machine-readable block includes:
           ],
           "updated_at": 1773273600
         },
-        "context_notes": [
-          {
-            "label": "Prior Episode Of Dizziness Under Load",
-            "summary": "Athlete previously reported dizziness during a hard run.",
-            "updated_at": 1773273600
-          }
+        "context_facts": [
+          "Athlete previously reported dizziness during a hard run."
         ]
       }
     },
@@ -520,9 +516,9 @@ Each scenario in the machine-readable block includes:
           ],
           "updated_at": 1773273600
         },
-        "backbone_summaries": {
-          "training_preferences": "Athlete prefers concise guidance over long explanations."
-        }
+        "context_facts": [
+          "Athlete prefers concise guidance over long explanations."
+        ]
       }
     },
     "review_focus": [
@@ -638,11 +634,13 @@ Each scenario in the machine-readable block includes:
           ],
           "updated_at": 1773273600
         },
-        "backbone_summaries": {
-          "weekly_structure": "Sunday is the long-run anchor and usually has best compliance.",
-          "training_preferences": "Athlete prefers explicit priority order for key sessions."
-        },
-        "continuity_focus": "Continue race-specific work while keeping load controlled."
+        "continuity_focus": "Continue race-specific work while keeping load controlled.",
+        "structure_facts": [
+          "Sunday is the long-run anchor and usually has best compliance."
+        ],
+        "context_facts": [
+          "Athlete prefers explicit priority order for key sessions."
+        ]
       }
     },
     "review_focus": [
@@ -699,10 +697,12 @@ Each scenario in the machine-readable block includes:
           ],
           "updated_at": 1773273600
         },
-        "backbone_summaries": {
-          "hard_constraints": "New recurring weekday meeting blocks the old Wednesday double-session pattern.",
-          "weekly_structure": "Historically completed Wednesday doubles during prior block."
-        }
+        "priority_facts": [
+          "New recurring weekday meeting blocks the old Wednesday double-session pattern."
+        ],
+        "structure_facts": [
+          "Historically completed Wednesday doubles during prior block."
+        ]
       }
     },
     "review_focus": [
@@ -870,10 +870,10 @@ Each scenario in the machine-readable block includes:
           ],
           "updated_at": 1773273600
         },
-        "backbone_summaries": {
-          "training_preferences": "Athlete responds better to RPE cues than fixed pace targets."
-        },
-        "continuity_focus": "Keep intensity calibrated by feel, not pace."
+        "continuity_focus": "Keep intensity calibrated by feel, not pace.",
+        "context_facts": [
+          "Athlete responds better to RPE cues than fixed pace targets."
+        ]
       }
     },
     "review_focus": [
@@ -934,9 +934,9 @@ Each scenario in the machine-readable block includes:
           ],
           "updated_at": 1773273600
         },
-        "backbone_summaries": {
-          "weekly_structure": "Sunday long run remains the best compliance anchor."
-        }
+        "structure_facts": [
+          "Sunday long run remains the best compliance anchor."
+        ]
       }
     },
     "review_focus": [

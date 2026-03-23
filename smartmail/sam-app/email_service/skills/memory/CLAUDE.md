@@ -1,27 +1,29 @@
-# memory/ — Memory Subsystem
+# memory/ — Memory Subsystem (AM2)
 
-## Current State
+## Architecture
 
-Old sub-skills (`eligibility/`, `long_term/`, `short_term/`, `refresh/`, `router/`) have been deleted.
-Replaced by a single `unified/` skill.
+Candidate-operation model: LLM emits ops (`upsert`, `confirm`, `retire`) targeting existing facts by `memory_note_id`. Deterministic reducer applies ops to current state. Silence preserves — facts not mentioned remain unchanged.
 
 ## Key Files
 
 | File | Role |
 |---|---|
-| `unified/prompt.py` | Memory refresh prompt |
-| `unified/schema.py` | Output schema |
-| `unified/validator.py` | Output validation |
-| `unified/runner.py` | Skill runner |
+| `unified/prompt.py` | Candidate-operation memory refresh prompt |
+| `unified/schema.py` | Candidate-op JSON schema |
+| `unified/validator.py` | Candidate validator (per-action rules, evidence authority) |
+| `unified/runner.py` | Skill runner with reversal backstop |
 | `unified/errors.py` | Error types |
-| `../../coaching_memory.py` | Pre/post reply memory refresh orchestration |
-| `../../athlete_memory_contract.py` | Memory note + continuity summary contracts |
-| `../../athlete_memory_reducer.py` | Memory note trimming/reduction |
+| `../../coaching_memory.py` | Post-reply memory refresh orchestration |
+| `../../athlete_memory_contract.py` | DurableFact contract, normalize_fact_key, validate_memory_notes |
+| `../../athlete_memory_reducer.py` | Deterministic reducer: apply candidates, budget enforcement |
 
-## Known Bugs (see `bug-backlog.md`)
+## Design Rules
 
-- Long-horizon memory loses core training backbone over time
-- Stale scheduling rules are not retired when replaced
-- Primary goals can disappear from durable memory
-
-The old 7-note bounded model and refresh trigger logic are not working — consider reconsidering both.
+- **ID-based targeting**: Operations on existing facts require `target_id` (memory_note_id)
+- **Immutable identity**: `fact_type` and `fact_key` cannot change after creation
+- **Evidence authority**: `rule_engine_state` can only `confirm`, never create or retire
+- **Unknown target_id = batch rejection**: Not silent skip
+- **Retire = delete**: No tombstone, no audit trail
+- **Budget**: MAX_ACTIVE_FACTS=7, evict medium-importance first by oldest `last_confirmed_at`
+- **Importance enforcement**: goal/constraint facts forced to "high"
+- **Reversal backstop**: If athlete message has reversal cues but no retire/update emitted, retry once

@@ -22,10 +22,6 @@ def _continuity_summary() -> dict:
     }
 
 
-def _context_note(label: str = "Schedule", summary: str = "Weekday sessions need to finish before 7am") -> dict:
-    return {"label": label, "summary": summary, "updated_at": 1773273600}
-
-
 def _valid_brief(reply_mode: str = "normal_coaching") -> dict:
     return {
         "reply_mode": reply_mode,
@@ -53,8 +49,9 @@ def _valid_brief(reply_mode: str = "normal_coaching") -> dict:
         },
         "memory_context": {
             "memory_available": True,
-            "backbone_summaries": {"hard_constraints": "Weekday sessions need to finish before 7am"},
-            "context_notes": [_context_note()],
+            "priority_facts": ["Weekday sessions need to finish before 7am"],
+            "structure_facts": ["4 days/week: Mon/Wed/Fri/Sun"],
+            "context_facts": ["Prefers concise bullets"],
             "continuity_summary": _continuity_summary(),
             "continuity_focus": "Athlete is rebuilding consistency.",
         },
@@ -177,16 +174,16 @@ class TestValidateResponseBrief(unittest.TestCase):
         with self.assertRaises(ResponseGenerationContractError):
             validate_response_brief(payload)
 
-    def test_rejects_non_dict_backbone_summaries(self):
+    def test_rejects_non_list_priority_facts(self):
         payload = _valid_brief()
-        payload["memory_context"]["backbone_summaries"] = "not a dict"
+        payload["memory_context"]["priority_facts"] = "not a list"
 
         with self.assertRaises(ResponseGenerationContractError):
             validate_response_brief(payload)
 
-    def test_rejects_empty_string_backbone_summary_value(self):
+    def test_rejects_empty_string_in_priority_facts(self):
         payload = _valid_brief()
-        payload["memory_context"]["backbone_summaries"] = {"primary_goal": "  "}
+        payload["memory_context"]["priority_facts"] = ["valid", "  "]
 
         with self.assertRaises(ResponseGenerationContractError):
             validate_response_brief(payload)
@@ -205,9 +202,9 @@ class TestValidateResponseBrief(unittest.TestCase):
         with self.assertRaises(ResponseGenerationContractError):
             validate_response_brief(payload)
 
-    def test_rejects_malformed_context_notes(self):
+    def test_rejects_non_list_context_facts(self):
         payload = _valid_brief()
-        payload["memory_context"]["context_notes"] = [{"summary": "Missing label"}]
+        payload["memory_context"]["context_facts"] = "not a list"
 
         with self.assertRaises(ResponseGenerationContractError):
             validate_response_brief(payload)

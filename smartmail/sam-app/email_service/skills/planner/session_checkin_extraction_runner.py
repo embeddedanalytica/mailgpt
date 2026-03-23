@@ -19,10 +19,7 @@ from ai_extraction_contract import (
 from config import PROFILE_EXTRACTION_MODEL
 from skills.planner.session_checkin_extraction_prompt import SYSTEM_PROMPT
 from skills.planner.session_checkin_extraction_schema import JSON_SCHEMA, JSON_SCHEMA_NAME
-from skills.planner.session_checkin_extraction_validator import (
-    SessionCheckinExtractionContractError,
-    validate_session_checkin_extraction_output,
-)
+from skills.planner.session_checkin_extraction_validator import validate_session_checkin_extraction_output
 
 logger = logging.getLogger(__name__)
 
@@ -58,60 +55,49 @@ def run_session_checkin_extraction_workflow(
     *,
     model_name: Optional[str] = None,
 ) -> Dict[str, Any]:
-    raw_content = ""
-    try:
-        logger.info(
-            "Session check-in extraction request: body_chars=%s body_preview=%s",
-            len(str(email_body or "")),
-            _preview_text(email_body),
-        )
-        selected_model = str(model_name or PROFILE_EXTRACTION_MODEL).strip() or PROFILE_EXTRACTION_MODEL
-        system_prompt = (
-            f"{SYSTEM_PROMPT}\n\n"
-            "Allowed enums:\n"
-            f"- risk_candidate: {sorted(ALLOWED_RISK_CANDIDATES)}\n"
-            f"- experience_level: {sorted(ALLOWED_EXPERIENCE_LEVELS)}\n"
-            f"- time_bucket: {sorted(ALLOWED_TIME_BUCKETS)}\n"
-            f"- main_sport_current: {sorted(ALLOWED_MAIN_SPORTS)} or null\n"
-            f"- recent_illness: {sorted(ALLOWED_RECENT_ILLNESS)}\n"
-            f"- structure_preference: {sorted(ALLOWED_STRUCTURE_PREFERENCES)}\n"
-            f"- schedule_variability: {sorted(ALLOWED_SCHEDULE_VARIABILITY)}\n"
-        )
-        payload, raw_content = skill_runtime.execute_json_schema(
-            logger=logger,
-            model_name=selected_model,
-            system_prompt=system_prompt,
-            user_content=json.dumps({"email_body": str(email_body or "")}, separators=(",", ":"), ensure_ascii=True),
-            schema_name=JSON_SCHEMA_NAME,
-            schema=JSON_SCHEMA,
-            disabled_message="session-checkin extraction LLM calls are disabled",
-            warning_log_name="session_checkin_extraction",
-            retries=1,
-            require_live_llm=False,
-        )
+    logger.info(
+        "Session check-in extraction request: body_chars=%s body_preview=%s",
+        len(str(email_body or "")),
+        _preview_text(email_body),
+    )
+    selected_model = str(model_name or PROFILE_EXTRACTION_MODEL).strip() or PROFILE_EXTRACTION_MODEL
+    system_prompt = (
+        f"{SYSTEM_PROMPT}\n\n"
+        "Allowed enums:\n"
+        f"- risk_candidate: {sorted(ALLOWED_RISK_CANDIDATES)}\n"
+        f"- experience_level: {sorted(ALLOWED_EXPERIENCE_LEVELS)}\n"
+        f"- time_bucket: {sorted(ALLOWED_TIME_BUCKETS)}\n"
+        f"- main_sport_current: {sorted(ALLOWED_MAIN_SPORTS)} or null\n"
+        f"- recent_illness: {sorted(ALLOWED_RECENT_ILLNESS)}\n"
+        f"- structure_preference: {sorted(ALLOWED_STRUCTURE_PREFERENCES)}\n"
+        f"- schedule_variability: {sorted(ALLOWED_SCHEDULE_VARIABILITY)}\n"
+    )
+    def _log_raw_response(raw: str) -> None:
         logger.info(
             "Session check-in extraction raw response: chars=%s preview=%s",
-            len(raw_content),
-            _preview_text(raw_content),
+            len(raw),
+            _preview_text(raw),
         )
-        validated = validate_session_checkin_extraction_output(payload)
-        logger.info(
-            "Session check-in extraction parsed payload: keys=%s field_types=%s",
-            sorted(validated.keys()),
-            _top_level_type_map(validated),
-        )
-        return validated
-    except (SessionCheckinExtractionContractError, skill_runtime.SkillExecutionError) as exc:
-        logger.error(
-            "Session check-in extraction failed: %s (raw_response_preview=%s)",
-            exc,
-            skill_runtime.preview_text(getattr(exc, "raw_response", "") or raw_content),
-        )
-        raise SessionCheckinExtractionProposalError("session_checkin_extraction_failed") from exc
-    except Exception as exc:
-        logger.error(
-            "Session check-in extraction failed: %s (raw_response_preview=%s)",
-            exc,
-            skill_runtime.preview_text(raw_content),
-        )
-        raise SessionCheckinExtractionProposalError("session_checkin_extraction_failed") from exc
+
+    validated = skill_runtime.run_validated_json_schema_workflow(
+        logger=logger,
+        model_name=selected_model,
+        system_prompt=system_prompt,
+        user_content=json.dumps({"email_body": str(email_body or "")}, separators=(",", ":"), ensure_ascii=True),
+        schema_name=JSON_SCHEMA_NAME,
+        schema=JSON_SCHEMA,
+        disabled_message="session-checkin extraction LLM calls are disabled",
+        warning_log_name="session_checkin_extraction",
+        validate_payload=validate_session_checkin_extraction_output,
+        workflow_label="session_checkin_extraction",
+        proposal_error_factory=SessionCheckinExtractionProposalError,
+        retries=1,
+        require_live_llm=False,
+        on_raw_llm_response=_log_raw_response,
+    )
+    logger.info(
+        "Session check-in extraction parsed payload: keys=%s field_types=%s",
+        sorted(validated.keys()),
+        _top_level_type_map(validated),
+    )
+    return validated

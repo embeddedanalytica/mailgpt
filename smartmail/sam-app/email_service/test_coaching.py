@@ -20,18 +20,16 @@ def _memory_note(
     fact_key: str,
     summary: str,
     importance: str = "high",
-    status: str = "active",
     created_at: int = 1773273600,
     updated_at: int = 1773273600,
     last_confirmed_at: int = 1773273600,
 ) -> dict:
     return {
-        "memory_note_id": note_id,
+        "memory_note_id": f"note-{note_id}",
         "fact_type": fact_type,
         "fact_key": fact_key,
         "summary": summary,
         "importance": importance,
-        "status": status,
         "created_at": created_at,
         "updated_at": updated_at,
         "last_confirmed_at": last_confirmed_at,
@@ -53,8 +51,8 @@ class TestBuildProfileGatedReply(unittest.TestCase):
              mock.patch.object(coaching, "merge_coach_profile_fields") as merge, \
              mock.patch.object(coaching, "ensure_current_plan") as ensure_plan, \
              mock.patch.object(coaching, "fetch_current_plan_summary") as fetch_summary, \
-             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"backbone": {}, "context_notes": [], "continuity_summary": None}), \
-             mock.patch.object(coaching, "maybe_post_reply_unified_refresh"), \
+             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"memory_notes": [], "continuity_summary": None}), \
+             mock.patch.object(coaching, "maybe_post_reply_memory_refresh"), \
              mock.patch.object(coaching, "run_response_generation_workflow") as run_response_generation_workflow, \
              mock.patch.object(coaching, "create_action_token") as create_token, \
              mock.patch.object(coaching, "ACTION_BASE_URL", "https://geniml.com/action/"):
@@ -94,8 +92,8 @@ class TestBuildProfileGatedReply(unittest.TestCase):
              mock.patch.object(coaching, "get_progress_snapshot", return_value={"data_quality": "low"}), \
              mock.patch.object(coaching, "merge_coach_profile_fields") as merge, \
              mock.patch.object(coaching, "ensure_current_plan") as ensure_plan, \
-             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"backbone": {}, "context_notes": [], "continuity_summary": None}), \
-             mock.patch.object(coaching, "maybe_post_reply_unified_refresh"), \
+             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"memory_notes": [], "continuity_summary": None}), \
+             mock.patch.object(coaching, "maybe_post_reply_memory_refresh"), \
              mock.patch.object(coaching, "run_response_generation_workflow") as run_response_generation_workflow:
             get_profile.return_value = {}
             parse_updates.return_value = {}
@@ -126,8 +124,8 @@ class TestBuildProfileGatedReply(unittest.TestCase):
              mock.patch.object(coaching, "get_progress_snapshot", return_value={"data_quality": "low"}), \
              mock.patch.object(coaching, "merge_coach_profile_fields") as merge, \
              mock.patch.object(coaching, "ensure_current_plan") as ensure_plan, \
-             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"backbone": {}, "context_notes": [], "continuity_summary": None}), \
-             mock.patch.object(coaching, "maybe_post_reply_unified_refresh"), \
+             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"memory_notes": [], "continuity_summary": None}), \
+             mock.patch.object(coaching, "maybe_post_reply_memory_refresh"), \
              mock.patch.object(coaching, "run_response_generation_workflow") as run_response_generation_workflow:
             get_profile.side_effect = [
                 {},
@@ -175,8 +173,8 @@ class TestBuildProfileGatedReply(unittest.TestCase):
              mock.patch.object(coaching, "get_progress_snapshot", return_value={"data_quality": "low"}), \
              mock.patch.object(coaching, "merge_coach_profile_fields", return_value=True), \
              mock.patch.object(coaching, "ensure_current_plan", return_value=True), \
-             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"backbone": {}, "context_notes": [], "continuity_summary": None}), \
-             mock.patch.object(coaching, "maybe_post_reply_unified_refresh") as maybe_post_refresh, \
+             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"memory_notes": [], "continuity_summary": None}), \
+             mock.patch.object(coaching, "maybe_post_reply_memory_refresh") as maybe_post_refresh, \
              mock.patch.object(coaching, "run_response_generation_workflow") as run_response_generation_workflow:
             run_response_generation_workflow.return_value = _final_email_response("Clarification reply")
 
@@ -199,8 +197,8 @@ class TestBuildProfileGatedReply(unittest.TestCase):
              mock.patch.object(coaching, "get_progress_snapshot", return_value={"data_quality": "low"}), \
              mock.patch.object(coaching, "merge_coach_profile_fields", return_value=True), \
              mock.patch.object(coaching, "ensure_current_plan", return_value=True), \
-             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"backbone": {}, "context_notes": [], "continuity_summary": None}), \
-             mock.patch.object(coaching, "maybe_post_reply_unified_refresh") as maybe_post_refresh, \
+             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"memory_notes": [], "continuity_summary": None}), \
+             mock.patch.object(coaching, "maybe_post_reply_memory_refresh") as maybe_post_refresh, \
              mock.patch.object(coaching, "run_response_generation_workflow") as run_response_generation_workflow:
             run_response_generation_workflow.return_value = _final_email_response("Clarification reply")
             reply = coaching.build_profile_gated_reply(
@@ -223,8 +221,8 @@ class TestBuildProfileGatedReply(unittest.TestCase):
              mock.patch.object(coaching, "merge_coach_profile_fields") as merge, \
              mock.patch.object(coaching, "ensure_current_plan") as ensure_plan, \
              mock.patch.object(coaching, "fetch_current_plan_summary") as fetch_summary, \
-             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"backbone": {}, "context_notes": [], "continuity_summary": None}), \
-             mock.patch.object(coaching, "maybe_post_reply_unified_refresh"), \
+             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"memory_notes": [], "continuity_summary": None}), \
+             mock.patch.object(coaching, "maybe_post_reply_memory_refresh"), \
              mock.patch.object(coaching, "run_response_generation_workflow") as run_response_generation_workflow, \
              mock.patch.object(coaching, "create_action_token") as create_token, \
              mock.patch.object(coaching, "ACTION_BASE_URL", "https://geniml.com/action/"):
@@ -275,8 +273,8 @@ class TestBuildProfileGatedReply(unittest.TestCase):
              mock.patch.object(coaching, "merge_coach_profile_fields") as merge, \
              mock.patch.object(coaching, "ensure_current_plan") as ensure_plan, \
              mock.patch.object(coaching, "fetch_current_plan_summary") as fetch_summary, \
-             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"backbone": {}, "context_notes": [], "continuity_summary": None}), \
-             mock.patch.object(coaching, "maybe_post_reply_unified_refresh"), \
+             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"memory_notes": [], "continuity_summary": None}), \
+             mock.patch.object(coaching, "maybe_post_reply_memory_refresh"), \
              mock.patch.object(coaching, "run_response_generation_workflow", return_value=_final_email_response("Logged reply")), \
              mock.patch.object(coaching, "create_action_token") as create_token, \
              mock.patch.object(coaching, "ACTION_BASE_URL", "https://geniml.com/action/"):
@@ -310,8 +308,8 @@ class TestBuildProfileGatedReply(unittest.TestCase):
              mock.patch.object(coaching, "merge_coach_profile_fields") as merge, \
              mock.patch.object(coaching, "ensure_current_plan") as ensure_plan, \
              mock.patch.object(coaching, "fetch_current_plan_summary") as fetch_summary, \
-             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"backbone": {}, "context_notes": [], "continuity_summary": None}), \
-             mock.patch.object(coaching, "maybe_post_reply_unified_refresh"), \
+             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"memory_notes": [], "continuity_summary": None}), \
+             mock.patch.object(coaching, "maybe_post_reply_memory_refresh"), \
              mock.patch.object(coaching, "run_response_generation_workflow") as run_response_generation_workflow, \
              mock.patch.object(coaching, "create_action_token") as create_token, \
              mock.patch.object(coaching, "ACTION_BASE_URL", "https://geniml.com/action/"):
@@ -348,7 +346,7 @@ class TestBuildProfileGatedReply(unittest.TestCase):
              mock.patch.object(coaching, "ensure_current_plan") as ensure_plan, \
              mock.patch.object(coaching, "fetch_current_plan_summary") as fetch_summary, \
              mock.patch.object(coaching, "get_memory_context_for_response_generation") as get_memory_context, \
-             mock.patch.object(coaching, "maybe_post_reply_unified_refresh"), \
+             mock.patch.object(coaching, "maybe_post_reply_memory_refresh"), \
              mock.patch.object(coaching, "create_action_token") as create_token, \
              mock.patch.object(coaching, "run_response_generation_workflow") as run_response_generation_workflow, \
              mock.patch.object(coaching, "ACTION_BASE_URL", "https://geniml.com/action/"):
@@ -363,14 +361,8 @@ class TestBuildProfileGatedReply(unittest.TestCase):
             ensure_plan.return_value = True
             fetch_summary.return_value = "Current plan - Goal: 10k."
             get_memory_context.return_value = {
-                "backbone": {
-                    "weekly_structure": {
-                        "summary": "Prefers early weekday training",
-                        "updated_at": 1773273600,
-                    },
-                },
-                "context_notes": [
-                    {"label": "Schedule", "summary": "Prefers early weekday training", "updated_at": 1773273600},
+                "memory_notes": [
+                    _memory_note(1, fact_type="schedule", fact_key="schedule:early-training", summary="Prefers early weekday training"),
                 ],
                 "continuity_summary": {
                     "summary": "Rebuilding after travel.",
@@ -410,25 +402,17 @@ class TestBuildProfileGatedReply(unittest.TestCase):
                 brief["memory_context"]["continuity_focus"],
                 "Rebuilding after travel.",
             )
-            self.assertEqual(
-                brief["memory_context"]["backbone_summaries"]["weekly_structure"],
+            self.assertIn(
                 "Prefers early weekday training",
-            )
-            self.assertEqual(
-                brief["memory_context"]["context_notes"][0]["summary"],
-                "Prefers early weekday training",
+                brief["memory_context"]["structure_facts"],
             )
 
     def test_post_reply_memory_refresh_failure_does_not_affect_reply(self):
         """Post-reply unified refresh failure should not affect the reply already generated."""
         old_memory_context = {
-            "backbone": {
-                "weekly_structure": {
-                    "summary": "Old persisted schedule note",
-                    "updated_at": 1773187200,
-                },
-            },
-            "context_notes": [],
+            "memory_notes": [
+                _memory_note(1, fact_type="schedule", fact_key="schedule:old-note", summary="Old persisted schedule note"),
+            ],
             "continuity_summary": None,
         }
         with mock.patch.object(coaching, "get_coach_profile") as get_profile, \
@@ -440,7 +424,7 @@ class TestBuildProfileGatedReply(unittest.TestCase):
              mock.patch.object(coaching, "ensure_current_plan", return_value=True), \
              mock.patch.object(coaching, "fetch_current_plan_summary", return_value=None), \
              mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value=old_memory_context), \
-             mock.patch.object(coaching, "maybe_post_reply_unified_refresh") as maybe_post_refresh, \
+             mock.patch.object(coaching, "maybe_post_reply_memory_refresh") as maybe_post_refresh, \
              mock.patch.object(coaching, "create_action_token", return_value=None), \
              mock.patch.object(coaching, "run_response_generation_workflow") as run_response_generation_workflow:
             get_profile.return_value = {
@@ -466,9 +450,9 @@ class TestBuildProfileGatedReply(unittest.TestCase):
             self.assertIn("This week: keep the quality controlled", reply)
             maybe_post_refresh.assert_called_once()
             brief = run_response_generation_workflow.call_args.args[0]
-            self.assertEqual(
-                brief["memory_context"]["backbone_summaries"]["weekly_structure"],
+            self.assertIn(
                 "Old persisted schedule note",
+                brief["memory_context"]["structure_facts"],
             )
 
     def test_profile_complete_llm_reply_renders_multiple_memory_notes_and_open_loops(self):
@@ -481,7 +465,7 @@ class TestBuildProfileGatedReply(unittest.TestCase):
              mock.patch.object(coaching, "ensure_current_plan") as ensure_plan, \
              mock.patch.object(coaching, "fetch_current_plan_summary") as fetch_summary, \
              mock.patch.object(coaching, "get_memory_context_for_response_generation") as get_memory_context, \
-             mock.patch.object(coaching, "maybe_post_reply_unified_refresh"), \
+             mock.patch.object(coaching, "maybe_post_reply_memory_refresh"), \
              mock.patch.object(coaching, "create_action_token") as create_token, \
              mock.patch.object(coaching, "run_response_generation_workflow") as run_response_generation_workflow, \
              mock.patch.object(coaching, "ACTION_BASE_URL", "https://geniml.com/action/"):
@@ -496,20 +480,14 @@ class TestBuildProfileGatedReply(unittest.TestCase):
             ensure_plan.return_value = True
             fetch_summary.return_value = "Current plan - Goal: Half marathon."
             get_memory_context.return_value = {
-                "backbone": {
-                    "hard_constraints": {
-                        "summary": "Watch for calf tightness when adding speed",
-                        "updated_at": 1773273600,
-                    },
-                    "weekly_structure": {
-                        "summary": "Weekday sessions need to finish before 7am",
-                        "updated_at": 1773273600,
-                    },
-                },
-                "context_notes": [
-                    {"label": "Calf watch", "summary": "Watch for calf tightness when adding speed", "updated_at": 1773273600},
-                    {"label": "Schedule cutoff", "summary": "Weekday sessions need to finish before 7am", "updated_at": 1773273600},
-                    {"label": "Reply format", "summary": "Prefers concise bullets and explicit priorities", "updated_at": 1773273600},
+                "memory_notes": [
+                    _memory_note(1, fact_type="constraint", fact_key="constraint:calf-tightness",
+                                 summary="Watch for calf tightness when adding speed"),
+                    _memory_note(2, fact_type="schedule", fact_key="schedule:early-cutoff",
+                                 summary="Weekday sessions need to finish before 7am"),
+                    _memory_note(3, fact_type="preference", fact_key="preference:reply-format",
+                                 summary="Prefers concise bullets and explicit priorities",
+                                 importance="medium"),
                 ],
                 "continuity_summary": {
                     "summary": "Athlete is rebuilding after two inconsistent weeks caused by work travel.",
@@ -548,21 +526,18 @@ class TestBuildProfileGatedReply(unittest.TestCase):
                 brief["memory_context"]["continuity_focus"],
                 "Athlete is rebuilding after two inconsistent weeks caused by work travel.",
             )
-            self.assertEqual(
-                brief["memory_context"]["backbone_summaries"]["hard_constraints"],
+            # constraint → priority_facts; schedule → structure_facts; preference → context_facts
+            self.assertIn(
                 "Watch for calf tightness when adding speed",
+                brief["memory_context"]["priority_facts"],
             )
-            self.assertEqual(
-                brief["memory_context"]["backbone_summaries"]["weekly_structure"],
+            self.assertIn(
                 "Weekday sessions need to finish before 7am",
+                brief["memory_context"]["structure_facts"],
             )
-            self.assertEqual(
-                [note["summary"] for note in brief["memory_context"]["context_notes"]],
-                [
-                    "Watch for calf tightness when adding speed",
-                    "Weekday sessions need to finish before 7am",
-                    "Prefers concise bullets and explicit priorities",
-                ],
+            self.assertIn(
+                "Prefers concise bullets and explicit priorities",
+                brief["memory_context"]["context_facts"],
             )
 
     def test_profile_complete_reply_triggers_memory_refresh_and_persists_full_payload(self):
@@ -574,8 +549,8 @@ class TestBuildProfileGatedReply(unittest.TestCase):
              mock.patch.object(coaching, "merge_coach_profile_fields") as merge, \
              mock.patch.object(coaching, "ensure_current_plan") as ensure_plan, \
              mock.patch.object(coaching, "fetch_current_plan_summary") as fetch_summary, \
-             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"backbone": {}, "context_notes": [], "continuity_summary": None}), \
-             mock.patch.object(coaching, "maybe_post_reply_unified_refresh") as maybe_post_refresh, \
+             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"memory_notes": [], "continuity_summary": None}), \
+             mock.patch.object(coaching, "maybe_post_reply_memory_refresh") as maybe_post_refresh, \
              mock.patch.object(coaching, "create_action_token", return_value=None), \
              mock.patch.object(coaching, "run_response_generation_workflow") as run_response_generation_workflow:
             get_profile.return_value = {
@@ -614,8 +589,8 @@ class TestBuildProfileGatedReply(unittest.TestCase):
              mock.patch.object(coaching, "merge_coach_profile_fields") as merge, \
              mock.patch.object(coaching, "ensure_current_plan") as ensure_plan, \
              mock.patch.object(coaching, "fetch_current_plan_summary", return_value=None), \
-             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"backbone": {}, "context_notes": [], "continuity_summary": None}), \
-             mock.patch.object(coaching, "maybe_post_reply_unified_refresh") as maybe_post_refresh, \
+             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"memory_notes": [], "continuity_summary": None}), \
+             mock.patch.object(coaching, "maybe_post_reply_memory_refresh") as maybe_post_refresh, \
              mock.patch.object(coaching, "create_action_token", return_value=None), \
              mock.patch.object(coaching, "run_response_generation_workflow", return_value=_final_email_response("Generated reply")):
             get_profile.return_value = {
@@ -646,8 +621,8 @@ class TestBuildProfileGatedReply(unittest.TestCase):
              mock.patch.object(coaching, "get_progress_snapshot", return_value={"data_quality": "low"}), \
              mock.patch.object(coaching, "merge_coach_profile_fields", return_value=True), \
              mock.patch.object(coaching, "ensure_current_plan", return_value=True), \
-             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"backbone": {}, "context_notes": [], "continuity_summary": None}), \
-             mock.patch.object(coaching, "maybe_post_reply_unified_refresh"), \
+             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"memory_notes": [], "continuity_summary": None}), \
+             mock.patch.object(coaching, "maybe_post_reply_memory_refresh"), \
              mock.patch.object(coaching, "run_response_generation_workflow") as run_response_generation_workflow:
             run_response_generation_workflow.return_value = _final_email_response(
                 "Please reply with your primary goal, time availability, experience level, and constraints."
@@ -676,8 +651,8 @@ class TestBuildProfileGatedReply(unittest.TestCase):
              mock.patch.object(coaching, "merge_coach_profile_fields") as merge, \
              mock.patch.object(coaching, "ensure_current_plan") as ensure_plan, \
              mock.patch.object(coaching, "fetch_current_plan_summary", return_value=None), \
-             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"backbone": {}, "context_notes": [], "continuity_summary": None}), \
-             mock.patch.object(coaching, "maybe_post_reply_unified_refresh"), \
+             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"memory_notes": [], "continuity_summary": None}), \
+             mock.patch.object(coaching, "maybe_post_reply_memory_refresh"), \
              mock.patch.object(coaching, "create_action_token", return_value=None), \
              mock.patch.object(coaching, "run_response_generation_workflow") as run_response_generation_workflow:
             get_profile.return_value = {
@@ -724,8 +699,8 @@ class TestBuildProfileGatedReply(unittest.TestCase):
              mock.patch.object(coaching, "merge_coach_profile_fields", return_value=True), \
              mock.patch.object(coaching, "ensure_current_plan", return_value=True), \
              mock.patch.object(coaching, "fetch_current_plan_summary", return_value="Current plan - Goal: 10k."), \
-             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"backbone": {}, "context_notes": [], "continuity_summary": None}), \
-             mock.patch.object(coaching, "maybe_post_reply_unified_refresh"), \
+             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"memory_notes": [], "continuity_summary": None}), \
+             mock.patch.object(coaching, "maybe_post_reply_memory_refresh"), \
              mock.patch.object(coaching, "create_action_token", return_value=None), \
              mock.patch.object(coaching, "run_response_generation_workflow") as run_response_generation_workflow:
             get_profile.return_value = {
@@ -790,8 +765,8 @@ class TestBuildProfileGatedReply(unittest.TestCase):
              mock.patch.object(coaching, "merge_coach_profile_fields", return_value=True), \
              mock.patch.object(coaching, "ensure_current_plan", return_value=True), \
              mock.patch.object(coaching, "fetch_current_plan_summary", return_value=None), \
-             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"backbone": {}, "context_notes": [], "continuity_summary": None}), \
-             mock.patch.object(coaching, "maybe_post_reply_unified_refresh") as maybe_post_refresh, \
+             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"memory_notes": [], "continuity_summary": None}), \
+             mock.patch.object(coaching, "maybe_post_reply_memory_refresh") as maybe_post_refresh, \
              mock.patch.object(coaching, "run_response_generation_workflow") as run_response_generation_workflow:
             get_profile.return_value = {
                 "primary_goal": "10k",
@@ -831,8 +806,8 @@ class TestBuildProfileGatedReply(unittest.TestCase):
              mock.patch.object(coaching, "merge_coach_profile_fields") as merge, \
              mock.patch.object(coaching, "ensure_current_plan") as ensure_plan, \
              mock.patch.object(coaching, "fetch_current_plan_summary", return_value="Current plan - Goal: 10k."), \
-             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"backbone": {}, "context_notes": [], "continuity_summary": None}), \
-             mock.patch.object(coaching, "maybe_post_reply_unified_refresh") as maybe_post_refresh, \
+             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"memory_notes": [], "continuity_summary": None}), \
+             mock.patch.object(coaching, "maybe_post_reply_memory_refresh") as maybe_post_refresh, \
              mock.patch.object(coaching, "create_action_token", return_value=None), \
              mock.patch.object(coaching, "run_response_generation_workflow") as run_response_generation_workflow:
             get_profile.return_value = {
@@ -904,8 +879,8 @@ class TestBuildProfileGatedReply(unittest.TestCase):
              mock.patch.object(coaching, "merge_coach_profile_fields") as merge, \
              mock.patch.object(coaching, "ensure_current_plan") as ensure_plan, \
              mock.patch.object(coaching, "fetch_current_plan_summary", return_value=None), \
-             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"backbone": {}, "context_notes": [], "continuity_summary": None}), \
-             mock.patch.object(coaching, "maybe_post_reply_unified_refresh") as maybe_post_refresh, \
+             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"memory_notes": [], "continuity_summary": None}), \
+             mock.patch.object(coaching, "maybe_post_reply_memory_refresh") as maybe_post_refresh, \
              mock.patch.object(coaching, "create_action_token", return_value=None), \
              mock.patch.object(coaching, "run_response_generation_workflow") as run_response_generation_workflow:
             get_profile.return_value = {
@@ -945,8 +920,8 @@ class TestBuildProfileGatedReply(unittest.TestCase):
              mock.patch.object(coaching, "merge_coach_profile_fields", return_value=True), \
              mock.patch.object(coaching, "ensure_current_plan", return_value=True), \
              mock.patch.object(coaching, "fetch_current_plan_summary", return_value=None), \
-             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"backbone": {}, "context_notes": [], "continuity_summary": None}), \
-             mock.patch.object(coaching, "maybe_post_reply_unified_refresh") as maybe_post_refresh, \
+             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"memory_notes": [], "continuity_summary": None}), \
+             mock.patch.object(coaching, "maybe_post_reply_memory_refresh") as maybe_post_refresh, \
              mock.patch.object(coaching, "create_action_token", return_value=None), \
              mock.patch.object(coaching, "run_response_generation_workflow") as run_response_generation_workflow:
             get_profile.return_value = {
@@ -988,8 +963,8 @@ class TestBuildProfileGatedReply(unittest.TestCase):
              mock.patch.object(coaching, "merge_coach_profile_fields", return_value=True), \
              mock.patch.object(coaching, "ensure_current_plan", return_value=True), \
              mock.patch.object(coaching, "fetch_current_plan_summary", return_value="Current plan - Goal: 10k."), \
-             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"backbone": {}, "context_notes": [], "continuity_summary": None}), \
-             mock.patch.object(coaching, "maybe_post_reply_unified_refresh"), \
+             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"memory_notes": [], "continuity_summary": None}), \
+             mock.patch.object(coaching, "maybe_post_reply_memory_refresh"), \
              mock.patch.object(coaching, "create_action_token", return_value=None), \
              mock.patch.object(coaching, "run_response_generation_workflow") as run_response_generation_workflow:
             run_response_generation_workflow.return_value = _final_email_response("Keep the effort conversational on easy days.")
@@ -1022,8 +997,8 @@ class TestBuildProfileGatedReply(unittest.TestCase):
              mock.patch.object(coaching, "merge_coach_profile_fields", return_value=True), \
              mock.patch.object(coaching, "ensure_current_plan", return_value=True), \
              mock.patch.object(coaching, "fetch_current_plan_summary", return_value="Current plan - Goal: 10k."), \
-             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"backbone": {}, "context_notes": [], "continuity_summary": None}), \
-             mock.patch.object(coaching, "maybe_post_reply_unified_refresh"), \
+             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"memory_notes": [], "continuity_summary": None}), \
+             mock.patch.object(coaching, "maybe_post_reply_memory_refresh"), \
              mock.patch.object(coaching, "create_action_token", return_value=None), \
              mock.patch.object(coaching, "run_response_generation_workflow") as run_response_generation_workflow:
             run_response_generation_workflow.return_value = _final_email_response(
@@ -1065,8 +1040,8 @@ class TestBuildProfileGatedReply(unittest.TestCase):
              mock.patch.object(coaching, "merge_coach_profile_fields", return_value=True), \
              mock.patch.object(coaching, "ensure_current_plan", return_value=True), \
              mock.patch.object(coaching, "fetch_current_plan_summary", return_value="Current plan - Goal: 10k."), \
-             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"backbone": {}, "context_notes": [], "continuity_summary": None}), \
-             mock.patch.object(coaching, "maybe_post_reply_unified_refresh"), \
+             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"memory_notes": [], "continuity_summary": None}), \
+             mock.patch.object(coaching, "maybe_post_reply_memory_refresh"), \
              mock.patch.object(coaching, "create_action_token", return_value=None), \
              mock.patch.object(coaching, "run_response_generation_workflow") as run_response_generation_workflow:
             run_response_generation_workflow.return_value = _final_email_response("Nice work on the PR. Let the next recovery day stay easy.")
@@ -1098,8 +1073,8 @@ class TestBuildProfileGatedReply(unittest.TestCase):
              mock.patch.object(coaching, "merge_coach_profile_fields", return_value=True), \
              mock.patch.object(coaching, "ensure_current_plan", return_value=True), \
              mock.patch.object(coaching, "fetch_current_plan_summary", return_value="Current plan - Goal: 10k."), \
-             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"backbone": {}, "context_notes": [], "continuity_summary": None}), \
-             mock.patch.object(coaching, "maybe_post_reply_unified_refresh"), \
+             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"memory_notes": [], "continuity_summary": None}), \
+             mock.patch.object(coaching, "maybe_post_reply_memory_refresh"), \
              mock.patch.object(coaching, "create_action_token", return_value=None), \
              mock.patch.object(coaching, "run_response_generation_workflow") as run_response_generation_workflow:
             run_response_generation_workflow.return_value = _final_email_response("Keep one quality session and protect recovery.")
@@ -1131,8 +1106,8 @@ class TestBuildProfileGatedReply(unittest.TestCase):
              mock.patch.object(coaching, "merge_coach_profile_fields", return_value=True), \
              mock.patch.object(coaching, "ensure_current_plan", return_value=True), \
              mock.patch.object(coaching, "fetch_current_plan_summary", return_value="Current plan - Goal: 10k."), \
-             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"backbone": {}, "context_notes": [], "continuity_summary": None}), \
-             mock.patch.object(coaching, "maybe_post_reply_unified_refresh"), \
+             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"memory_notes": [], "continuity_summary": None}), \
+             mock.patch.object(coaching, "maybe_post_reply_memory_refresh"), \
              mock.patch.object(coaching, "create_action_token", return_value=None), \
              mock.patch.object(coaching, "run_response_generation_workflow", side_effect=coaching.ResponseGenerationProposalError("invalid_json_response")), \
              mock.patch.object(coaching.logger, "error") as logger_error:
@@ -1168,8 +1143,8 @@ class TestBuildProfileGatedReply(unittest.TestCase):
              mock.patch.object(coaching, "merge_coach_profile_fields", return_value=True), \
              mock.patch.object(coaching, "ensure_current_plan", return_value=True), \
              mock.patch.object(coaching, "fetch_current_plan_summary", return_value="Current plan - Goal: 10k."), \
-             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"backbone": {}, "context_notes": [], "continuity_summary": None}), \
-             mock.patch.object(coaching, "maybe_post_reply_unified_refresh"), \
+             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"memory_notes": [], "continuity_summary": None}), \
+             mock.patch.object(coaching, "maybe_post_reply_memory_refresh"), \
              mock.patch.object(coaching, "create_action_token", return_value=None), \
              mock.patch.object(coaching, "run_response_generation_workflow", return_value={"final_email_body": "   "}):
             reply = coaching.build_profile_gated_reply(

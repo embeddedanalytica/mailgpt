@@ -70,13 +70,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--min-turns",
         type=int,
-        default=10,
+        default=100,
         help="Default minimum turns when not provided by a scenario.",
     )
     parser.add_argument(
         "--max-turns",
         type=int,
-        default=30,
+        default=100,
         help="Default maximum turns when not provided by a scenario.",
     )
     parser.add_argument(

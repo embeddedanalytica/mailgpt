@@ -25,12 +25,9 @@ import boto3
 from boto3.dynamodb.conditions import Key
 from boto3.dynamodb.types import TypeSerializer
 from athlete_memory_contract import (
-    BACKBONE_SLOT_KEYS,
     AthleteMemoryContractError,
-    BackboneSlots,
     ContinuitySummary,
-    validate_backbone_slots,
-    validate_context_note_list,
+    validate_memory_notes,
 )
 
 logger = logging.getLogger()
@@ -496,58 +493,39 @@ def get_continuity_summary(athlete_id: str) -> Optional[Dict[str, Any]]:
 
 
 # ============================================================================
-# AM3 UNIFIED MEMORY (backbone + context_notes + continuity)
+# AM2 DURABLE MEMORY (memory_notes + continuity)
 # ============================================================================
 
 
-def get_backbone(athlete_id: str) -> Dict[str, Any]:
-    """Returns the persisted backbone dict, or empty slots if absent/invalid."""
+def get_memory_notes(athlete_id: str) -> List[Dict[str, Any]]:
+    """Returns the persisted memory_notes list, or empty list if absent/invalid."""
     profile = _get_raw_coach_profile(athlete_id) or {}
-    raw_backbone = profile.get("backbone")
-    if not isinstance(raw_backbone, dict):
-        return BackboneSlots.empty().to_dict()
-    try:
-        return validate_backbone_slots(raw_backbone).to_dict()
-    except AthleteMemoryContractError as exc:
-        logger.error(
-            "Invalid persisted backbone athlete_id=%s error=%s",
-            athlete_id,
-            exc,
-        )
-        return BackboneSlots.empty().to_dict()
-
-
-def get_context_notes(athlete_id: str) -> List[Dict[str, Any]]:
-    """Returns the persisted context_notes list, or empty list if absent/invalid."""
-    profile = _get_raw_coach_profile(athlete_id) or {}
-    raw_notes = profile.get("context_notes")
+    raw_notes = profile.get("memory_notes")
     if not isinstance(raw_notes, list):
         return []
     try:
-        return validate_context_note_list(raw_notes)
+        return validate_memory_notes(raw_notes)
     except AthleteMemoryContractError as exc:
         logger.error(
-            "Invalid persisted context_notes athlete_id=%s error=%s",
+            "Invalid persisted memory_notes athlete_id=%s error=%s",
             athlete_id,
             exc,
         )
         return []
 
 
-def replace_unified_memory(
+def replace_memory(
     athlete_id: str,
-    backbone: Dict[str, Any],
-    context_notes: List[Dict[str, Any]],
+    memory_notes: List[Dict[str, Any]],
     continuity_summary: Dict[str, Any],
 ) -> bool:
-    """Atomically replaces backbone + context_notes + continuity_summary on coach_profiles."""
+    """Atomically replaces memory_notes + continuity_summary on coach_profiles."""
     try:
-        validated_backbone = validate_backbone_slots(backbone).to_dict()
-        validated_notes = validate_context_note_list(context_notes)
+        validated_notes = validate_memory_notes(memory_notes)
         validated_continuity = ContinuitySummary.from_dict(continuity_summary).to_dict()
     except AthleteMemoryContractError as exc:
         logger.error(
-            "Invalid unified memory payload athlete_id=%s error=%s",
+            "Invalid memory payload athlete_id=%s error=%s",
             athlete_id,
             exc,
         )
@@ -561,56 +539,35 @@ def replace_unified_memory(
             UpdateExpression=(
                 "SET #created_at = if_not_exists(#created_at, :created_at), "
                 "#updated_at = :updated_at, "
-                "#backbone = :backbone, "
-                "#context_notes = :context_notes, "
+                "#memory_notes = :memory_notes, "
                 "#continuity_summary = :continuity_summary"
             ),
             ExpressionAttributeNames={
                 "#created_at": "created_at",
                 "#updated_at": "updated_at",
-                "#backbone": "backbone",
-                "#context_notes": "context_notes",
+                "#memory_notes": "memory_notes",
                 "#continuity_summary": "continuity_summary",
             },
             ExpressionAttributeValues=serialize_dynamodb_payload({
                 ":created_at": now,
                 ":updated_at": now,
-                ":backbone": validated_backbone,
-                ":context_notes": validated_notes,
+                ":memory_notes": validated_notes,
                 ":continuity_summary": validated_continuity,
             }),
         )
         return True
     except ClientError as e:
-        logger.error(f"Error replacing unified memory for athlete_id={athlete_id}: {e}")
+        logger.error(f"Error replacing memory for athlete_id={athlete_id}: {e}")
         return False
 
 
 def get_memory_context_for_response_generation(athlete_id: str) -> Dict[str, Any]:
-    """Returns AM3 memory context (backbone + context_notes + continuity) for response generation.
-
-    If old-format data is detected (has memory_notes but no backbone), returns
-    empty memory context — the first post-reply refresh will regenerate.
-    """
+    """Returns AM2 memory context (memory_notes + continuity) for response generation."""
     raw_profile = _get_raw_coach_profile(athlete_id) or {}
-
-    # Detect old format: has memory_notes but no backbone
-    has_backbone = isinstance(raw_profile.get("backbone"), dict)
-    if not has_backbone:
-        continuity_summary = _get_valid_continuity_summary_from_profile(athlete_id, raw_profile)
-        return {
-            "backbone": BackboneSlots.empty().to_dict(),
-            "context_notes": [],
-            "continuity_summary": continuity_summary,
-        }
-
-    backbone = get_backbone(athlete_id)
-    context_notes = get_context_notes(athlete_id)
+    memory_notes = get_memory_notes(athlete_id)
     continuity_summary = _get_valid_continuity_summary_from_profile(athlete_id, raw_profile)
-
     return {
-        "backbone": backbone,
-        "context_notes": context_notes,
+        "memory_notes": memory_notes,
         "continuity_summary": continuity_summary,
     }
 
@@ -1013,6 +970,10 @@ def ensure_progress_snapshot_exists(athlete_id: str) -> bool:
         logger.error(f"Error ensuring progress snapshot athlete_id={athlete_id}: {e}")
         return False
 
+
+# ============================================================================
+# PROGRESS SNAPSHOTS + MANUAL ACTIVITY SNAPSHOTS
+# ============================================================================
 
 def get_progress_snapshot(athlete_id: str) -> Optional[Dict[str, Any]]:
     try:

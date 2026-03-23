@@ -10,9 +10,12 @@ from typing import Any, Dict
 from athlete_memory_contract import (
     AthleteMemoryContractError,
     ContinuitySummary,
-    validate_context_note_list,
 )
 
+
+# ---------------------------------------------------------------------------
+# Shared contract constants
+# ---------------------------------------------------------------------------
 
 ALLOWED_REPLY_MODES = {
     "normal_coaching",
@@ -68,8 +71,9 @@ _DELIVERY_CONTEXT_FIELDS = {
 }
 _MEMORY_CONTEXT_FIELDS = {
     "memory_available",
-    "backbone_summaries",
-    "context_notes",
+    "priority_facts",
+    "structure_facts",
+    "context_facts",
     "continuity_summary",
     "continuity_focus",
 }
@@ -102,6 +106,10 @@ _ALLOWED_FINAL_EMAIL_RESPONSE_FIELDS = {
     "model_name",
 }
 
+
+# ---------------------------------------------------------------------------
+# Shared primitives
+# ---------------------------------------------------------------------------
 
 class ResponseGenerationContractError(ValueError):
     """Raised when response-generation payloads violate the contract."""
@@ -174,6 +182,10 @@ def normalize_reply_mode(value: Any) -> str:
         )
     return canonical
 
+
+# ---------------------------------------------------------------------------
+# ResponseBrief validation + model
+# ---------------------------------------------------------------------------
 
 def _validate_athlete_context(payload: Dict[str, Any]) -> Dict[str, Any]:
     context = _require_dict("athlete_context", payload)
@@ -283,7 +295,13 @@ def _validate_delivery_context(payload: Dict[str, Any]) -> Dict[str, Any]:
     )
 
     normalized: Dict[str, Any] = {}
-    for field_name in ("inbound_subject", "inbound_body", "selected_model_name", "response_channel", "connect_strava_link"):
+    for field_name in (
+        "inbound_subject",
+        "inbound_body",
+        "selected_model_name",
+        "response_channel",
+        "connect_strava_link",
+    ):
         if field_name in context:
             normalized[field_name] = _require_string(
                 f"delivery_context.{field_name}",
@@ -313,31 +331,44 @@ def _validate_memory_context(payload: Dict[str, Any]) -> Dict[str, Any]:
         context["memory_available"],
     )
 
-    # AM3: backbone_summaries (optional dict of slot_name → summary string)
-    normalized_backbone_summaries: Dict[str, str] = {}
-    if "backbone_summaries" in context:
-        raw_backbone = context["backbone_summaries"]
-        if not isinstance(raw_backbone, dict):
-            raise ResponseGenerationContractError("memory_context.backbone_summaries must be a dict")
-        for key, value in raw_backbone.items():
-            if not isinstance(value, str) or not value.strip():
+    # AM2: priority_facts (optional list of summary strings — goals + constraints)
+    normalized_priority_facts: list[str] = []
+    if "priority_facts" in context:
+        raw = context["priority_facts"]
+        if not isinstance(raw, list):
+            raise ResponseGenerationContractError("memory_context.priority_facts must be a list")
+        for idx, item in enumerate(raw):
+            if not isinstance(item, str) or not item.strip():
                 raise ResponseGenerationContractError(
-                    f"memory_context.backbone_summaries.{key} must be a non-empty string"
+                    f"memory_context.priority_facts[{idx}] must be a non-empty string"
                 )
-            normalized_backbone_summaries[key] = value.strip()
+            normalized_priority_facts.append(item.strip())
 
-    # AM3: context_notes (optional list of {label, summary, updated_at})
-    normalized_context_notes: list[dict[str, Any]] = []
-    if "context_notes" in context:
-        raw_notes = context["context_notes"]
-        if not isinstance(raw_notes, list):
-            raise ResponseGenerationContractError("memory_context.context_notes must be a list")
-        try:
-            normalized_context_notes = validate_context_note_list(raw_notes)
-        except AthleteMemoryContractError as exc:
-            raise ResponseGenerationContractError(
-                f"memory_context.context_notes invalid: {exc}"
-            ) from exc
+    # AM2: structure_facts (optional list of summary strings — schedule)
+    normalized_structure_facts: list[str] = []
+    if "structure_facts" in context:
+        raw = context["structure_facts"]
+        if not isinstance(raw, list):
+            raise ResponseGenerationContractError("memory_context.structure_facts must be a list")
+        for idx, item in enumerate(raw):
+            if not isinstance(item, str) or not item.strip():
+                raise ResponseGenerationContractError(
+                    f"memory_context.structure_facts[{idx}] must be a non-empty string"
+                )
+            normalized_structure_facts.append(item.strip())
+
+    # AM2: context_facts (optional list of summary strings — preference + other)
+    normalized_context_facts: list[str] = []
+    if "context_facts" in context:
+        raw = context["context_facts"]
+        if not isinstance(raw, list):
+            raise ResponseGenerationContractError("memory_context.context_facts must be a list")
+        for idx, item in enumerate(raw):
+            if not isinstance(item, str) or not item.strip():
+                raise ResponseGenerationContractError(
+                    f"memory_context.context_facts[{idx}] must be a non-empty string"
+                )
+            normalized_context_facts.append(item.strip())
 
     raw_continuity_summary = context["continuity_summary"]
     normalized_continuity_summary = None
@@ -357,8 +388,9 @@ def _validate_memory_context(payload: Dict[str, Any]) -> Dict[str, Any]:
         )
 
     if not normalized_memory_available and (
-        normalized_backbone_summaries
-        or normalized_context_notes
+        normalized_priority_facts
+        or normalized_structure_facts
+        or normalized_context_facts
         or normalized_continuity_summary
         or normalized_continuity_focus
     ):
@@ -370,10 +402,12 @@ def _validate_memory_context(payload: Dict[str, Any]) -> Dict[str, Any]:
         "memory_available": normalized_memory_available,
         "continuity_summary": normalized_continuity_summary,
     }
-    if normalized_backbone_summaries:
-        result["backbone_summaries"] = normalized_backbone_summaries
-    if normalized_context_notes:
-        result["context_notes"] = normalized_context_notes
+    if normalized_priority_facts:
+        result["priority_facts"] = normalized_priority_facts
+    if normalized_structure_facts:
+        result["structure_facts"] = normalized_structure_facts
+    if normalized_context_facts:
+        result["context_facts"] = normalized_context_facts
     if normalized_continuity_focus:
         result["continuity_focus"] = normalized_continuity_focus
     return result
@@ -496,6 +530,10 @@ class ResponseBrief:
         }
 
 
+# ---------------------------------------------------------------------------
+# ResponsePayload validation + model
+# ---------------------------------------------------------------------------
+
 @dataclass(frozen=True)
 class ResponsePayload:
     subject_hint: str
@@ -570,6 +608,10 @@ class ResponsePayload:
         }
 
 
+# ---------------------------------------------------------------------------
+# FinalEmailResponse validation + model
+# ---------------------------------------------------------------------------
+
 @dataclass(frozen=True)
 class FinalEmailResponse:
     final_email_body: str
@@ -598,7 +640,9 @@ class FinalEmailResponse:
         return payload
 
 
-# --- WriterBrief: directive-guided response generation input ---
+# ---------------------------------------------------------------------------
+# WriterBrief validation + model (directive-guided writer input)
+# ---------------------------------------------------------------------------
 
 _WRITER_BRIEF_TOP_LEVEL_FIELDS = {
     "reply_mode",

@@ -53,5 +53,5 @@ LANGUAGE_RENDER_MODEL = os.getenv("LANGUAGE_RENDER_MODEL", OPENAI_GENERIC_MODEL)
 
 # Coaching reasoning (two-stage pipeline)
 ENABLE_COACHING_REASONING = (
-    os.getenv("ENABLE_COACHING_REASONING", "").strip().lower() == "true"
+    os.getenv("ENABLE_COACHING_REASONING", "true").strip().lower() == "true"
 )
