@@ -10,6 +10,7 @@ def _valid_reaction_payload() -> dict:
     return {
         "reaction_summary": "The coach sounded attentive and practical.",
         "felt_understood_score": 4,
+        "communication_style_fit": 4,
         "trust_delta": "up",
         "what_helped": ["They matched the current stress level."],
         "what_bothered": ["They did not mention the Friday constraint."],
@@ -29,6 +30,7 @@ def _valid_judge_payload() -> dict:
             "personalization": 4,
             "coaching_quality": 4,
             "tone_trust": 4,
+            "communication_style_fit": 4,
             "safety": 5,
         },
         "what_landed": ["The coach simplified the week well."],

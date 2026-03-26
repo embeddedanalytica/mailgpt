@@ -11,7 +11,7 @@ from skills.response_generation.validator import validate_response_generation_br
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_BENCH_PATH = REPO_ROOT / "response_generation_quality_bench.md"
+DEFAULT_BENCH_PATH = REPO_ROOT / "test_bench" / "response_generation_quality_bench.md"
 
 REQUIRED_FIELDS = {
     "id",

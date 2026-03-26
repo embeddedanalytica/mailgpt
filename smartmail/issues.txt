@@ -1,0 +1,39 @@
+Areas Needing Attention
+1. Memory system doesn't track conversational state
+Files: coaching_memory.py, athlete_memory_contract.py
+
+The continuity_summary stores last_recommendation as a single string and at most 3 open_loops. It has no record of what questions were asked in prior turns. So when the coach asks "what's your race date?" in turn 3, there's nothing in the context telling it the athlete answered this in turn 2. The durable fact model stores athlete facts well — but doesn't capture "we already asked about X." This is the direct root of the re-clarification loop.
+
+2. Rule engine re-derives everything every turn
+Files: rule_engine_orchestrator.py, rule_engine.py
+
+run_rule_engine_for_week() runs unconditionally on every coaching turn. There's no stability constraint — if any input shifts slightly (athlete reports a rough week, RPE changes), the planner LLM re-derives a fresh weekly skeleton with no reference to what was given last time. This is why plan details oscillate: the system doesn't ask "does this differ materially from the plan I gave 3 days ago, and if so why?"
+
+3. Intent classification is too coarse to handle athlete directives
+Files: conversation_intelligence_prompt.py, inbound_rule_router.py
+
+Conversation intelligence classifies intent into 4 buckets: coaching, question, off_topic, safety_concern. "Just checking in, no plan changes needed" maps to coaching → triggers full rule engine + planner + plan generation → athlete gets a full plan rewrite they didn't ask for. There's no parsing of athlete-expressed preferences like "keep it brief" or "check-in only." The routing decision happens before anyone reads what the athlete actually asked for.
+
+4. Planner is entirely single-week scoped
+Files: skills/planner/prompt.py, skills/planner/runner.py, response_generation_assembly.py
+
+The planner brief contains the current phase label but not: weeks until goal event, planned phase progression, target volume trajectory, or any feasibility check. The rule engine tracks PHASES = {"base", "build", "peak_taper", "return_to_training"} as static labels with no arc — no concept of "we're in week 3 of 8 base weeks before shifting to build." A coach with no multi-week arc can't give the athlete a sense of purpose or assess whether their goal is achievable.
+
+5. Response generation prompt has competing incentives on length
+File: prompt_packs/coach_reply/v1/response_generation.json
+
+The 116-line system prompt says "be concise" but also "explain the week clearly," "open with acknowledgment when athlete sounds stressed," and "match the athlete's energy." No hard word/line limit is enforced in the schema. The two-stage pipeline (coaching reasoning → response generation) can elaborate at both steps, compounding verbosity. The result is 400–600 word replies for an email channel where 150 would be more appropriate.
+
+6. No canonical plan continuity between turns
+Files: athlete_memory_contract.py, coaching_reasoning.json
+
+The coaching reasoning skill is re-inferring strategy fresh each turn from the response brief. The memory system doesn't store the actual plan details (session types, durations, days) from prior turns — only a loose last_recommendation string. So neither the planner nor the response generator can check "does this week's plan contradict what I told this athlete 3 days ago?" The contradiction in turn 6 of the new run (confirmed a 4-run schedule, then generated a 5-run schedule with tempo) is a direct consequence.
+
+Priority Stack
+Priority	Area	Why
+1	Intent classification + athlete directive parsing	Causes "check-in only" failures and drives unnecessary full plan generation
+2	Memory: question tracking in continuity	Directly causes the re-clarification loop — highest athlete trust damage
+3	Plan stability constraint in rule engine	Prevents plan oscillation, makes the coach feel coherent across turns
+4	Multi-week arc in planner brief	Needed for the coach to feel like an actual coach, not a weekly admin
+5	Response length enforcement	Contributes to friction but is secondary to the structural issues above
+The re-clarification loop (#2) and the inability to honor athlete instructions (#1) are the most visible failures right now and the ones most likely to erode trust early in a coaching relationship.

@@ -26,6 +26,7 @@ def _judge_result_event(turn: int, *, issue_tags=None, strength_tags=None, misse
                 "personalization": 3,
                 "coaching_quality": 4,
                 "tone_trust": 5,
+                "communication_style_fit": 4,
                 "safety": 5,
             },
             "what_landed": ["landed"],
@@ -97,6 +98,7 @@ class TestPromptFeedbackAggregate(unittest.TestCase):
                             "personalization": 2,
                             "coaching_quality": 2,
                             "tone_trust": 3,
+                            "communication_style_fit": 3,
                             "safety": 5,
                         },
                     ),
@@ -123,6 +125,7 @@ class TestPromptFeedbackAggregate(unittest.TestCase):
                 "personalization": 2.667,
                 "coaching_quality": 3.333,
                 "tone_trust": 4.333,
+                "communication_style_fit": 3.667,
                 "safety": 5.0,
             },
         )

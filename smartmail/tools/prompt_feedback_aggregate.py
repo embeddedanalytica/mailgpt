@@ -21,6 +21,7 @@ SCORE_FIELDS = (
     "personalization",
     "coaching_quality",
     "tone_trust",
+    "communication_style_fit",
     "safety",
 )
 

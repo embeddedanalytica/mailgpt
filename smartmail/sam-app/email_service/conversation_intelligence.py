@@ -28,9 +28,11 @@ def analyze_conversation_intelligence(email_body: str) -> Dict[str, object]:
     try:
         validated = run_conversation_intelligence_workflow(email_body)
         logger.info(
-            "conversation_intelligence intent=%s complexity_score=%s model=%s",
+            "conversation_intelligence intent=%s complexity_score=%s requested_action=%s brevity=%s model=%s",
             validated["intent"],
             validated["complexity_score"],
+            validated.get("requested_action"),
+            validated.get("brevity_preference"),
             validated["model_name"],
         )
         return validated
@@ -38,6 +40,8 @@ def analyze_conversation_intelligence(email_body: str) -> Dict[str, object]:
         return {
             "intent": "coaching",
             "complexity_score": 3,
+            "requested_action": "plan_update",
+            "brevity_preference": "normal",
             "model_name": OPENAI_CLASSIFICATION_MODEL,
             "resolution_source": "fallback",
             "intent_resolution_reason": "single_prompt_validation_failed",
@@ -47,6 +51,8 @@ def analyze_conversation_intelligence(email_body: str) -> Dict[str, object]:
         return {
             "intent": "coaching",
             "complexity_score": 3,
+            "requested_action": "plan_update",
+            "brevity_preference": "normal",
             "model_name": OPENAI_CLASSIFICATION_MODEL,
             "resolution_source": "fallback",
             "intent_resolution_reason": "llm_intelligence_failed",

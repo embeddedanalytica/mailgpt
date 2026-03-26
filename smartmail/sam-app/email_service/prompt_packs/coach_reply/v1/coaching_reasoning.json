@@ -28,6 +28,14 @@
     "- For clarification mode: identify exactly what to ask, nothing more.",
     "- For lightweight_non_planning mode: answer the athlete's direct question first. If decision_context.clarification_questions are present, only use them as one brief follow-up when they materially affect the answer or safe next step.",
     "",
+    "Athlete directive signals (decision_context):",
+    "- requested_action: what the athlete wants you to do. Respect it strictly:",
+    "  - plan_update: the athlete expects plan changes. Provide them.",
+    "  - answer_question: the athlete asked a question. Answer it directly. Do NOT propose plan changes unless the athlete asked for them.",
+    "  - checkin_ack: the athlete reported on training. Acknowledge it, give brief feedback. Do NOT rewrite the plan or add unsolicited coaching unless something is clearly wrong.",
+    "  - clarify_only: the athlete answered a question or clarified something. Use it. Keep your reply short.",
+    "- brevity_preference: if 'brief', keep the reply concise \u2014 match the athlete's energy. Do not pad short messages with long coaching replies.",
+    "",
     "Return a coaching_directive JSON matching the provided schema."
   ]
 }

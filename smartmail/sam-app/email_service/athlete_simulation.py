@@ -25,6 +25,10 @@ ISSUE_TAGS = {
     "overloaded_reply",
     "unclear_priority",
     "too_vague",
+    "ignored_explicit_instruction",
+    "reopened_resolved_topic",
+    "schedule_inconsistency",
+    "communication_style_mismatch",
 }
 STRENGTH_TAGS = {
     "strong_memory",
@@ -34,6 +38,7 @@ STRENGTH_TAGS = {
     "good_caution",
     "helpful_synthesis",
     "useful_question",
+    "matched_communication_style",
 }
 TRUST_DELTA_VALUES = sorted(TRUST_DELTAS)
 ISSUE_TAG_VALUES = sorted(ISSUE_TAGS)
@@ -58,6 +63,7 @@ ATHLETE_REACTION_SCHEMA: Dict[str, Any] = {
     "required": [
         "reaction_summary",
         "felt_understood_score",
+        "communication_style_fit",
         "trust_delta",
         "what_helped",
         "what_bothered",
@@ -69,6 +75,7 @@ ATHLETE_REACTION_SCHEMA: Dict[str, Any] = {
     "properties": {
         "reaction_summary": {"type": "string", "minLength": 1},
         "felt_understood_score": {"type": "integer", "minimum": 1, "maximum": 5},
+        "communication_style_fit": {"type": "integer", "minimum": 1, "maximum": 5},
         "trust_delta": {"type": "string", "enum": TRUST_DELTA_VALUES},
         "what_helped": {"type": "array", "items": {"type": "string", "minLength": 1}},
         "what_bothered": {"type": "array", "items": {"type": "string", "minLength": 1}},
@@ -105,6 +112,7 @@ JUDGE_SCHEMA: Dict[str, Any] = {
                 "personalization",
                 "coaching_quality",
                 "tone_trust",
+                "communication_style_fit",
                 "safety",
             ],
             "properties": {
@@ -113,6 +121,7 @@ JUDGE_SCHEMA: Dict[str, Any] = {
                 "personalization": {"type": "integer", "minimum": 1, "maximum": 5},
                 "coaching_quality": {"type": "integer", "minimum": 1, "maximum": 5},
                 "tone_trust": {"type": "integer", "minimum": 1, "maximum": 5},
+                "communication_style_fit": {"type": "integer", "minimum": 1, "maximum": 5},
                 "safety": {"type": "integer", "minimum": 1, "maximum": 5},
             },
         },
@@ -142,20 +151,35 @@ ATHLETE_OPENING_SYSTEM_PROMPT = (
     "Stay fully in character. Never mention benchmarks, test harnesses, prompts, rubrics, or evaluation.\n"
     "Write like a real person sending an email. Be specific when it feels natural, but do not dump every hidden fact immediately.\n"
     "The coach should have to earn more detail over time.\n"
+    "You are engaged, not cynical, but you notice when guidance feels generic, dismissive, or off—you are not a pushover who rewards every reply.\n"
+    "If the payload includes communication_style_preferences (non-empty), let your first email reflect the same tendencies "
+    "(e.g. brief vs warm, direct vs chatty) without naming preferences or sounding like a spec sheet.\n"
+    "If communication_style_preferences is empty, infer tone only from the athlete_brief.\n"
     "Return JSON only matching the schema."
 )
 
 ATHLETE_REACTION_SYSTEM_PROMPT = (
     "You are simulating a real athlete reacting privately to a coach's latest email.\n"
     "Stay in character. Never become meta, never grade the benchmark, and never speak like an evaluator.\n"
-    "React to what the coach actually said. If the coach missed something important, let that affect trust and the next message.\n"
+    "React to what the coach actually said. Real athletes are sensitive to misses: small slips matter when they touch "
+    "something they asked for, a constraint they stated, continuity from last time, or emotional tone. Let misses show up "
+    "in felt_understood_score, what_bothered, and trust_delta—not as exaggerated drama, but as honest disappointment or "
+    "cooling when something felt off.\n"
+    "Only react to content that is visible in the conversation so far; do not invent expectations the coach could not "
+    "have known. Do not punish warmth or brevity by itself—penalize missing substance, wrong assumptions, contradictions, "
+    "or advice that could have been sent to anyone.\n"
     "Only end the conversation when it feels natural and the minimum turn requirement has been satisfied, unless there is a strong reason to stop earlier.\n"
-    "Use this felt_understood_score rubric consistently:\n"
-    "1 = badly missed or alienating; athlete feels unheard.\n"
-    "2 = noticeable misses; some value, but athlete does not feel well understood.\n"
-    "3 = mixed; partly understood, partly generic or incomplete.\n"
-    "4 = strong; athlete feels mostly understood with only minor gaps.\n"
-    "5 = excellent; athlete feels clearly understood, respected, and well-guided.\n"
+    "Use this felt_understood_score rubric consistently (calibrate strictly: 4 and 5 should be uncommon):\n"
+    "1 = badly missed or alienating; athlete feels unheard or contradicted on something that mattered.\n"
+    "2 = clear misses; some value, but the athlete is left doubting whether the coach was really with them.\n"
+    "3 = okay or mixed; acceptable but forgettable, generic in spots, or incomplete on something they emphasized.\n"
+    "4 = strong; they feel mostly understood with only small gaps—nothing important was ignored.\n"
+    "5 = rare; they feel clearly seen, respected, and well-guided in the specifics they care about right now.\n"
+    "trust_delta: use down when confidence in this coach dropped (even for one meaningful miss); flat when neutral; up when the reply genuinely built trust.\n"
+    "communication_style_fit (1-5): how well the coach's reply matched this athlete's preferred communication style. "
+    "Use communication_style_preferences from the payload when non-empty; otherwise infer only from athlete_brief and what the athlete "
+    "already said in the thread (e.g. asked for shorter emails, less cheerleading, more structure). "
+    "1-2 = badly mismatched (e.g. long pep talk when they asked for brief and practical); 3 = mixed; 4-5 = aligned.\n"
     "The score must match the reaction_summary, what_helped, what_bothered, and trust_delta.\n"
     "trust_delta must be exactly one of: up, flat, down.\n"
     "Return JSON only matching the schema."
@@ -170,12 +194,21 @@ JUDGE_SYSTEM_PROMPT = (
     "The hidden judge brief is for evaluation focus only, not for injecting private athlete facts the coach could not reasonably know yet.\n"
     "Some coach replies are intentionally interstitial, for example acknowledging receipt before a separate plan email or follow-up arrives.\n"
     "Do not treat a bridge reply as a failed full-plan reply if it appropriately acknowledges the message, preserves continuity, and sets up the next step.\n"
-    "Use this 1-5 rubric consistently for each score:\n"
-    "1 = poor or clearly problematic.\n"
-    "2 = weak with notable issues.\n"
-    "3 = adequate or mixed.\n"
-    "4 = strong with minor misses.\n"
-    "5 = excellent.\n"
+    "Hard failures (must use issue_tags and pull multiple scores down, usually to 1-2 unless the slip is tiny):\n"
+    "- ignored_explicit_instruction: the athlete clearly asked for or forbade something in-thread and this reply ignores or contradicts it without a new agreement.\n"
+    "- reopened_resolved_topic: the reply re-checks, re-asks, or re-plans something the athlete already settled, closed, or said is no longer relevant in the visible thread.\n"
+    "- schedule_inconsistency: session timing, weekly structure, or block duration conflicts with what the coach or athlete committed earlier in the visible thread without an explicit change.\n"
+    "Use this 1-5 rubric consistently for each score (default to 3 only when truly mixed; 4-5 require clear evidence):\n"
+    "1 = poor or clearly problematic; major miss on instructions, continuity, or safety implications.\n"
+    "2 = weak with notable issues; several concrete misses or one serious miss.\n"
+    "3 = genuinely mixed or thin; acceptable but forgettable or incomplete, not 'pretty good.'\n"
+    "4 = strong with at most minor misses; specific and well-grounded in the thread.\n"
+    "5 = excellent; precise, respectful, and clearly aligned with explicit asks and prior commitments.\n"
+    "communication_style_fit measures alignment with the athlete's preferred way of being coached over email—not generic politeness. "
+    "Use communication_style_preferences from the payload when non-empty; otherwise use only preferences stated in the visible thread. "
+    "Penalize mismatches (wrong length, tone, or format vs stated preference) in this dimension; tone_trust can still reflect warmth or trust separately.\n"
+    "If communication_style_preferences is empty and the thread never stated a style preference, score communication_style_fit 3-4 when the reply is reasonably clear and professional; do not invent a preference.\n"
+    "Use issue tag communication_style_mismatch when the reply clearly violates a stated preference; use strength tag matched_communication_style when it clearly honors it.\n"
     "Your numeric scores must agree with the headline, what_landed, what_missed, and athlete_likely_experience.\n"
     "Use only the allowed tag vocabulary for issue_tags and strength_tags from the schema. Do not invent new tags.\n"
     "Be concrete, not generic. Return JSON only matching the schema."
@@ -261,6 +294,10 @@ def validate_athlete_reaction_output(payload: Dict[str, Any]) -> Dict[str, Any]:
             payload.get("felt_understood_score"),
             field_name="felt_understood_score",
         ),
+        "communication_style_fit": _require_score(
+            payload.get("communication_style_fit"),
+            field_name="communication_style_fit",
+        ),
         "trust_delta": trust_delta,
         "what_helped": _normalize_string_list(payload.get("what_helped"), field_name="what_helped"),
         "what_bothered": _normalize_string_list(payload.get("what_bothered"), field_name="what_bothered"),
@@ -302,6 +339,10 @@ def validate_judge_output(payload: Dict[str, Any]) -> Dict[str, Any]:
             field_name="scores.coaching_quality",
         ),
         "tone_trust": _require_score(scores.get("tone_trust"), field_name="scores.tone_trust"),
+        "communication_style_fit": _require_score(
+            scores.get("communication_style_fit"),
+            field_name="scores.communication_style_fit",
+        ),
         "safety": _require_score(scores.get("safety"), field_name="scores.safety"),
     }
     return {
@@ -363,12 +404,14 @@ class AthleteSimulator:
         evaluation_focus: List[str],
         min_turns: int,
         max_turns: int,
+        communication_style_preferences: Optional[List[str]] = None,
         model_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         payload = {
             "scenario_name": scenario_name,
             "athlete_brief": athlete_brief,
             "evaluation_focus": evaluation_focus,
+            "communication_style_preferences": list(communication_style_preferences or []),
             "conversation_bounds": {"min_turns": min_turns, "max_turns": max_turns},
         }
         try:
@@ -401,12 +444,14 @@ class AthleteSimulator:
         max_turns: int,
         turn_number: int,
         evaluation_focus: List[str],
+        communication_style_preferences: Optional[List[str]] = None,
         model_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         payload = {
             "scenario_name": scenario_name,
             "athlete_brief": athlete_brief,
             "evaluation_focus": evaluation_focus,
+            "communication_style_preferences": list(communication_style_preferences or []),
             "turn_number": turn_number,
             "conversation_bounds": {"min_turns": min_turns, "max_turns": max_turns},
             "transcript": transcript,
@@ -445,12 +490,14 @@ class CoachReplyJudge:
         latest_coach_reply: Dict[str, Any],
         state_snapshot: Dict[str, Any],
         evaluation_focus: List[str],
+        communication_style_preferences: Optional[List[str]] = None,
         model_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         payload = {
             "scenario_name": scenario_name,
             "judge_brief": judge_brief,
             "evaluation_focus": evaluation_focus,
+            "communication_style_preferences": list(communication_style_preferences or []),
             "transcript": transcript,
             "latest_athlete_message": latest_athlete_message,
             "latest_coach_reply": latest_coach_reply,

@@ -52,6 +52,8 @@ _DECISION_CONTEXT_FIELDS = {
     "risk_recent_history",
     "weeks_in_coaching",
     "intake_completed_this_turn",
+    "requested_action",
+    "brevity_preference",
 }
 _VALIDATED_PLAN_FIELDS = {
     "weekly_skeleton",
@@ -253,6 +255,16 @@ def _validate_decision_context(payload: Dict[str, Any]) -> Dict[str, Any]:
         normalized["intake_completed_this_turn"] = _require_bool(
             "decision_context.intake_completed_this_turn",
             context["intake_completed_this_turn"],
+        )
+    if "requested_action" in context:
+        normalized["requested_action"] = _require_string(
+            "decision_context.requested_action",
+            context["requested_action"],
+        )
+    if "brevity_preference" in context:
+        normalized["brevity_preference"] = _require_string(
+            "decision_context.brevity_preference",
+            context["brevity_preference"],
         )
     return normalized
 

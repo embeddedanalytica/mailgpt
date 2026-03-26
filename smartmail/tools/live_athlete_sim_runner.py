@@ -210,6 +210,7 @@ def _build_run_narrative(
     turn_count: int,
     stop_reason: str,
     avg_felt_understood: float,
+    avg_athlete_communication_style_fit: float,
     avg_scores: Dict[str, float],
     issue_counts: Counter[str],
     strength_counts: Counter[str],
@@ -219,7 +220,8 @@ def _build_run_narrative(
     strengths = ", ".join(_top_counter_entries(strength_counts)) or "none"
     return (
         f"Conversation ended after {turn_count} turns via {stop_reason}. "
-        f"Athlete felt-understood average was {avg_felt_understood:.2f}. "
+        f"Athlete felt-understood average was {avg_felt_understood:.2f}; "
+        f"athlete-reported communication-style fit average was {avg_athlete_communication_style_fit:.2f}. "
         f"Judge averages: {score_bits}. Top issues: {issues}. Top strengths: {strengths}."
     )
 
@@ -259,6 +261,7 @@ def run_single_attempt(
         default_min_turns=default_min_turns,
         default_max_turns=default_max_turns,
     )
+    communication_style_preferences = list(scenario.get("communication_style_preferences", []))
     run_id = f"{scenario['id'].lower()}-attempt{attempt}-{int(time.time())}-{secrets.token_hex(4)}"
     transcript_path = output_dir / f"{run_id}.jsonl"
     summary_path = output_dir / f"{run_id}.summary.json"
@@ -282,6 +285,7 @@ def run_single_attempt(
         "judge_model": str(judge_model or OPENAI_REASONING_MODEL),
         "transcript_path": str(transcript_path),
         "summary_path": str(summary_path),
+        "communication_style_preferences": communication_style_preferences,
         "status": OK,
         "error": None,
     }
@@ -303,6 +307,7 @@ def run_single_attempt(
                 evaluation_focus=list(scenario.get("evaluation_focus", [])),
                 min_turns=min_turns,
                 max_turns=max_turns,
+                communication_style_preferences=communication_style_preferences,
                 model_name=athlete_model,
             )
 
@@ -373,6 +378,7 @@ def run_single_attempt(
                 latest_coach_reply=coach_reply,
                 state_snapshot=state_snapshot,
                 evaluation_focus=list(scenario.get("evaluation_focus", [])),
+                communication_style_preferences=communication_style_preferences,
                 model_name=judge_model,
             )
             judge_results.append(judge_result)
@@ -397,6 +403,7 @@ def run_single_attempt(
                 max_turns=max_turns,
                 turn_number=turn_number,
                 evaluation_focus=list(scenario.get("evaluation_focus", [])),
+                communication_style_preferences=communication_style_preferences,
                 model_name=athlete_model,
             )
             if turn_number < min_turns and not reaction["continue_conversation"]:
@@ -439,10 +446,16 @@ def run_single_attempt(
             "personalization": _average(result["scores"]["personalization"] for result in judge_results),
             "coaching_quality": _average(result["scores"]["coaching_quality"] for result in judge_results),
             "tone_trust": _average(result["scores"]["tone_trust"] for result in judge_results),
+            "communication_style_fit": _average(
+                result["scores"]["communication_style_fit"] for result in judge_results
+            ),
             "safety": _average(result["scores"]["safety"] for result in judge_results),
         }
         avg_felt_understood = _average(
             reaction["felt_understood_score"] for reaction in athlete_reactions
+        )
+        avg_athlete_communication_style_fit = _average(
+            reaction["communication_style_fit"] for reaction in athlete_reactions
         )
         ended_at = _utc_now_iso()
         summary = {
@@ -455,12 +468,14 @@ def run_single_attempt(
             "stop_reason": stop_reason,
             "average_judge_scores": avg_scores,
             "average_athlete_felt_understood": avg_felt_understood,
+            "average_athlete_communication_style_fit": avg_athlete_communication_style_fit,
             "issue_tag_counts": _sorted_counter(issue_counts),
             "strength_tag_counts": _sorted_counter(strength_counts),
             "final_narrative_summary": _build_run_narrative(
                 turn_count=turn_count,
                 stop_reason=stop_reason,
                 avg_felt_understood=avg_felt_understood,
+                avg_athlete_communication_style_fit=avg_athlete_communication_style_fit,
                 avg_scores=avg_scores,
                 issue_counts=issue_counts,
                 strength_counts=strength_counts,
@@ -482,6 +497,7 @@ def run_single_attempt(
             "error": f"{exc}\n{traceback.format_exc()}",
             "average_judge_scores": {},
             "average_athlete_felt_understood": 0.0,
+            "average_athlete_communication_style_fit": 0.0,
             "issue_tag_counts": _sorted_counter(issue_counts),
             "strength_tag_counts": _sorted_counter(strength_counts),
             "final_narrative_summary": f"Run failed after {len(athlete_reactions)} completed turns: {exc}",
@@ -598,6 +614,7 @@ def _print_run_line(run: Dict[str, Any]) -> None:
         f"[{run['scenario_id']} attempt={run['attempt']}] status={run['status']} "
         f"turns={run.get('turn_count', 0)} stop={run.get('stop_reason', 'unknown')} "
         f"felt={run.get('average_athlete_felt_understood', 0.0):.2f} "
+        f"ath_style={run.get('average_athlete_communication_style_fit', 0.0):.2f} "
         f"scores={score_bits} issues={top_issues}",
         flush=True,
     )

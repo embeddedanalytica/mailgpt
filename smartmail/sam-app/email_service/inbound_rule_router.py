@@ -78,11 +78,29 @@ def _base_decision(intent: str) -> Dict[str, Any]:
     }
 
 
-def _mode_for_intent(intent: str, clarification_needed: bool, has_extracted_checkin: bool) -> str:
+_ACTION_MODE_MAP = {
+    "plan_update": "mutate",
+    "answer_question": "read_only",
+    "checkin_ack": "read_only",
+    "clarify_only": "mutate",
+}
+
+
+def _mode_for_intent(
+    intent: str,
+    clarification_needed: bool,
+    has_extracted_checkin: bool,
+    requested_action: str = "",
+) -> str:
     if intent in _SPECIAL_INTENT_BEHAVIOR:
         return _SPECIAL_INTENT_BEHAVIOR[intent]["mode"]
     if clarification_needed:
         return "skip"
+    # requested_action is the primary routing signal when present
+    action_mode = _ACTION_MODE_MAP.get(requested_action)
+    if action_mode is not None:
+        return action_mode
+    # Fallback to intent-based routing (backward compat / missing field)
     if intent in _MUTATE_INTENTS:
         return "mutate"
     if intent in _READ_ONLY_INTENTS:
@@ -257,7 +275,11 @@ def route_inbound_with_rule_engine(
         raise InboundRuleRouterError("conversation_intelligence must be a dict")
 
     intent = str(conversation_intelligence.get("intent", "coaching")).strip().lower() or "coaching"
+    requested_action = str(conversation_intelligence.get("requested_action", "")).strip().lower()
+    brevity_preference = str(conversation_intelligence.get("brevity_preference", "normal")).strip().lower()
     decision = _base_decision(intent)
+    decision["requested_action"] = requested_action or None
+    decision["brevity_preference"] = brevity_preference or "normal"
     special_behavior = _SPECIAL_INTENT_BEHAVIOR.get(intent)
     if special_behavior is not None:
         decision.update(special_behavior)
@@ -284,7 +306,7 @@ def route_inbound_with_rule_engine(
     clarification_needed = extraction_failed
     decision["clarification_needed"] = clarification_needed
     decision["missing_or_low_confidence"] = list(missing_or_low)
-    decision["mode"] = _mode_for_intent(intent, clarification_needed, bool(extracted_checkin))
+    decision["mode"] = _mode_for_intent(intent, clarification_needed, bool(extracted_checkin), requested_action)
     if decision["mode"] == "skip" and clarification_needed:
         decision["rule_engine_status"] = "clarification_needed"
         decision["reply_strategy"] = "clarification"

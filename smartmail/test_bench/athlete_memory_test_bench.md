@@ -5679,7 +5679,7 @@ Final assertions include:
       {
         "step": 5,
         "email": "One note to remove: I don't only climb indoors anymore now that spring is here. Outdoor sessions are back in the mix, so that indoor-only idea is outdated.",
-        "synthetic_coach_reply": "Understood. We'll retire the indoor-only note and treat outdoor climbing as available again.",
+        "synthetic_coach_reply": "Got it — we'll plan for both indoor and outdoor sessions going forward.",
         "durable_truths": [
           {
             "label": "bouldering",
@@ -5689,6 +5689,20 @@ Final assertions include:
             "importance": "medium",
             "aliases": [],
             "semantic_signals": []
+          },
+          {
+            "label": "indoor and outdoor after work",
+            "signals": [
+              "after work",
+              "outdoor"
+            ],
+            "importance": "medium",
+            "aliases": [
+              "indoor outdoor"
+            ],
+            "semantic_signals": [
+              "trains both indoors and outdoors"
+            ]
           },
           {
             "label": "fingerboard wednesday",
@@ -5747,17 +5761,7 @@ Final assertions include:
             "semantic_signals": []
           }
         ],
-        "retired_truths": [
-          {
-            "label": "indoors after work",
-            "signals": [
-              "indoors after work"
-            ],
-            "importance": "high",
-            "aliases": [],
-            "semantic_signals": []
-          }
-        ],
+        "retired_truths": [],
         "routine_noise": [],
         "coach_should_adjust_for": [
           {
@@ -5779,18 +5783,10 @@ Final assertions include:
             "semantic_signals": []
           },
           {
-            "label": "recommendation uses retire",
+            "label": "adjust for indoor and outdoor",
             "signals": [
-              "retire"
-            ],
-            "importance": "low",
-            "aliases": [],
-            "semantic_signals": []
-          },
-          {
-            "label": "recommendation uses indoor-only",
-            "signals": [
-              "indoor-only"
+              "indoor",
+              "outdoor"
             ],
             "importance": "low",
             "aliases": [],
@@ -5808,16 +5804,17 @@ Final assertions include:
         ],
         "coach_should_not_do": [
           {
-            "label": "indoors after work",
+            "label": "indoor-only assumption",
             "signals": [
-              "indoors after work"
+              "indoor-only",
+              "only indoors"
             ],
             "importance": "high",
             "aliases": [],
             "semantic_signals": []
           }
         ],
-        "message_intent": "retirement",
+        "message_intent": "durable_change",
         "active_context_mode": "expired"
       }
     ],
@@ -5831,6 +5828,20 @@ Final assertions include:
           "importance": "high",
           "aliases": [],
           "semantic_signals": []
+        },
+        {
+          "label": "indoor and outdoor after work",
+          "signals": [
+            "after work",
+            "outdoor"
+          ],
+          "importance": "high",
+          "aliases": [
+            "indoor outdoor"
+          ],
+          "semantic_signals": [
+            "trains both indoors and outdoors"
+          ]
         },
         {
           "label": "fingerboard wednesday",
@@ -5862,6 +5873,20 @@ Final assertions include:
           "semantic_signals": []
         },
         {
+          "label": "indoor and outdoor after work",
+          "signals": [
+            "after work",
+            "outdoor"
+          ],
+          "importance": "medium",
+          "aliases": [
+            "indoor outdoor"
+          ],
+          "semantic_signals": [
+            "trains both indoors and outdoors"
+          ]
+        },
+        {
           "label": "fingerboard wednesday",
           "signals": [
             "fingerboard wednesday"
@@ -5880,17 +5905,7 @@ Final assertions include:
           "semantic_signals": []
         }
       ],
-      "final_retired_truths": [
-        {
-          "label": "indoors after work",
-          "signals": [
-            "indoors after work"
-          ],
-          "importance": "high",
-          "aliases": [],
-          "semantic_signals": []
-        }
-      ]
+      "final_retired_truths": []
     }
   },
   {

@@ -109,6 +109,7 @@ class _JudgeClientStub:
                 "personalization": 4,
                 "coaching_quality": 4,
                 "tone_trust": 4,
+                "communication_style_fit": 4,
                 "safety": 5,
             },
             "what_landed": ["useful guidance"],
@@ -140,6 +141,7 @@ class TestLiveAthleteSimRunner(unittest.TestCase):
                 {
                     "reaction_summary": "not enough yet",
                     "felt_understood_score": 3,
+                    "communication_style_fit": 3,
                     "trust_delta": "flat",
                     "what_helped": ["usable"],
                     "what_bothered": ["generic"],
@@ -151,6 +153,7 @@ class TestLiveAthleteSimRunner(unittest.TestCase):
                 {
                     "reaction_summary": "good enough",
                     "felt_understood_score": 4,
+                    "communication_style_fit": 4,
                     "trust_delta": "up",
                     "what_helped": ["specific"],
                     "what_bothered": ["none"],
@@ -194,6 +197,7 @@ class TestLiveAthleteSimRunner(unittest.TestCase):
                 {
                     "reaction_summary": "keep going",
                     "felt_understood_score": 3,
+                    "communication_style_fit": 3,
                     "trust_delta": "flat",
                     "what_helped": ["okay"],
                     "what_bothered": ["still vague"],
@@ -205,6 +209,7 @@ class TestLiveAthleteSimRunner(unittest.TestCase):
                 {
                     "reaction_summary": "still going",
                     "felt_understood_score": 3,
+                    "communication_style_fit": 3,
                     "trust_delta": "flat",
                     "what_helped": ["okay"],
                     "what_bothered": ["still vague"],
@@ -216,6 +221,7 @@ class TestLiveAthleteSimRunner(unittest.TestCase):
                 {
                     "reaction_summary": "maxed out",
                     "felt_understood_score": 3,
+                    "communication_style_fit": 3,
                     "trust_delta": "flat",
                     "what_helped": ["okay"],
                     "what_bothered": ["still vague"],
@@ -249,6 +255,7 @@ class TestLiveAthleteSimRunner(unittest.TestCase):
                 {
                     "reaction_summary": "unused",
                     "felt_understood_score": 3,
+                    "communication_style_fit": 3,
                     "trust_delta": "flat",
                     "what_helped": ["okay"],
                     "what_bothered": ["none"],
@@ -299,6 +306,7 @@ class TestLiveAthleteSimRunner(unittest.TestCase):
                 {
                     "reaction_summary": "good enough",
                     "felt_understood_score": 4,
+                    "communication_style_fit": 4,
                     "trust_delta": "up",
                     "what_helped": ["specific"],
                     "what_bothered": ["none"],

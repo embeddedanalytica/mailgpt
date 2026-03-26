@@ -79,6 +79,10 @@ def get_reply_for_inbound(
         model_name=intelligence["model_name"],
         routing_decision=route["routing_decision"],
         selected_model=route["selected_model"],
+        metadata={
+            "requested_action": intelligence.get("requested_action"),
+            "brevity_preference": intelligence.get("brevity_preference"),
+        },
     )
     if not stored:
         if log_outcome is not None:

@@ -113,6 +113,8 @@ class TurnSpec:
     expect_reply_mode_behavior: str
     expected_intent: Optional[str] = None
     acceptable_intents: Optional[Set[str]] = None
+    expected_requested_action: Optional[str] = None
+    acceptable_requested_actions: Optional[Set[str]] = None
     expect_manual_snapshot: bool = False
     expect_plan_growth: bool = False
     expect_memory: bool = False
@@ -315,36 +317,36 @@ class _DynamoState:
 
 
 TURNS: List[TurnSpec] = [
-    TurnSpec(1, "Starting over after a layoff", "Hi coach, I want to get back to running after a messy few months. My big goal is to get healthy enough to race a half marathon again this spring. Right now I mostly need help rebuilding without doing something stupid.", "freeform", "clarification_or_inference_ok", acceptable_intents={"coaching", "question"}, expect_clarification_semantics=True),
-    TurnSpec(2, "A little more context", "A bit more context: I used to run consistently before the layoff and I'd call myself intermediate. I can train four days a week most weeks if we keep it realistic. The thing that nags me is mild Achilles tightness when I get greedy. I also do better when the plan feels structured.", "freeform", "clarification_or_inference_ok", acceptable_intents={"coaching", "question"}, expect_memory=True),
-    TurnSpec(3, "Profile details and target race", "Here is the missing context more directly. Primary goal: run a half marathon on 2026-05-17 and finish feeling strong. Time availability: 4 sessions per week and about 4 to 5 hours total. Experience level: intermediate. Constraints: mild Achilles tightness, busy work mornings on Tuesdays, and I prefer structured guidance.", "semi_structured", "clarification_or_inference_ok", acceptable_intents={"coaching", "question"}),
-    TurnSpec(4, "Availability update for this week", "Availability update for this week. Event date: 2026-05-17. Days available: 4. Pain score: 2 out of 10. Risk candidate feels green. I can run Monday, Wednesday, Friday, and Sunday. Week is not chaotic. Schedule variability is medium because work may move one session by a few hours.", "structured", "should_mutate", expected_intent="coaching", expect_plan_growth=True),
-    TurnSpec(5, "First check-in after an easy run", "Training check-in. Event date: 2026-05-17. Days available: 4. Pain score: 2 out of 10. Risk candidate is green. I did a run for 45m and 6 km yesterday. Felt good, energy ok, little sore, slept well. Missed sessions count: 0. I want to keep building carefully.", "structured", "should_mutate", expected_intent="coaching", expect_manual_snapshot=True, expect_plan_growth=True, expect_progress_non_default=True),
-    TurnSpec(6, "Long run felt fine", "Long run update: I got through 75 minutes this morning and honestly I feel ok after the long run. The Achilles is there in the background but not angry, and I slept well last night. I'd like to keep the same four-day rhythm this week if that still makes sense.", "freeform", "clarification_or_inference_ok", acceptable_intents={"coaching", "question"}, expect_manual_snapshot=True, expect_memory=True, expect_progress_non_default=True, allow_clarification_instead_of_inference=True, inference_candidate=True, expect_durable_schedule_reuse=True),
-    TurnSpec(7, "How easy should easy feel?", "Quick question: on these comeback runs, how easy should easy actually feel? I'm trying not to chase pace, but I also don't want to jog so slowly that the mechanics get weird.", "freeform", "should_read_only", expected_intent="question"),
-    TurnSpec(8, "Work got messy", "Can we adjust the week? Work is crazy and I probably only have Wednesday, Friday, and Sunday for training. I missed one session already and my stress is definitely up.", "freeform", "clarification_or_inference_ok", acceptable_intents={"coaching", "question"}, expect_memory=True, expect_clarification_semantics=True),
-    TurnSpec(9, "Here are the details you probably need", "More detail for the adjustment: event date is 2026-05-17, days available this week are 3, pain score is still 2 out of 10, risk candidate feels yellow because work stress is high, week is chaotic true, stress score 8, sleep score 5.", "structured", "should_mutate", expected_intent="coaching", expect_plan_growth=True),
-    TurnSpec(10, "Tune-up effort felt controlled", "Small milestone: I did a tune-up 5k effort in 24:50 and it felt controlled. I added a 20m cool-down jog after. No big pain spike, just normal post-workout heaviness, and sleep was good.", "semi_structured", "clarification_or_inference_ok", expected_intent="question", expect_manual_snapshot=True, expect_memory=True, expect_progress_non_default=True, allow_clarification_instead_of_inference=True, inference_candidate=True),
-    TurnSpec(11, "Still on the same four-day pattern", "Just to confirm, I'm still doing four days per week most weeks. The same general Monday Wednesday Friday Sunday pattern still works, although Friday has become the easiest day for me to protect.", "freeform", "clarification_or_inference_ok", acceptable_intents={"coaching", "question"}, expect_memory=True, expect_durable_schedule_reuse=True),
-    TurnSpec(12, "Travel week coming up", "Travel week heads-up: next week is rough. I only have Tuesday, Thursday, and Saturday open, and hotel treadmill plus a tiny gym are all I'll have. I'd love the simplest travel-friendly version of the plan.", "freeform", "clarification_or_inference_ok", expected_intent="coaching", expect_memory=True, expect_clarification_semantics=True),
-    TurnSpec(13, "Travel details", "Event date: 2026-05-17. Days available: 3. Pain score: 2 out of 10. Risk candidate is yellow because I am traveling for work. Week is chaotic true. Equipment access is treadmill and gym, no track. I can do 40m treadmill runs and one short strength session.", "structured", "should_mutate", expected_intent="coaching", expect_plan_growth=True),
-    TurnSpec(14, "Hotel treadmill check-in", "Travel check-in: I did a run for 40m on the hotel treadmill, about 4.5 miles, avg hr 146, and roughly 520 calories. Felt decent, slept ok, and nothing got worse. Mostly just mentally flat from travel.", "semi_structured", "clarification_or_inference_ok", expected_intent="coaching", expect_manual_snapshot=True, expect_progress_non_default=True, allow_clarification_instead_of_inference=True, inference_candidate=True),
-    TurnSpec(15, "Back home and Saturday is open", "Good news: for the next month Saturday is open again, so I have more flexibility for the long run. Week to week I still want to stay at four days, but now the long run doesn't have to be Sunday every time.", "freeform", "clarification_or_inference_ok", expected_intent="coaching", expect_memory=True, expect_durable_schedule_reuse=True),
-    TurnSpec(16, "Family chaos week", "This week got blown up by family stuff. I only got in one 30m run and I'm feeling low energy today. Can we just simplify everything for a few days and keep the important things important?", "freeform", "clarification_or_inference_ok", expected_intent="coaching", expect_memory=True, expect_clarification_semantics=True),
-    TurnSpec(17, "Details for the family-chaos week", "Event date: 2026-05-17. Days available: 2. Pain score: 3 out of 10. Risk candidate is yellow. Family stuff blew up this week. I only got in a 30m run. Felt low energy, sore, poor sleep. Stress score is 9. I am worried about losing momentum.", "structured", "should_mutate", expected_intent="coaching", expect_manual_snapshot=True, expect_memory=True, expect_progress_non_default=True),
-    TurnSpec(18, "Back on track", "Better week. I ran three times: 35m easy, 50m steady, and 80m today for about 9 miles. Felt good, slept well, and the Achilles feels quiet again. Same four-day rhythm still seems like the sweet spot.", "semi_structured", "clarification_or_inference_ok", expected_intent="coaching", expect_manual_snapshot=True, expect_memory=True, expect_progress_non_default=True, allow_clarification_instead_of_inference=True, inference_candidate=True, expect_durable_schedule_reuse=True),
-    TurnSpec(19, "Should I add strides?", "Question for you: since things are stable again, should I add strides after one easy run, or keep everything fully aerobic for now?", "freeform", "should_read_only", expected_intent="question"),
-    TurnSpec(20, "Harder session left me cooked", "Yesterday I did a harder session: total run 55m with 6 x 3 minutes moderate-hard. Today I'm pretty cooked, sleep was poor, and soreness is definitely up. I don't think anything is injured, but it feels like I pushed the edge.", "freeform", "clarification_or_inference_ok", acceptable_intents={"coaching", "question"}, expect_manual_snapshot=True, expect_memory=True, expect_clarification_semantics=True),
-    TurnSpec(21, "Numbers from the hard session", "Event date: 2026-05-17. Days available: 4. Pain score: 5 out of 10. Risk candidate feels yellow. Intervals yesterday: run 55m total with 6 x 3 minutes moderate-hard. Felt exhausted after, soreness high, sleep poor. Pain affects form false. Pain worsening false. No swelling.", "structured", "should_mutate", expected_intent="coaching", expect_manual_snapshot=True, expect_plan_growth=True, expect_progress_non_default=True),
-    TurnSpec(22, "Only three days next week", "Next week I only have three training days because of work travel again. I'd like the week simplified and I want to protect the most important session, but keep the overall direction the same.", "freeform", "clarification_or_inference_ok", expected_intent="coaching", expect_clarification_semantics=True),
-    TurnSpec(23, "Three-day week details", "Event date: 2026-05-17. Days available: 3. Pain score: 3 out of 10. Risk candidate is yellow. Next week I only have three training days. Week is chaotic false, but volume has to come down. Please simplify the week and protect the key session.", "structured", "should_mutate", expected_intent="coaching", expect_plan_growth=True),
-    TurnSpec(24, "Race confidence check", "With the race getting closer, do you think the current plan still fits where I am? I'm curious what the biggest focus should be over the next two weeks, especially since I've settled into that four-day pattern pretty well.", "freeform", "should_read_only", expected_intent="question", expect_memory=True, expect_durable_schedule_reuse=True),
-    TurnSpec(25, "Mild cold and weather", "I have a mild cold and the weather is awful this week. Energy is not great. I don't want to do anything dumb, but I also don't want to lose the thread completely. How conservative should I be?", "freeform", "clarification_or_inference_ok", acceptable_intents={"coaching", "question", "safety_concern"}, expect_clarification_semantics=True),
-    TurnSpec(26, "Illness details", "Event date: 2026-05-17. Days available: 3. Pain score: 2 out of 10. Risk candidate is yellow. Recent illness is mild. Energy score is 4. Sleep score is 5. I want to know how conservative I should be this week.", "structured", "should_mutate", expected_intent="coaching", expect_plan_growth=True, expect_memory=True),
-    TurnSpec(27, "Half marathon done", "Race update: I ran the half marathon today in 1:55. I jogged 15m after, I feel tired but happy, and nothing feels scary. This whole build really confirmed that four days per week is a good groove for me.", "semi_structured", "clarification_or_inference_ok", expected_intent="question", expect_manual_snapshot=True, expect_memory=True, expect_progress_non_default=True, expect_durable_schedule_reuse=True),
-    TurnSpec(28, "Next-goal question", "Now that the race is done, what should the next two weeks look like and how should I think about the next goal? I'm open to another half or maybe building toward something longer later in the year.", "freeform", "should_read_only", expected_intent="question", expect_memory=True),
-    TurnSpec(29, "One more durable schedule note", "One thing I learned from this block: four days is sustainable for me, and Saturday is probably the best long-run anchor going forward. Fridays still need to stay pretty light because of work.", "freeform", "clarification_or_inference_ok", acceptable_intents={"coaching", "question"}, expect_memory=True, expect_durable_schedule_reuse=True),
-    TurnSpec(30, "Freeform final check-in", "Quick final check-in before I go quiet for a few days: easy 35m jog today, about 4 miles, avg hr 138, felt good, slept well, and I'm mostly just happily tired. Curious if your advice changes much given everything you've seen from me over this stretch.", "freeform", "clarification_or_inference_ok", acceptable_intents={"coaching", "question"}, expect_manual_snapshot=True, expect_memory=True, expect_progress_non_default=True, allow_clarification_instead_of_inference=True, inference_candidate=True, expect_durable_schedule_reuse=True),
+    TurnSpec(1, "Starting over after a layoff", "Hi coach, I want to get back to running after a messy few months. My big goal is to get healthy enough to race a half marathon again this spring. Right now I mostly need help rebuilding without doing something stupid.", "freeform", "clarification_or_inference_ok", acceptable_intents={"coaching", "question"}, acceptable_requested_actions={"plan_update", "clarify_only"}, expect_clarification_semantics=True),
+    TurnSpec(2, "A little more context", "A bit more context: I used to run consistently before the layoff and I'd call myself intermediate. I can train four days a week most weeks if we keep it realistic. The thing that nags me is mild Achilles tightness when I get greedy. I also do better when the plan feels structured.", "freeform", "clarification_or_inference_ok", acceptable_intents={"coaching", "question"}, acceptable_requested_actions={"clarify_only", "plan_update"}, expect_memory=True),
+    TurnSpec(3, "Profile details and target race", "Here is the missing context more directly. Primary goal: run a half marathon on 2026-05-17 and finish feeling strong. Time availability: 4 sessions per week and about 4 to 5 hours total. Experience level: intermediate. Constraints: mild Achilles tightness, busy work mornings on Tuesdays, and I prefer structured guidance.", "semi_structured", "clarification_or_inference_ok", acceptable_intents={"coaching", "question"}, acceptable_requested_actions={"clarify_only", "plan_update"}),
+    TurnSpec(4, "Availability update for this week", "Availability update for this week. Event date: 2026-05-17. Days available: 4. Pain score: 2 out of 10. Risk candidate feels green. I can run Monday, Wednesday, Friday, and Sunday. Week is not chaotic. Schedule variability is medium because work may move one session by a few hours.", "structured", "should_mutate", expected_intent="coaching", expected_requested_action="plan_update", expect_plan_growth=True),
+    TurnSpec(5, "First check-in after an easy run", "Training check-in. Event date: 2026-05-17. Days available: 4. Pain score: 2 out of 10. Risk candidate is green. I did a run for 45m and 6 km yesterday. Felt good, energy ok, little sore, slept well. Missed sessions count: 0. I want to keep building carefully.", "structured", "should_mutate", expected_intent="coaching", acceptable_requested_actions={"checkin_ack", "plan_update"}, expect_manual_snapshot=True, expect_plan_growth=True, expect_progress_non_default=True),
+    TurnSpec(6, "Long run felt fine", "Long run update: I got through 75 minutes this morning and honestly I feel ok after the long run. The Achilles is there in the background but not angry, and I slept well last night. I'd like to keep the same four-day rhythm this week if that still makes sense.", "freeform", "clarification_or_inference_ok", acceptable_intents={"coaching", "question"}, acceptable_requested_actions={"checkin_ack", "plan_update"}, expect_manual_snapshot=True, expect_memory=True, expect_progress_non_default=True, allow_clarification_instead_of_inference=True, inference_candidate=True, expect_durable_schedule_reuse=True),
+    TurnSpec(7, "How easy should easy feel?", "Quick question: on these comeback runs, how easy should easy actually feel? I'm trying not to chase pace, but I also don't want to jog so slowly that the mechanics get weird.", "freeform", "should_read_only", expected_intent="question", expected_requested_action="answer_question"),
+    TurnSpec(8, "Work got messy", "Can we adjust the week? Work is crazy and I probably only have Wednesday, Friday, and Sunday for training. I missed one session already and my stress is definitely up.", "freeform", "clarification_or_inference_ok", acceptable_intents={"coaching", "question"}, expected_requested_action="plan_update", expect_memory=True, expect_clarification_semantics=True),
+    TurnSpec(9, "Here are the details you probably need", "More detail for the adjustment: event date is 2026-05-17, days available this week are 3, pain score is still 2 out of 10, risk candidate feels yellow because work stress is high, week is chaotic true, stress score 8, sleep score 5.", "structured", "should_mutate", expected_intent="coaching", acceptable_requested_actions={"plan_update", "clarify_only"}, expect_plan_growth=True),
+    TurnSpec(10, "Tune-up effort felt controlled", "Small milestone: I did a tune-up 5k effort in 24:50 and it felt controlled. I added a 20m cool-down jog after. No big pain spike, just normal post-workout heaviness, and sleep was good.", "semi_structured", "clarification_or_inference_ok", expected_intent="question", acceptable_requested_actions={"checkin_ack", "answer_question"}, expect_manual_snapshot=True, expect_memory=True, expect_progress_non_default=True, allow_clarification_instead_of_inference=True, inference_candidate=True),
+    TurnSpec(11, "Still on the same four-day pattern", "Just to confirm, I'm still doing four days per week most weeks. The same general Monday Wednesday Friday Sunday pattern still works, although Friday has become the easiest day for me to protect.", "freeform", "clarification_or_inference_ok", acceptable_intents={"coaching", "question"}, acceptable_requested_actions={"clarify_only", "checkin_ack", "plan_update"}, expect_memory=True, expect_durable_schedule_reuse=True),
+    TurnSpec(12, "Travel week coming up", "Travel week heads-up: next week is rough. I only have Tuesday, Thursday, and Saturday open, and hotel treadmill plus a tiny gym are all I'll have. I'd love the simplest travel-friendly version of the plan.", "freeform", "clarification_or_inference_ok", expected_intent="coaching", expected_requested_action="plan_update", expect_memory=True, expect_clarification_semantics=True),
+    TurnSpec(13, "Travel details", "Event date: 2026-05-17. Days available: 3. Pain score: 2 out of 10. Risk candidate is yellow because I am traveling for work. Week is chaotic true. Equipment access is treadmill and gym, no track. I can do 40m treadmill runs and one short strength session.", "structured", "should_mutate", expected_intent="coaching", expected_requested_action="plan_update", expect_plan_growth=True),
+    TurnSpec(14, "Hotel treadmill check-in", "Travel check-in: I did a run for 40m on the hotel treadmill, about 4.5 miles, avg hr 146, and roughly 520 calories. Felt decent, slept ok, and nothing got worse. Mostly just mentally flat from travel.", "semi_structured", "clarification_or_inference_ok", expected_intent="coaching", acceptable_requested_actions={"checkin_ack", "plan_update"}, expect_manual_snapshot=True, expect_progress_non_default=True, allow_clarification_instead_of_inference=True, inference_candidate=True),
+    TurnSpec(15, "Back home and Saturday is open", "Good news: for the next month Saturday is open again, so I have more flexibility for the long run. Week to week I still want to stay at four days, but now the long run doesn't have to be Sunday every time.", "freeform", "clarification_or_inference_ok", expected_intent="coaching", acceptable_requested_actions={"plan_update", "clarify_only"}, expect_memory=True, expect_durable_schedule_reuse=True),
+    TurnSpec(16, "Family chaos week", "This week got blown up by family stuff. I only got in one 30m run and I'm feeling low energy today. Can we just simplify everything for a few days and keep the important things important?", "freeform", "clarification_or_inference_ok", expected_intent="coaching", expected_requested_action="plan_update", expect_memory=True, expect_clarification_semantics=True),
+    TurnSpec(17, "Details for the family-chaos week", "Event date: 2026-05-17. Days available: 2. Pain score: 3 out of 10. Risk candidate is yellow. Family stuff blew up this week. I only got in a 30m run. Felt low energy, sore, poor sleep. Stress score is 9. I am worried about losing momentum.", "structured", "should_mutate", expected_intent="coaching", expected_requested_action="plan_update", expect_manual_snapshot=True, expect_memory=True, expect_progress_non_default=True),
+    TurnSpec(18, "Back on track", "Better week. I ran three times: 35m easy, 50m steady, and 80m today for about 9 miles. Felt good, slept well, and the Achilles feels quiet again. Same four-day rhythm still seems like the sweet spot.", "semi_structured", "clarification_or_inference_ok", expected_intent="coaching", acceptable_requested_actions={"checkin_ack", "plan_update"}, expect_manual_snapshot=True, expect_memory=True, expect_progress_non_default=True, allow_clarification_instead_of_inference=True, inference_candidate=True, expect_durable_schedule_reuse=True),
+    TurnSpec(19, "Should I add strides?", "Question for you: since things are stable again, should I add strides after one easy run, or keep everything fully aerobic for now?", "freeform", "should_read_only", expected_intent="question", expected_requested_action="answer_question"),
+    TurnSpec(20, "Harder session left me cooked", "Yesterday I did a harder session: total run 55m with 6 x 3 minutes moderate-hard. Today I'm pretty cooked, sleep was poor, and soreness is definitely up. I don't think anything is injured, but it feels like I pushed the edge.", "freeform", "clarification_or_inference_ok", acceptable_intents={"coaching", "question"}, acceptable_requested_actions={"checkin_ack", "plan_update"}, expect_manual_snapshot=True, expect_memory=True, expect_clarification_semantics=True),
+    TurnSpec(21, "Numbers from the hard session", "Event date: 2026-05-17. Days available: 4. Pain score: 5 out of 10. Risk candidate feels yellow. Intervals yesterday: run 55m total with 6 x 3 minutes moderate-hard. Felt exhausted after, soreness high, sleep poor. Pain affects form false. Pain worsening false. No swelling.", "structured", "should_mutate", expected_intent="coaching", acceptable_requested_actions={"plan_update", "checkin_ack"}, expect_manual_snapshot=True, expect_plan_growth=True, expect_progress_non_default=True),
+    TurnSpec(22, "Only three days next week", "Next week I only have three training days because of work travel again. I'd like the week simplified and I want to protect the most important session, but keep the overall direction the same.", "freeform", "clarification_or_inference_ok", expected_intent="coaching", expected_requested_action="plan_update", expect_clarification_semantics=True),
+    TurnSpec(23, "Three-day week details", "Event date: 2026-05-17. Days available: 3. Pain score: 3 out of 10. Risk candidate is yellow. Next week I only have three training days. Week is chaotic false, but volume has to come down. Please simplify the week and protect the key session.", "structured", "should_mutate", expected_intent="coaching", expected_requested_action="plan_update", expect_plan_growth=True),
+    TurnSpec(24, "Race confidence check", "With the race getting closer, do you think the current plan still fits where I am? I'm curious what the biggest focus should be over the next two weeks, especially since I've settled into that four-day pattern pretty well.", "freeform", "should_read_only", expected_intent="question", expected_requested_action="answer_question", expect_memory=True, expect_durable_schedule_reuse=True),
+    TurnSpec(25, "Mild cold and weather", "I have a mild cold and the weather is awful this week. Energy is not great. I don't want to do anything dumb, but I also don't want to lose the thread completely. How conservative should I be?", "freeform", "clarification_or_inference_ok", acceptable_intents={"coaching", "question", "safety_concern"}, acceptable_requested_actions={"answer_question", "plan_update"}, expect_clarification_semantics=True),
+    TurnSpec(26, "Illness details", "Event date: 2026-05-17. Pain score: 2 out of 10. Risk candidate is yellow. Recent illness is mild. Energy score is 4. Sleep score is 5. I want to know how conservative I should be this week.", "structured", "should_mutate", acceptable_intents={"coaching", "question"}, acceptable_requested_actions={"plan_update", "answer_question"}, expect_plan_growth=True, expect_memory=True),
+    TurnSpec(27, "Half marathon done", "Race update: I ran the half marathon today in 1:55. I jogged 15m after, I feel tired but happy, and nothing feels scary. This whole build really confirmed that four days per week is a good groove for me.", "semi_structured", "clarification_or_inference_ok", expected_intent="question", expected_requested_action="checkin_ack", expect_manual_snapshot=True, expect_memory=True, expect_progress_non_default=True, expect_durable_schedule_reuse=True),
+    TurnSpec(28, "Next-goal question", "Now that the race is done, what should the next two weeks look like and how should I think about the next goal? I'm open to another half or maybe building toward something longer later in the year.", "freeform", "should_read_only", expected_intent="question", expected_requested_action="answer_question", expect_memory=True),
+    TurnSpec(29, "One more durable schedule note", "One thing I learned from this block: four days is sustainable for me, and Saturday is probably the best long-run anchor going forward. Fridays still need to stay pretty light because of work.", "freeform", "clarification_or_inference_ok", acceptable_intents={"coaching", "question"}, acceptable_requested_actions={"clarify_only", "checkin_ack", "plan_update"}, expect_memory=True, expect_durable_schedule_reuse=True),
+    TurnSpec(30, "Freeform final check-in", "Quick final check-in before I go quiet for a few days: easy 35m jog today, about 4 miles, avg hr 138, felt good, slept well, and I'm mostly just happily tired. Curious if your advice changes much given everything you've seen from me over this stretch.", "freeform", "clarification_or_inference_ok", acceptable_intents={"coaching", "question"}, acceptable_requested_actions={"checkin_ack", "answer_question"}, expect_manual_snapshot=True, expect_memory=True, expect_progress_non_default=True, allow_clarification_instead_of_inference=True, inference_candidate=True, expect_durable_schedule_reuse=True),
 ]
 
 
@@ -397,6 +399,26 @@ class TestLiveCoachingWorkflow(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.ddb.cleanup_for_email(self.email_address, athlete_id=self.athlete_id)
+
+    def _check_requested_action(self, turn: TurnSpec, observed_action: Optional[str]) -> Optional[str]:
+        """Soft-check requested_action. Returns a warning string if unexpected, None if ok."""
+        if observed_action is None:
+            return f"turn {turn.number} requested_action missing from metadata"
+        if turn.expected_requested_action is not None:
+            if observed_action != turn.expected_requested_action:
+                return (
+                    f"turn {turn.number} requested_action mismatch: "
+                    f"expected={turn.expected_requested_action!r} observed={observed_action!r}"
+                )
+            return None
+        if turn.acceptable_requested_actions is not None:
+            if observed_action not in turn.acceptable_requested_actions:
+                return (
+                    f"turn {turn.number} requested_action {observed_action!r} "
+                    f"not in acceptable set {sorted(turn.acceptable_requested_actions)!r}"
+                )
+            return None
+        return None  # no assertion specified
 
     def _assert_intent_acceptable(self, turn: TurnSpec, observed_intent: str) -> None:
         # Realistic freeform emails are intentionally ambiguous. For those turns,
@@ -544,14 +566,6 @@ class TestLiveCoachingWorkflow(unittest.TestCase):
                 self.assertEqual(response.get("statusCode"), 200, f"turn {turn.number} returned non-200 response: {response}")
 
                 response_body = str(response.get("body", ""))
-                self.turn_results.append({
-                    "turn": turn.number,
-                    "subject": turn.subject,
-                    "style": turn.style,
-                    "expected_intent": turn.expected_intent,
-                    "acceptable_intents": sorted(turn.acceptable_intents) if turn.acceptable_intents else None,
-                    "lambda_body": response_body,
-                })
 
                 self.athlete_id = dynamodb_models.get_athlete_id_for_email(self.email_address)
                 self.assertTrue(self.athlete_id, f"athlete_id missing after turn {turn.number}")
@@ -569,6 +583,35 @@ class TestLiveCoachingWorkflow(unittest.TestCase):
                 observed_intents.append(observed_intent)
                 self._assert_intent_acceptable(turn, observed_intent)
 
+                # Extract requested_action and brevity_preference from metadata
+                ci_metadata = latest_intelligence.get("metadata") or {}
+                if isinstance(ci_metadata, str):
+                    try:
+                        ci_metadata = json.loads(ci_metadata)
+                    except (json.JSONDecodeError, TypeError):
+                        ci_metadata = {}
+                observed_requested_action = ci_metadata.get("requested_action") if isinstance(ci_metadata, dict) else None
+                observed_brevity = ci_metadata.get("brevity_preference") if isinstance(ci_metadata, dict) else None
+                action_warning = self._check_requested_action(turn, observed_requested_action)
+                if action_warning:
+                    print(f"LIVE_E2E WARN {action_warning}", flush=True)
+                else:
+                    self._log_turn(turn, phase="requested_action_ok", requested_action=observed_requested_action)
+
+                self.turn_results.append({
+                    "turn": turn.number,
+                    "subject": turn.subject,
+                    "style": turn.style,
+                    "expected_intent": turn.expected_intent,
+                    "acceptable_intents": sorted(turn.acceptable_intents) if turn.acceptable_intents else None,
+                    "expected_requested_action": turn.expected_requested_action,
+                    "acceptable_requested_actions": sorted(turn.acceptable_requested_actions) if turn.acceptable_requested_actions else None,
+                    "observed_requested_action": observed_requested_action,
+                    "observed_brevity_preference": observed_brevity,
+                    "requested_action_warning": action_warning,
+                    "lambda_body": response_body,
+                })
+
                 if "No reply sent due to response-generation failure." in response_body:
                     self.fail(f"turn {turn.number} response generation suppressed send: subject={turn.subject!r} body={response_body!r} results={self.turn_results!r}")
 
@@ -585,6 +628,12 @@ class TestLiveCoachingWorkflow(unittest.TestCase):
                         "turn": turn.number,
                         "style": turn.style,
                         "expected_mode": turn.expect_reply_mode_behavior,
+                        "conversation_intelligence": {
+                            "intent": observed_intent,
+                            "requested_action": observed_requested_action,
+                            "brevity_preference": observed_brevity,
+                            "requested_action_warning": action_warning,
+                        },
                         "inbound": {
                             "sender": self.email_address,
                             "message_id": message_id,
@@ -626,6 +675,9 @@ class TestLiveCoachingWorkflow(unittest.TestCase):
                     phase="end",
                     duration_seconds=turn_duration,
                     observed_intent=observed_intent,
+                    requested_action=observed_requested_action,
+                    brevity_preference=observed_brevity,
+                    action_warning=action_warning,
                     lambda_body=response_body,
                     plan_version=int(current_plan.get("plan_version", 0)) if current_plan else 0,
                     plan_history_count=len(plan_history),
@@ -682,6 +734,45 @@ class TestLiveCoachingWorkflow(unittest.TestCase):
         observed_intent_set = {intent for intent in observed_intents if intent}
         for required_intent in REQUIRED_INTENTS:
             self.assertIn(required_intent, observed_intent_set, f"required intent {required_intent!r} not observed across run: {observed_intents!r}")
+
+        # Requested-action summary (soft — warn, don't fail)
+        action_warnings = [
+            r for r in self.turn_results
+            if r.get("requested_action_warning")
+        ]
+        action_present = sum(
+            1 for r in self.turn_results
+            if r.get("observed_requested_action")
+        )
+        print(
+            f"\nLIVE_E2E requested_action coverage: "
+            f"{action_present}/{len(self.turn_results)} turns had requested_action, "
+            f"{len(action_warnings)} warnings",
+            flush=True,
+        )
+        if action_warnings:
+            print("LIVE_E2E requested_action warnings:", flush=True)
+            for r in action_warnings:
+                print(
+                    f"  turn {r['turn']} ({r['subject']}): {r['requested_action_warning']}",
+                    flush=True,
+                )
+        self._append_turn_artifact({
+            "phase": "requested_action_summary",
+            "turns_with_action": action_present,
+            "total_turns": len(self.turn_results),
+            "warnings": [
+                {
+                    "turn": r["turn"],
+                    "subject": r["subject"],
+                    "warning": r["requested_action_warning"],
+                    "observed": r.get("observed_requested_action"),
+                    "expected": r.get("expected_requested_action"),
+                    "acceptable": r.get("acceptable_requested_actions"),
+                }
+                for r in action_warnings
+            ],
+        })
 
         assert self.athlete_id is not None
         final_profile = dynamodb_models.get_coach_profile(self.athlete_id)

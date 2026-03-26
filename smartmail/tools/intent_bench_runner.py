@@ -20,7 +20,7 @@ from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_BENCH_PATH = REPO_ROOT / "intent_classification_test_bench.md"
+DEFAULT_BENCH_PATH = REPO_ROOT / "test_bench" / "intent_classification_test_bench.md"
 DEFAULT_OUTPUT_ROOT = REPO_ROOT / "sam-app" / ".cache" / "intent-bench"
 SKILL_PATH = REPO_ROOT / ".cursor" / "skills" / "intent-debugger" / "SKILL.md"
 WRAPPER_PATH = REPO_ROOT / ".cursor" / "skills" / "intent-debugger" / "scripts" / "run_intent_debug.py"

@@ -11,7 +11,7 @@ from rule_engine import build_decision_envelope
 from skills.planner import build_planner_brief
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_BENCH_PATH = REPO_ROOT / "plan_test_bench.md"
+DEFAULT_BENCH_PATH = REPO_ROOT / "test_bench" / "plan_test_bench.md"
 
 REQUIRED_FIELDS = {
     "id",

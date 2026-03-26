@@ -91,6 +91,17 @@
 **Desired Behaviour** If an active fact with the same canonical key already exists, the system should require an explicit ID-targeted update path rather than allowing a create-and-dedupe fallback to mutate the fact implicitly.
 
 ## 17. Reversal backstop can be satisfied by an unrelated targeted update
-**Status** Open
+**Status** Fixed
 **Context:** The AM2 reversal retry heuristic is meant to catch missed schedule/constraint reversals, but it may currently treat any targeted `upsert` or `retire` as sufficient, even when that operation does not touch the reversed schedule or constraint fact.
 **Desired Behaviour** When explicit reversal language is present, the backstop should only be satisfied by a candidate that actually targets the relevant schedule or constraint fact, so unrelated durable-fact updates do not mask a missed retirement or rewrite.
+**Verification:** Fixed on 2026-03-24. Replaced `_candidates_target_schedule_or_constraint` with `_candidates_address_reversal` in `skills/memory/unified/runner.py`. The new function takes existing facts into account: when reversal cues are present and the LLM creates a new schedule/constraint fact without retiring the conflicting existing fact of the same type, the backstop now correctly triggers a retry.
+
+## 18. Stale schedule/constraint facts survive explicit replacement by athlete
+**Status** Open
+**Context:** In short-horizon memory bench scenarios (AM-002, AM-006, AM-007, AM-009, AM-011), when an athlete explicitly replaces a recurring schedule or constraint (e.g., "I switched from Tuesday masters to Wednesday nights"), the LLM sometimes creates the new schedule fact without emitting a `retire` candidate for the old one. Because "silence preserves" in AM2, the old stale fact remains active in memory and can influence downstream coaching decisions. A prompt-level "REPLACEMENT IS RETIREMENT" clause and improved reversal backstop were added on 2026-03-24, moving these from 0/3 pass rate toward 2/3, but the LLM still occasionally omits the retire — particularly when the replacement language is indirect or the old fact's phrasing differs from what the athlete references.
+**Desired Behaviour** When an athlete describes switching, replacing, or moving from one schedule/constraint to another, the old fact must be reliably retired in the same candidate batch as the new upsert. The system should not leave stale scheduling assumptions active after an explicit replacement.
+
+## 19. Durable facts evicted under budget pressure despite high coaching value
+**Status** Open
+**Context:** In short-horizon memory bench scenarios (AM-005, AM-007, AM-012), important durable facts like primary event goals ("1500 free", "summer rec league") or key schedule anchors ("erg before sunrise", "soccer club") are evicted when the 7-fact budget fills up. The current eviction logic sorts by importance then fact_type then oldest `last_confirmed_at`, but goal and constraint facts forced to "high" importance are never evicted — the losses occur when facts are stored as `schedule` or `other` type at "medium" importance, even though they carry high coaching value. For example, AM-005 loses the athlete's primary competition goal ("1500 free") because it was stored as a medium-importance goal variant, and AM-012 loses "summer rec league" for the same reason.
+**Desired Behaviour** Facts with high coaching value — particularly primary competition goals and core schedule anchors — should survive budget pressure ahead of secondary details. The eviction strategy should better account for coaching relevance, not just the mechanical importance label assigned at creation time.

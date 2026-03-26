@@ -33,23 +33,54 @@ def _has_reversal_cues(text: str) -> bool:
     return any(p.search(text) for p in _REVERSAL_CUE_PATTERNS)
 
 
-def _candidates_target_schedule_or_constraint(
+def _candidates_address_reversal(
     candidates: List[Dict[str, Any]],
+    existing_facts: List[Dict[str, Any]],
 ) -> bool:
-    """Returns True if any candidate retires or updates a schedule/constraint fact."""
+    """Returns True if reversal cues are adequately addressed by the candidates.
+
+    A reversal is considered addressed when:
+    - At least one retire candidate exists, OR
+    - A targeted upsert (update-in-place) exists, OR
+    - There are NO existing schedule/constraint facts that could conflict
+      with a newly upserted schedule/constraint fact.
+
+    Returns False (triggering a retry) when a new schedule/constraint fact is
+    created but an existing fact of the same type is not retired or updated —
+    this is the stale-retirement gap.
+    """
+    has_retire = False
+    has_targeted_upsert = False
+    new_schedule_constraint_types: set[str] = set()
+
     for c in candidates:
         action = c.get("action")
         if action == "retire":
-            return True
-        if action == "upsert" and c.get("target_id"):
-            # Targeted upsert — we can't check fact_type here (it's on the existing fact),
-            # but a targeted upsert signals the LLM is updating an existing fact.
-            return True
-        if action == "upsert" and not c.get("target_id"):
+            has_retire = True
+        elif action == "upsert" and c.get("target_id"):
+            has_targeted_upsert = True
+        elif action == "upsert" and not c.get("target_id"):
             ft = c.get("fact_type", "")
             if ft in ("schedule", "constraint"):
-                return True
-    return False
+                new_schedule_constraint_types.add(ft)
+
+    # If there's an explicit retire or in-place update, the LLM engaged with the change
+    if has_retire or has_targeted_upsert:
+        return True
+
+    # If no new schedule/constraint facts were created, nothing to conflict
+    if not new_schedule_constraint_types:
+        return False
+
+    # Check if existing facts of the same type exist — if so, the LLM likely
+    # created a replacement without retiring the old one
+    for fact in existing_facts:
+        ft = fact.get("fact_type", "")
+        if ft in new_schedule_constraint_types:
+            return False  # conflict detected — retry
+
+    # New fact type with no existing conflict
+    return True
 
 
 def _format_memory_notes_for_prompt(memory_notes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -164,7 +195,9 @@ def run_candidate_memory_refresh(
         if (
             isinstance(inbound_email, str)
             and _has_reversal_cues(inbound_email)
-            and not _candidates_target_schedule_or_constraint(validated["candidates"])
+            and not _candidates_address_reversal(
+                validated["candidates"], current_memory_notes
+            )
         ):
             logger.warning(
                 "reversal_backstop: reversal cues detected but no retire/update on "

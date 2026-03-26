@@ -9,7 +9,7 @@ from typing import Any, Dict, List
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_BENCH_PATH = REPO_ROOT / "athlete_memory_test_bench.md"
+DEFAULT_BENCH_PATH = REPO_ROOT / "test_bench" / "athlete_memory_test_bench.md"
 
 REQUIRED_SCENARIO_FIELDS = {
     "id",

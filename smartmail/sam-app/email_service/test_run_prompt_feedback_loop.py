@@ -1,4 +1,3 @@
-import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,54 +13,25 @@ if str(TOOLS_PATH) not in sys.path:
 import run_prompt_feedback_loop
 
 
-def _write_attempt(run_dir: Path) -> None:
-    attempt_path = run_dir / "scenario-attempt1.jsonl"
-    summary_path = run_dir / "scenario-attempt1.summary.json"
-    attempt_path.write_text(
-        json.dumps(
-            {
-                "phase": "judge_result",
-                "turn": 1,
-                "result": {
-                    "headline": "headline",
-                    "athlete_likely_experience": "experience",
-                    "improved_reply_example": "Do 4 x 5 minutes steady.",
-                    "scores": {
-                        "understanding": 4,
-                        "memory_continuity": 4,
-                        "personalization": 4,
-                        "coaching_quality": 4,
-                        "tone_trust": 4,
-                        "safety": 5,
-                    },
-                    "what_missed": ["specific guidance"],
-                    "issue_tags": ["too_vague"],
-                    "strength_tags": ["specific_guidance"],
-                },
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    summary_path.write_text(
-        json.dumps(
-            {
-                "scenario_id": "SCENARIO_A",
-                "scenario_name": "Scenario A",
-                "attempt": 1,
-                "run_id": "run-1",
-            }
-        ),
-        encoding="utf-8",
-    )
-
-
 class TestRunPromptFeedbackLoop(unittest.TestCase):
-    def test_main_aggregates_run_dir_and_invokes_workflow_with_defaults(self):
+    def test_main_defaults_bench_to_fixture(self):
+        observed = {}
+
+        def fake_workflow_main(argv):
+            observed["argv"] = list(argv)
+            return 0
+
+        with mock.patch.object(run_prompt_feedback_loop.prompt_feedback_loop, "main", side_effect=fake_workflow_main):
+            exit_code = run_prompt_feedback_loop.main([])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(observed["argv"][0:2], ["--bench", str(run_prompt_feedback_loop.DEFAULT_BENCH_PATH.resolve())])
+
+    def test_main_forwards_zero_start_workflow_arguments(self):
         with tempfile.TemporaryDirectory() as td:
-            run_dir = Path(td) / "live-run"
-            run_dir.mkdir(parents=True)
-            _write_attempt(run_dir)
+            bench_path = Path(td) / "bench.md"
+            output_dir = Path(td) / "workflow"
+            bench_path.write_text("# bench\n", encoding="utf-8")
             observed = {}
 
             def fake_workflow_main(argv):
@@ -69,38 +39,67 @@ class TestRunPromptFeedbackLoop(unittest.TestCase):
                 return 0
 
             with mock.patch.object(run_prompt_feedback_loop.prompt_feedback_loop, "main", side_effect=fake_workflow_main):
-                exit_code = run_prompt_feedback_loop.main(["--run-dir", str(run_dir)])
-
-            aggregate_path = run_dir / "aggregate.json"
-            aggregate = json.loads(aggregate_path.read_text(encoding="utf-8"))
+                exit_code = run_prompt_feedback_loop.main(
+                    [
+                        "--bench",
+                        str(bench_path),
+                        "--scenario",
+                        "SCENARIO_A",
+                        "--max-rounds",
+                        "2",
+                        "--output-dir",
+                        str(output_dir),
+                        "--activate",
+                    ]
+                )
 
         self.assertEqual(exit_code, 0)
-        self.assertEqual(aggregate["judge_result_count"], 1)
-        self.assertIn("--aggregate", observed["argv"])
-        self.assertIn(str(aggregate_path.resolve()), observed["argv"])
-        self.assertIn("--bench", observed["argv"])
-        self.assertIn("--output-dir", observed["argv"])
-        self.assertIn(str((run_dir / "prompt-feedback-loop").resolve()), observed["argv"])
+        self.assertEqual(
+            observed["argv"],
+            [
+                "--bench",
+                str(bench_path.resolve()),
+                "--runs-per-scenario",
+                "1",
+                "--min-turns",
+                "100",
+                "--max-turns",
+                "100",
+                "--max-parallel",
+                "1",
+                "--max-rounds",
+                "2",
+                "--scenario",
+                "SCENARIO_A",
+                "--output-dir",
+                str(output_dir.resolve()),
+                "--auto-promote",
+                "--activate",
+            ],
+        )
 
-    def test_main_requires_promoted_version_when_promoting(self):
+    def test_main_can_disable_auto_promotion(self):
         with tempfile.TemporaryDirectory() as td:
-            run_dir = Path(td) / "live-run"
-            run_dir.mkdir(parents=True)
-            _write_attempt(run_dir)
+            bench_path = Path(td) / "bench.md"
+            bench_path.write_text("# bench\n", encoding="utf-8")
+            observed = {}
 
-            exit_code = run_prompt_feedback_loop.main(["--run-dir", str(run_dir), "--promote"])
+            def fake_workflow_main(argv):
+                observed["argv"] = list(argv)
+                return 0
 
-        self.assertEqual(exit_code, 1)
+            with mock.patch.object(run_prompt_feedback_loop.prompt_feedback_loop, "main", side_effect=fake_workflow_main):
+                exit_code = run_prompt_feedback_loop.main(
+                    [
+                        "--bench",
+                        str(bench_path),
+                        "--no-auto-promote",
+                    ]
+                )
 
-    def test_main_rejects_activate_without_promote(self):
-        with tempfile.TemporaryDirectory() as td:
-            run_dir = Path(td) / "live-run"
-            run_dir.mkdir(parents=True)
-            _write_attempt(run_dir)
-
-            exit_code = run_prompt_feedback_loop.main(["--run-dir", str(run_dir), "--activate"])
-
-        self.assertEqual(exit_code, 1)
+        self.assertEqual(exit_code, 0)
+        self.assertIn("--no-auto-promote", observed["argv"])
+        self.assertNotIn("--aggregate", observed["argv"])
 
 
 if __name__ == "__main__":

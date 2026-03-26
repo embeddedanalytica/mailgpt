@@ -9,7 +9,7 @@ from typing import Any, Dict, List
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_BENCH_PATH = REPO_ROOT / "athlete_agent_bench.md"
+DEFAULT_BENCH_PATH = REPO_ROOT / "test_bench" / "athlete_agent_bench.md"
 
 REQUIRED_FIELDS = {
     "id",
@@ -20,6 +20,7 @@ REQUIRED_FIELDS = {
 ALLOWED_FIELDS = REQUIRED_FIELDS | {
     "opening_message",
     "evaluation_focus",
+    "communication_style_preferences",
     "min_turns",
     "max_turns",
 }
@@ -105,6 +106,10 @@ def normalize_scenario(raw: Any, *, seen_ids: set[str], index: int) -> Dict[str,
         "evaluation_focus": _normalize_string_list(
             raw.get("evaluation_focus"),
             field_name=f"{scenario_id}.evaluation_focus",
+        ),
+        "communication_style_preferences": _normalize_string_list(
+            raw.get("communication_style_preferences"),
+            field_name=f"{scenario_id}.communication_style_preferences",
         ),
         "min_turns": min_turns,
         "max_turns": max_turns,

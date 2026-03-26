@@ -199,6 +199,15 @@ def build_response_brief(
     if intake_completed_this_turn:
         decision_context["intake_completed_this_turn"] = True
 
+    # Athlete directive signals from conversation intelligence
+    if isinstance(rule_engine_decision, dict):
+        ra = str(rule_engine_decision.get("requested_action", "")).strip()
+        if ra:
+            decision_context["requested_action"] = ra
+        bp = str(rule_engine_decision.get("brevity_preference", "")).strip()
+        if bp and bp != "normal":
+            decision_context["brevity_preference"] = bp
+
     # Compute weeks_in_coaching from profile created_at
     created_at = profile_after.get("created_at")
     if isinstance(created_at, (int, float)) and created_at > 0:

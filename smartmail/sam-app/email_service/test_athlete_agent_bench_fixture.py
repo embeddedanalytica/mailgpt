@@ -36,13 +36,13 @@ class TestAthleteAgentBenchFixture(unittest.TestCase):
             athlete_agent_bench_fixture.DEFAULT_BENCH_PATH
         )
         self.assertGreaterEqual(len(scenarios), 3)
-        self.assertTrue(all(item["min_turns"] == 100 for item in scenarios))
-        self.assertTrue(all(item["max_turns"] == 100 for item in scenarios))
+        self.assertTrue(all(item["min_turns"] == 20 for item in scenarios))
+        self.assertTrue(all(item["max_turns"] == 25 for item in scenarios))
         first = scenarios[0]
-        self.assertIn("100 turns", first["athlete_brief"])
         self.assertIn("half marathon in the autumn", first["athlete_brief"])
         self.assertIn("spring full marathon", first["athlete_brief"])
         self.assertIn("long-horizon", first["judge_brief"])
+        self.assertGreaterEqual(len(first["communication_style_preferences"]), 1)
 
     def test_duplicate_ids_fail(self):
         fixture = self._write_fixture([_valid_scenario("LAS-001"), _valid_scenario("LAS-001")])

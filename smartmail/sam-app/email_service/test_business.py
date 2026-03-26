@@ -93,6 +93,7 @@ class TestGetReplyForInbound(unittest.TestCase):
                 model_name="gpt-5-mini",
                 routing_decision="advanced",
                 selected_model=business.ADVANCED_RESPONSE_MODEL,
+                metadata=mock.ANY,
             )
 
     def test_passes_log_outcome_and_aws_request_id(self):
@@ -131,6 +132,7 @@ class TestGetReplyForInbound(unittest.TestCase):
                 model_name="gpt-5-mini",
                 routing_decision="lightweight",
                 selected_model=business.LIGHTWEIGHT_RESPONSE_MODEL,
+                metadata=mock.ANY,
             )
             build.assert_called_once_with(
                 athlete_id="ath_1",
