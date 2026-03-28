@@ -6,7 +6,7 @@ from typing import List
 
 
 _PROFILE_PROMPT_PRIMARY_GOAL = "- Your primary goal (e.g., first marathon, improve 10k time)"
-_PROFILE_PROMPT_TIME_AVAILABILITY = "- Your time availability (sessions/week and/or hours/week)"
+_PROFILE_PROMPT_TIME_AVAILABILITY = "- Your time availability (weekly capacity, recurring windows, and/or key schedule notes)"
 _PROFILE_PROMPT_EXPERIENCE_LEVEL = (
     "- Your experience level (beginner, intermediate, advanced, or unknown)"
 )

@@ -30,10 +30,10 @@ class TestPromptPackPromote(unittest.TestCase):
                     "version": "v1",
                     "created_at": "2026-03-22T00:00:00Z",
                     "parent_version": None,
-                    "editable_surfaces": ["response_generation.system_prompt"],
+                    "editable_surfaces": ["response_generation.directive_system_prompt"],
                 },
             )
-            _write_json(base_dir / "response_generation.json", {"system_prompt_lines": ["x"], "directive_system_prompt_lines": ["y"]})
+            _write_json(base_dir / "response_generation.json", {"directive_system_prompt_lines": ["y"]})
             _write_json(base_dir / "coaching_reasoning.json", {"base_prompt_lines": ["z"]})
 
             proposal_path = Path(td) / "proposal.json"
@@ -78,7 +78,7 @@ class TestPromptPackPromote(unittest.TestCase):
             base_dir = root / "coach_reply" / "v1"
             base_dir.mkdir(parents=True)
             _write_json(base_dir / "manifest.json", {"version": "v1"})
-            _write_json(base_dir / "response_generation.json", {"system_prompt_lines": ["x"], "directive_system_prompt_lines": ["y"]})
+            _write_json(base_dir / "response_generation.json", {"directive_system_prompt_lines": ["y"]})
             _write_json(base_dir / "coaching_reasoning.json", {"base_prompt_lines": ["z"]})
 
             proposal_path = Path(td) / "proposal.json"
@@ -103,7 +103,7 @@ class TestPromptPackPromote(unittest.TestCase):
             base_dir = root / "coach_reply" / "v1"
             base_dir.mkdir(parents=True)
             _write_json(base_dir / "manifest.json", {"version": "v1"})
-            _write_json(base_dir / "response_generation.json", {"system_prompt_lines": ["x"], "directive_system_prompt_lines": ["y"]})
+            _write_json(base_dir / "response_generation.json", {"directive_system_prompt_lines": ["y"]})
             _write_json(base_dir / "coaching_reasoning.json", {"base_prompt_lines": ["z"]})
 
             proposal_path = Path(td) / "proposal.json"
@@ -131,10 +131,10 @@ class TestPromptPackPromote(unittest.TestCase):
             base_dir.mkdir(parents=True)
             source_dir.mkdir(parents=True)
             _write_json(base_dir / "manifest.json", {"version": "v1"})
-            _write_json(base_dir / "response_generation.json", {"system_prompt_lines": ["base"], "directive_system_prompt_lines": ["base-d"]})
+            _write_json(base_dir / "response_generation.json", {"directive_system_prompt_lines": ["base-d"]})
             _write_json(base_dir / "coaching_reasoning.json", {"base_prompt_lines": ["base-c"]})
             _write_json(source_dir / "manifest.json", {"version": "v1-proposal"})
-            _write_json(source_dir / "response_generation.json", {"system_prompt_lines": ["proposal"], "directive_system_prompt_lines": ["proposal-d"]})
+            _write_json(source_dir / "response_generation.json", {"directive_system_prompt_lines": ["proposal-d"]})
             _write_json(source_dir / "coaching_reasoning.json", {"base_prompt_lines": ["proposal-c"]})
 
             proposal_path = Path(td) / "proposal.json"
@@ -157,7 +157,7 @@ class TestPromptPackPromote(unittest.TestCase):
 
         self.assertEqual(manifest["parent_version"], "v1")
         self.assertEqual(manifest["source_version"], "v1-proposal")
-        self.assertEqual(response_generation["system_prompt_lines"], ["proposal"])
+        self.assertEqual(response_generation["directive_system_prompt_lines"], ["proposal-d"])
 
     def test_promote_can_activate_new_version(self):
         with tempfile.TemporaryDirectory() as td:
@@ -165,7 +165,7 @@ class TestPromptPackPromote(unittest.TestCase):
             base_dir = root / "coach_reply" / "v1"
             base_dir.mkdir(parents=True)
             _write_json(base_dir / "manifest.json", {"version": "v1"})
-            _write_json(base_dir / "response_generation.json", {"system_prompt_lines": ["x"], "directive_system_prompt_lines": ["y"]})
+            _write_json(base_dir / "response_generation.json", {"directive_system_prompt_lines": ["y"]})
             _write_json(base_dir / "coaching_reasoning.json", {"base_prompt_lines": ["z"]})
 
             proposal_path = Path(td) / "proposal.json"
@@ -223,10 +223,10 @@ class TestPromptPackPromote(unittest.TestCase):
             v1_dir.mkdir(parents=True)
             v2_dir.mkdir(parents=True)
             _write_json(v1_dir / "manifest.json", {"version": "v1"})
-            _write_json(v1_dir / "response_generation.json", {"system_prompt_lines": ["one"], "directive_system_prompt_lines": ["one-d"]})
+            _write_json(v1_dir / "response_generation.json", {"directive_system_prompt_lines": ["one-d"]})
             _write_json(v1_dir / "coaching_reasoning.json", {"base_prompt_lines": ["one-c"]})
             _write_json(v2_dir / "manifest.json", {"version": "v2"})
-            _write_json(v2_dir / "response_generation.json", {"system_prompt_lines": ["two"], "directive_system_prompt_lines": ["two-d"]})
+            _write_json(v2_dir / "response_generation.json", {"directive_system_prompt_lines": ["two-d"]})
             _write_json(v2_dir / "coaching_reasoning.json", {"base_prompt_lines": ["two-c"]})
             (coach_reply_root / prompt_pack_loader.ACTIVE_VERSION_FILE_NAME).write_text("v2\n", encoding="utf-8")
 

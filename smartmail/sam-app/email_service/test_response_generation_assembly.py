@@ -2,7 +2,13 @@ import unittest
 from unittest import mock
 
 import response_generation_assembly
-from response_generation_assembly import build_response_brief
+from response_generation_assembly import (
+    build_response_brief,
+    build_response_generation_input,
+    detect_contradicted_facts,
+    extract_athlete_instructions,
+)
+from response_generation_contract import ResponseBrief
 
 
 def _memory_note(
@@ -140,7 +146,7 @@ class TestBuildResponseBrief(unittest.TestCase):
         self.assertIn("Weekday sessions need to finish before 7am", brief.memory_context["priority_facts"])
         self.assertIn("Owns a power meter", brief.memory_context["context_facts"])
 
-    def test_rule_engine_guided_includes_validated_engine_fields(self):
+    def test_rule_engine_guided_reply_kind_no_longer_leaks_engine_fields(self):
         brief = build_response_brief(
             athlete_id="ath_3",
             reply_kind="rule_engine_guided",
@@ -178,33 +184,8 @@ class TestBuildResponseBrief(unittest.TestCase):
         )
 
         self.assertEqual(brief.reply_mode, "normal_coaching")
-        self.assertEqual(brief.decision_context["track"], "return_or_risk_managed")
-        self.assertEqual(brief.decision_context["phase"], "build")
-        self.assertEqual(brief.decision_context["risk_flag"], "yellow")
-        self.assertEqual(brief.decision_context["today_action"], "prioritize_big_2_anchors")
-        self.assertEqual(brief.decision_context["plan_update_status"], "updated")
-        self.assertEqual(brief.validated_plan["weekly_skeleton"], ["easy_aerobic", "strength"])
-        self.assertEqual(
-            brief.validated_plan["session_guidance"],
-            ["Priority: long easy aerobic session"],
-        )
-        self.assertEqual(
-            brief.validated_plan["adjustments_or_priorities"],
-            [
-                "This is a risk-managed week.",
-                "Use safety and consistency as the primary filter.",
-                "Keep cadence light and posture tall.",
-                "Prioritize recovery basics before adding any load.",
-            ],
-        )
-        self.assertEqual(
-            brief.validated_plan["if_then_rules"],
-            ["If symptoms rise, remove intensity immediately."],
-        )
-        self.assertEqual(
-            brief.validated_plan["safety_note"],
-            "No hard sessions when risk is red-tier.",
-        )
+        self.assertEqual(brief.decision_context, {})
+        self.assertEqual(brief.validated_plan, {"plan_summary": "Current plan - Goal: 10k."})
 
     def test_memory_salience_groups_facts_by_type(self):
         brief = build_response_brief(
@@ -281,6 +262,44 @@ class TestBuildResponseBrief(unittest.TestCase):
         )
         self.assertTrue(brief.memory_context["memory_available"])
 
+
+class TestBuildResponseGenerationInput(unittest.TestCase):
+    def test_strips_strategist_only_fields_before_writer_validation(self):
+        brief = ResponseBrief.from_dict(
+            {
+                "reply_mode": "normal_coaching",
+                "athlete_context": {},
+                "decision_context": {},
+                "validated_plan": {
+                    "plan_summary": "Keep the week simple.",
+                },
+                "delivery_context": {
+                    "inbound_subject": "Check-in",
+                },
+                "memory_context": {
+                    "memory_available": False,
+                    "continuity_summary": None,
+                },
+            }
+        )
+
+        payload = build_response_generation_input(
+            directive={
+                "reply_action": "send",
+                "opening": "Good update.",
+                "main_message": "Keep one key session only.",
+                "content_plan": ["Acknowledge the update", "Set the weekly focus"],
+                "avoid": ["Do not add extra volume"],
+                "tone": "calm and direct",
+                "recommend_material": None,
+                "rationale": "Internal only.",
+            },
+            brief=brief,
+        )
+
+        self.assertNotIn("reply_action", payload["coaching_directive"])
+        self.assertNotIn("rationale", payload["coaching_directive"])
+
     def test_safety_and_off_topic_map_to_canonical_modes_without_validated_plan(self):
         safety = build_response_brief(
             athlete_id="ath_1",
@@ -290,7 +309,7 @@ class TestBuildResponseBrief(unittest.TestCase):
             profile_after={},
             missing_profile_fields=[],
             plan_summary=None,
-            rule_engine_decision={"reply_strategy": "safety_concern"},
+            rule_engine_decision={"intent": "safety_concern"},
             memory_context=_empty_memory_context(),
         )
         off_topic = build_response_brief(
@@ -301,7 +320,7 @@ class TestBuildResponseBrief(unittest.TestCase):
             profile_after={},
             missing_profile_fields=[],
             plan_summary=None,
-            rule_engine_decision={"reply_strategy": "off_topic"},
+            rule_engine_decision={"intent": "off_topic"},
             memory_context=_empty_memory_context(),
         )
 
@@ -360,7 +379,7 @@ class TestBuildResponseBrief(unittest.TestCase):
 
         self.assertEqual(brief.reply_mode, "lightweight_non_planning")
         self.assertEqual(brief.validated_plan, {})
-        self.assertEqual(brief.decision_context["track"], "main_build")
+        self.assertEqual(brief.decision_context, {})
 
     def test_lightweight_non_planning_with_missing_injury_uses_targeted_followup(self):
         brief = build_response_brief(
@@ -443,6 +462,399 @@ class TestBuildResponseBrief(unittest.TestCase):
         self.assertNotIn("context_facts", brief.memory_context)
         self.assertIsNone(brief.memory_context["continuity_summary"])
         self.assertFalse(brief.memory_context["memory_available"])
+
+
+class TestExtractAthleteInstructions(unittest.TestCase):
+    """Tests for deterministic athlete instruction extraction."""
+
+    def test_empty_body_returns_empty(self):
+        self.assertEqual(extract_athlete_instructions(None), {})
+        self.assertEqual(extract_athlete_instructions(""), {})
+
+    def test_no_instructions_returns_empty(self):
+        result = extract_athlete_instructions("Ran easy 30 min today, felt good.")
+        self.assertEqual(result, {})
+
+    def test_forbidden_topic_dont_mention(self):
+        result = extract_athlete_instructions(
+            "Don't mention the Achilles anymore. Just tell me the sessions."
+        )
+        self.assertIn("forbidden_topics", result)
+        self.assertTrue(
+            any("achilles" in t.lower() for t in result["forbidden_topics"]),
+            f"Expected 'achilles' in forbidden_topics, got: {result['forbidden_topics']}",
+        )
+
+    def test_forbidden_topic_stop_bringing_up(self):
+        result = extract_athlete_instructions(
+            "Stop bringing up week labels. I told you already."
+        )
+        self.assertIn("forbidden_topics", result)
+        self.assertTrue(
+            any("week" in t.lower() for t in result["forbidden_topics"]),
+            f"Expected 'week' in forbidden_topics, got: {result['forbidden_topics']}",
+        )
+
+    def test_forbidden_topic_please_stop_labeling(self):
+        result = extract_athlete_instructions(
+            "Please stop labeling weeks. Just reference the locked build."
+        )
+        self.assertIn("forbidden_topics", result)
+
+    def test_scope_just_tell_me(self):
+        result = extract_athlete_instructions(
+            "Just tell me this week's sessions."
+        )
+        self.assertIn("requested_scope", result)
+        self.assertIn("this week", result["requested_scope"].lower())
+
+    def test_scope_keep_it_short(self):
+        result = extract_athlete_instructions(
+            "Keep it short. Confirm I'm good to go this weekend."
+        )
+        self.assertIn("requested_scope", result)
+
+    def test_format_three_lines_max(self):
+        result = extract_athlete_instructions(
+            "Send the three lines I asked for: 3 lines max."
+        )
+        self.assertIn("format_constraints", result)
+        self.assertIn("3 lines max", result["format_constraints"].lower())
+
+    def test_format_one_paragraph(self):
+        result = extract_athlete_instructions(
+            "Keep confirmations one short paragraph."
+        )
+        self.assertIn("format_constraints", result)
+
+    def test_reply_suppression_only_reply_if(self):
+        result = extract_athlete_instructions(
+            "Please only reply if there's a concern."
+        )
+        self.assertIn("reply_suppression_hint", result)
+        self.assertIn("only reply if", result["reply_suppression_hint"].lower())
+
+    def test_reply_suppression_no_reply_unless(self):
+        result = extract_athlete_instructions(
+            "No reply needed unless you see a safety issue."
+        )
+        self.assertIn("reply_suppression_hint", result)
+
+    def test_override_i_can_now(self):
+        result = extract_athlete_instructions(
+            "I can now run 5 days a week. My schedule opened up."
+        )
+        self.assertIn("latest_overrides", result)
+        self.assertTrue(len(result["latest_overrides"]) > 0)
+
+    def test_override_please_correct(self):
+        result = extract_athlete_instructions(
+            "Please correct: start from Week 2, not Week 3."
+        )
+        self.assertIn("latest_overrides", result)
+
+    def test_multiple_instructions_in_one_message(self):
+        result = extract_athlete_instructions(
+            "Don't mention the Achilles. Keep it short. "
+            "Only reply if there's a concern."
+        )
+        self.assertIn("forbidden_topics", result)
+        self.assertIn("requested_scope", result)
+        self.assertIn("reply_suppression_hint", result)
+
+
+class TestDetectContradictedFacts(unittest.TestCase):
+    """Tests for memory fact contradiction detection."""
+
+    def test_empty_inputs_return_empty(self):
+        self.assertEqual(detect_contradicted_facts(None, []), [])
+        self.assertEqual(detect_contradicted_facts("hello", []), [])
+        self.assertEqual(detect_contradicted_facts(None, ["some fact"]), [])
+
+    def test_no_contradiction_returns_empty(self):
+        result = detect_contradicted_facts(
+            "Ran easy 30 min today. Felt good.",
+            ["Goal: fall half marathon", "Constraint: Achilles tightness"],
+        )
+        self.assertEqual(result, [])
+
+    def test_detects_achilles_resolved(self):
+        result = detect_contradicted_facts(
+            "The Achilles tightness is no longer an issue. It cleared up last week.",
+            ["Constraint: Achilles tightness"],
+        )
+        self.assertTrue(len(result) > 0)
+        self.assertTrue(any("Achilles" in c for c in result))
+
+    def test_detects_schedule_change(self):
+        result = detect_contradicted_facts(
+            "I can now do 5 days a week. My schedule changed.",
+            ["Available 4 days per week"],
+        )
+        self.assertTrue(len(result) > 0)
+
+    def test_does_not_flag_unrelated_negation(self):
+        result = detect_contradicted_facts(
+            "I no longer need the Garmin link.",
+            ["Goal: fall half marathon", "Constraint: Achilles tightness"],
+        )
+        self.assertEqual(result, [])
+
+
+class TestBuildResponseBriefAthleteInstructions(unittest.TestCase):
+    """Integration test: athlete_instructions flow through build_response_brief."""
+
+    def test_forbidden_topics_appear_in_brief(self):
+        brief = build_response_brief(
+            athlete_id="ath_inst_1",
+            reply_kind="coaching_reply",
+            inbound_subject="Update",
+            inbound_body="Don't mention the Achilles anymore. What are my sessions?",
+            selected_model_name="gpt-5-nano",
+            profile_after={"primary_goal": "10k"},
+            missing_profile_fields=[],
+            plan_summary=None,
+            rule_engine_decision=None,
+            memory_context=_empty_memory_context(),
+        )
+
+        instructions = brief.delivery_context.get("athlete_instructions", {})
+        self.assertIn("forbidden_topics", instructions)
+
+    def test_suppression_hint_appears_in_brief(self):
+        brief = build_response_brief(
+            athlete_id="ath_inst_2",
+            reply_kind="coaching_reply",
+            inbound_subject="Check-in",
+            inbound_body="Ran easy, felt fine. Only reply if there's a concern.",
+            selected_model_name="gpt-5-nano",
+            profile_after={"primary_goal": "10k"},
+            missing_profile_fields=[],
+            plan_summary=None,
+            rule_engine_decision=None,
+            memory_context=_empty_memory_context(),
+        )
+
+        instructions = brief.delivery_context.get("athlete_instructions", {})
+        self.assertIn("reply_suppression_hint", instructions)
+
+    def test_no_instructions_omits_field(self):
+        brief = build_response_brief(
+            athlete_id="ath_inst_3",
+            reply_kind="coaching_reply",
+            inbound_subject="Update",
+            inbound_body="Ran easy 30 min today. Felt good.",
+            selected_model_name="gpt-5-nano",
+            profile_after={"primary_goal": "10k"},
+            missing_profile_fields=[],
+            plan_summary=None,
+            rule_engine_decision=None,
+            memory_context=_empty_memory_context(),
+        )
+
+        self.assertNotIn("athlete_instructions", brief.delivery_context)
+
+    def test_contradicted_facts_appear_in_brief(self):
+        brief = build_response_brief(
+            athlete_id="ath_inst_4",
+            reply_kind="coaching_reply",
+            inbound_subject="Update",
+            inbound_body="The knee issue is no longer a problem. Cleared up.",
+            selected_model_name="gpt-5-nano",
+            profile_after={"primary_goal": "10k"},
+            missing_profile_fields=[],
+            plan_summary=None,
+            rule_engine_decision=None,
+            memory_context={
+                "memory_notes": [
+                    _memory_note(
+                        memory_note_id="f1",
+                        fact_type="constraint",
+                        fact_key="constraint:knee",
+                        summary="Recurring knee issue after long runs",
+                    ),
+                ],
+                "continuity_summary": None,
+            },
+        )
+
+        self.assertIn("contradicted_facts", brief.memory_context)
+        self.assertTrue(len(brief.memory_context["contradicted_facts"]) > 0)
+
+
+class TestStrategistPromptNewSections(unittest.TestCase):
+    """Test that new prompt sections are injected correctly."""
+
+    def test_athlete_instructions_section_appears_in_strategist_prompt(self):
+        from skills.coaching_reasoning.prompt import build_system_prompt
+
+        brief = {
+            "reply_mode": "normal_coaching",
+            "athlete_context": {},
+            "decision_context": {},
+            "validated_plan": {},
+            "delivery_context": {
+                "inbound_body": "Don't mention the Achilles.",
+                "athlete_instructions": {
+                    "forbidden_topics": ["the Achilles"],
+                },
+            },
+            "memory_context": {
+                "memory_available": False,
+                "continuity_summary": None,
+            },
+        }
+
+        prompt = build_system_prompt(brief)
+        self.assertIn("Athlete instructions", prompt)
+        self.assertIn("Forbidden topics", prompt)
+        self.assertIn("the Achilles", prompt)
+
+    def test_contradicted_facts_section_appears_in_strategist_prompt(self):
+        from skills.coaching_reasoning.prompt import build_system_prompt
+
+        brief = {
+            "reply_mode": "normal_coaching",
+            "athlete_context": {},
+            "decision_context": {},
+            "validated_plan": {},
+            "delivery_context": {
+                "inbound_body": "Knee is fine now.",
+            },
+            "memory_context": {
+                "memory_available": True,
+                "continuity_summary": None,
+                "priority_facts": ["Recurring knee issue"],
+                "contradicted_facts": [
+                    'Prior fact "Recurring knee issue" may be superseded by current message'
+                ],
+            },
+        }
+
+        prompt = build_system_prompt(brief)
+        self.assertIn("Contradicted durable facts", prompt)
+        self.assertIn("Recurring knee issue", prompt)
+
+    def test_no_sections_when_no_instructions_or_contradictions(self):
+        from skills.coaching_reasoning.prompt import build_system_prompt
+
+        brief = {
+            "reply_mode": "normal_coaching",
+            "athlete_context": {},
+            "decision_context": {},
+            "validated_plan": {},
+            "delivery_context": {
+                "inbound_body": "Ran easy, felt good.",
+            },
+            "memory_context": {
+                "memory_available": False,
+                "continuity_summary": None,
+            },
+        }
+
+        prompt = build_system_prompt(brief)
+        self.assertNotIn("Athlete instructions", prompt)
+        self.assertNotIn("Contradicted durable facts", prompt)
+
+
+class TestBriefShapingEdgeCases(unittest.TestCase):
+    """Phase 7: Additional edge cases for athlete instruction extraction and contradiction detection."""
+
+    def test_forbidden_topic_do_not_revisit(self):
+        result = extract_athlete_instructions("Do not revisit the scheduling discussion.")
+        self.assertIn("forbidden_topics", result)
+
+    def test_forbidden_topic_stop_asking_about(self):
+        result = extract_athlete_instructions("Stop asking about my availability.")
+        self.assertIn("forbidden_topics", result)
+
+    def test_scope_only_tell_me(self):
+        result = extract_athlete_instructions("Only tell me the sessions for this week.")
+        self.assertIn("requested_scope", result)
+
+    def test_override_please_update(self):
+        result = extract_athlete_instructions("Please update: it's 5 days now, not 4.")
+        self.assertIn("latest_overrides", result)
+
+    def test_multiple_contradicted_facts(self):
+        result = detect_contradicted_facts(
+            "The knee is no longer an issue and I can now run 5 days.",
+            [
+                "Constraint: recurring knee pain",
+                "Available 4 days per week",
+            ],
+        )
+        self.assertGreaterEqual(len(result), 1)
+
+    def test_no_false_positive_on_positive_mention(self):
+        """Mentioning a keyword without negation should not flag contradiction."""
+        result = detect_contradicted_facts(
+            "My knee felt good on the long run.",
+            ["Constraint: recurring knee pain"],
+        )
+        self.assertEqual(result, [])
+
+
+class TestWriterBriefStripsStrategistFields(unittest.TestCase):
+    """Verify build_response_generation_input strips strategist-only fields."""
+
+    def test_rationale_and_reply_action_stripped(self):
+        directive = {
+            "opening": "Test",
+            "main_message": "Brief.",
+            "content_plan": ["ack"],
+            "avoid": [],
+            "tone": "calm",
+            "recommend_material": None,
+            "rationale": "Internal reasoning here",
+            "reply_action": "send",
+        }
+        brief = build_response_brief(
+            athlete_id="ath_strip",
+            reply_kind="coaching_reply",
+            inbound_subject="Update",
+            selected_model_name="gpt-5-nano",
+            profile_after={"primary_goal": "10k"},
+            missing_profile_fields=[],
+            plan_summary="Simple plan.",
+            rule_engine_decision=None,
+            memory_context=_empty_memory_context(),
+        )
+        rg_input = build_response_generation_input(
+            directive=directive,
+            brief=brief,
+        )
+        self.assertNotIn("rationale", rg_input["coaching_directive"])
+        self.assertNotIn("reply_action", rg_input["coaching_directive"])
+        self.assertIn("opening", rg_input["coaching_directive"])
+
+    def test_continuity_context_forwarded_when_present(self):
+        directive = {
+            "opening": "Test",
+            "main_message": "Plan.",
+            "content_plan": ["plan"],
+            "avoid": [],
+            "tone": "calm",
+            "recommend_material": None,
+        }
+        brief = build_response_brief(
+            athlete_id="ath_ctx",
+            reply_kind="coaching_reply",
+            inbound_subject="Update",
+            selected_model_name="gpt-5-nano",
+            profile_after={"primary_goal": "10k"},
+            missing_profile_fields=[],
+            plan_summary="Plan.",
+            rule_engine_decision=None,
+            memory_context=_empty_memory_context(),
+        )
+        continuity = {"weeks_in_current_block": 3, "current_block_focus": "base"}
+        rg_input = build_response_generation_input(
+            directive=directive,
+            brief=brief,
+            continuity_context=continuity,
+        )
+        self.assertEqual(rg_input["continuity_context"]["weeks_in_current_block"], 3)
 
 
 if __name__ == "__main__":

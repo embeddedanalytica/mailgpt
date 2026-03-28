@@ -15,7 +15,11 @@ class TestParseProfileUpdates(unittest.TestCase):
     def test_parses_core_fields(self, mock_extract):
         mock_extract.return_value = {
             "primary_goal": "run a marathon  ",
-            "time_availability": {"sessions_per_week": 4, "hours_per_week": 6},
+            "time_availability": {
+                "sessions_per_week": "4 days per week",
+                "daily_windows": ["Mon-Thu 05:45-07:15", "Sun morning"],
+                "availability_notes": "Use mornings for longer sessions",
+            },
             "experience_level": "Intermediate",
             "experience_level_note": "returning after break",
             "constraints": [{"type": "schedule", "summary": "weekday mornings only", "severity": "low", "active": True}],
@@ -24,8 +28,9 @@ class TestParseProfileUpdates(unittest.TestCase):
         }
         updates = profile_module.parse_profile_updates_from_email("body")
         self.assertEqual(updates.get("primary_goal"), "run a marathon")
-        self.assertEqual(updates.get("time_availability", {}).get("sessions_per_week"), 4)
-        self.assertEqual(updates.get("time_availability", {}).get("hours_per_week"), 6.0)
+        self.assertEqual(updates.get("time_availability", {}).get("sessions_per_week"), "4 days per week")
+        self.assertEqual(updates.get("time_availability", {}).get("daily_windows"), ["Mon-Thu 05:45-07:15", "Sun morning"])
+        self.assertEqual(updates.get("time_availability", {}).get("availability_notes"), "Use mornings for longer sessions")
         self.assertEqual(updates.get("experience_level"), "intermediate")
         self.assertEqual(updates.get("experience_level_note"), "returning after break")
         self.assertEqual(len(updates.get("constraints", [])), 1)
@@ -83,7 +88,7 @@ class TestParseProfileUpdates(unittest.TestCase):
     def test_defaults_experience_to_unknown_when_missing(self, mock_extract):
         mock_extract.return_value = {
             "primary_goal": "stay healthy",
-            "time_availability": {"hours_per_week": 3},
+            "time_availability": {"availability_notes": "Weekday mornings only"},
         }
         updates = profile_module.parse_profile_updates_from_email("I want to stay healthy.")
         self.assertEqual(updates.get("experience_level"), "unknown")
@@ -98,21 +103,42 @@ class TestParseProfileUpdates(unittest.TestCase):
     def test_sessions_per_week_extracted(self, mock_extract):
         mock_extract.return_value = {
             "primary_goal": None,
-            "time_availability": {"sessions_per_week": 4, "hours_per_week": None},
+            "time_availability": {"sessions_per_week": "4 days a week", "daily_windows": None, "availability_notes": None},
             "experience_level": "intermediate",
             "experience_level_note": None,
             "constraints": None,
             "injury_constraints": None,
         }
         updates = profile_module.parse_profile_updates_from_email("I can train four days a week.")
-        self.assertEqual(updates.get("time_availability", {}).get("sessions_per_week"), 4)
+        self.assertEqual(updates.get("time_availability", {}).get("sessions_per_week"), "4 days a week")
+
+    @mock.patch("profile.run_profile_extraction_workflow")
+    def test_daily_windows_alone_complete_time_availability(self, mock_extract):
+        mock_extract.return_value = {
+            "primary_goal": None,
+            "time_availability": {
+                "sessions_per_week": None,
+                "daily_windows": ["Mon-Thu 05:45-07:15", "Sun 08:00-11:00"],
+                "availability_notes": None,
+            },
+            "experience_level": "unknown",
+            "experience_level_note": None,
+            "constraints": None,
+            "injury_status": None,
+            "injury_constraints": None,
+        }
+        updates = profile_module.parse_profile_updates_from_email("Mornings 05:45-07:15 Mon-Thu and Sunday mornings.")
+        self.assertEqual(
+            updates.get("time_availability", {}).get("daily_windows"),
+            ["Mon-Thu 05:45-07:15", "Sun 08:00-11:00"],
+        )
 
 
 class TestGetMissingRequiredProfileFields(unittest.TestCase):
     def _complete_profile(self, **overrides):
         base = {
             "primary_goal": "10k PR",
-            "time_availability": {"hours_per_week": 4.5},
+            "time_availability": {"availability_notes": "Weekday mornings only"},
             "experience_level": "unknown",
             "injury_status": _INJURY_STATUS_NONE,
         }
@@ -150,6 +176,14 @@ class TestGetMissingRequiredProfileFields(unittest.TestCase):
     def test_null_time_availability_is_missing(self):
         profile = self._complete_profile(time_availability=None)
         self.assertIn("time_availability", profile_module.get_missing_required_profile_fields(profile))
+
+    def test_daily_windows_satisfy_time_availability(self):
+        profile = self._complete_profile(time_availability={"daily_windows": ["Mon-Thu 05:45-07:15"]})
+        self.assertNotIn("time_availability", profile_module.get_missing_required_profile_fields(profile))
+
+    def test_sessions_per_week_text_satisfies_time_availability(self):
+        profile = self._complete_profile(time_availability={"sessions_per_week": "4 days/week"})
+        self.assertNotIn("time_availability", profile_module.get_missing_required_profile_fields(profile))
 
     def test_missing_primary_goal(self):
         profile = self._complete_profile(primary_goal="")

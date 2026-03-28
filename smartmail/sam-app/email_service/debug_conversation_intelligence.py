@@ -75,6 +75,8 @@ def _build_run_payload(
         "run": run_index,
         "intent": result.get("intent"),
         "complexity_score": result.get("complexity_score"),
+        "requested_action": result.get("requested_action"),
+        "brevity_preference": result.get("brevity_preference"),
         "model_name": result.get("model_name"),
         "resolution_source": result.get("resolution_source"),
         "intent_resolution_reason": result.get("intent_resolution_reason"),

@@ -15,10 +15,14 @@ def validate_profile_extraction_output(payload: Dict[str, Any]) -> Dict[str, Any
     time_availability = payload.get("time_availability")
     if isinstance(time_availability, dict):
         sessions_per_week = time_availability.get("sessions_per_week")
-        hours_per_week = time_availability.get("hours_per_week")
-        has_sessions = isinstance(sessions_per_week, (int, float)) and float(sessions_per_week) > 0
-        has_hours = isinstance(hours_per_week, (int, float)) and float(hours_per_week) > 0
-        if not (has_sessions or has_hours):
+        daily_windows = time_availability.get("daily_windows")
+        availability_notes = time_availability.get("availability_notes")
+        has_sessions = isinstance(sessions_per_week, str) and bool(sessions_per_week.strip())
+        has_windows = isinstance(daily_windows, list) and any(
+            isinstance(item, str) and item.strip() for item in daily_windows
+        )
+        has_notes = isinstance(availability_notes, str) and bool(availability_notes.strip())
+        if not (has_sessions or has_windows or has_notes):
             primary_goal = payload.get("primary_goal")
             experience_level = str(payload.get("experience_level", "")).strip().lower()
             experience_level_note = payload.get("experience_level_note")

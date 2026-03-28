@@ -11,6 +11,39 @@ from skills.planner import (
 )
 
 
+def _normalize_time_availability(raw_time_availability: Any) -> Dict[str, Any]:
+    """Normalize time availability into the descriptive profile shape."""
+    if not isinstance(raw_time_availability, dict):
+        return {}
+
+    normalized: Dict[str, Any] = {}
+
+    sessions_per_week = raw_time_availability.get("sessions_per_week")
+    if isinstance(sessions_per_week, str) and sessions_per_week.strip():
+        normalized["sessions_per_week"] = sessions_per_week.strip()
+
+    daily_windows = raw_time_availability.get("daily_windows")
+    if isinstance(daily_windows, list):
+        normalized_windows = [
+            str(item).strip()
+            for item in daily_windows
+            if isinstance(item, str) and item.strip()
+        ]
+        if normalized_windows:
+            normalized["daily_windows"] = normalized_windows
+
+    availability_notes = raw_time_availability.get("availability_notes")
+    if isinstance(availability_notes, str) and availability_notes.strip():
+        normalized["availability_notes"] = availability_notes.strip()
+
+    return normalized
+
+
+def _has_meaningful_time_availability(time_availability: Any) -> bool:
+    normalized = _normalize_time_availability(time_availability)
+    return bool(normalized)
+
+
 def _normalize_constraint_list(raw_list: Any) -> List[Dict[str, Any]]:
     """Normalize a raw constraint list from the extractor. Returns empty list if invalid."""
     if not isinstance(raw_list, list):
@@ -64,16 +97,9 @@ def parse_profile_updates_from_email(
         updates["primary_goal"] = primary_goal.strip()
 
     time_availability = raw.get("time_availability")
-    if isinstance(time_availability, dict):
-        normalized_time: Dict[str, Any] = {}
-        sessions_per_week = time_availability.get("sessions_per_week")
-        if isinstance(sessions_per_week, (int, float)) and int(sessions_per_week) > 0:
-            normalized_time["sessions_per_week"] = int(sessions_per_week)
-        hours_per_week = time_availability.get("hours_per_week")
-        if isinstance(hours_per_week, (int, float)) and float(hours_per_week) > 0:
-            normalized_time["hours_per_week"] = float(hours_per_week)
-        if normalized_time:
-            updates["time_availability"] = normalized_time
+    normalized_time = _normalize_time_availability(time_availability)
+    if normalized_time:
+        updates["time_availability"] = normalized_time
 
     experience_level = raw.get("experience_level")
     if isinstance(experience_level, str) and experience_level.strip():
@@ -117,14 +143,7 @@ def get_missing_required_profile_fields(profile: Optional[Dict[str, Any]]) -> Li
         missing.append("primary_goal")
 
     time_availability = profile.get("time_availability")
-    has_time = False
-    if isinstance(time_availability, dict):
-        sessions_per_week = time_availability.get("sessions_per_week")
-        hours_per_week = time_availability.get("hours_per_week")
-        has_sessions = isinstance(sessions_per_week, int) and sessions_per_week > 0
-        has_hours = isinstance(hours_per_week, (int, float, Decimal)) and float(hours_per_week) > 0
-        has_time = has_sessions or has_hours
-    if not has_time:
+    if not _has_meaningful_time_availability(time_availability):
         missing.append("time_availability")
 
     experience_level = str(profile.get("experience_level", "")).strip().lower()

@@ -77,6 +77,21 @@ def normalize_scenario(raw: Any, *, seen_ids: set[str], index: int) -> Dict[str,
     response_brief = raw.get("response_brief")
     if not isinstance(response_brief, dict):
         raise ValueError(f"{scenario_id}.response_brief must be an object.")
+    # Auto-wrap legacy ResponseBrief payloads into WriterBrief format
+    if "coaching_directive" not in response_brief and "validated_plan" in response_brief:
+        response_brief = {
+            "reply_mode": response_brief.get("reply_mode", "normal_coaching"),
+            "coaching_directive": {
+                "opening": "Bench scenario opening",
+                "main_message": "Bench scenario message",
+                "content_plan": ["present the plan"],
+                "avoid": [],
+                "tone": "calm and direct",
+                "recommend_material": None,
+            },
+            "plan_data": dict(response_brief.get("validated_plan", {})),
+            "delivery_context": dict(response_brief.get("delivery_context", {})),
+        }
     try:
         normalized_response_brief = validate_response_generation_brief(response_brief)
     except Exception as exc:

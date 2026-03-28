@@ -3,7 +3,6 @@
   "created_at": "2026-03-23T05:39:03.124430+00:00",
   "parent_version": "v1",
   "editable_surfaces": [
-    "response_generation.system_prompt",
     "response_generation.directive_system_prompt",
     "coaching_reasoning.base_prompt"
   ],

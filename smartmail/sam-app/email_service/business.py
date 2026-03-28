@@ -4,9 +4,10 @@ Combine profile gating and conversation intelligence in one place.
 Auth, rate limits, and sending stay in auth.py, rate_limits.py, and email_reply_sender.py.
 """
 import hashlib
+from datetime import date
 from typing import Optional, Dict, Any, Callable
 
-from coaching import build_profile_gated_reply
+from coaching import SUPPRESSED_REPLY, build_profile_gated_reply
 from conversation_intelligence import (
     analyze_conversation_intelligence,
     ConversationIntelligenceError,
@@ -18,7 +19,6 @@ from config import (
     ADVANCED_RESPONSE_MODEL,
     MODEL_ROUTING_LIGHTWEIGHT_MAX_COMPLEXITY,
 )
-
 
 def _build_message_key(inbound_message_id: Optional[str], inbound_body: str) -> str:
     message_id = str(inbound_message_id or "").strip()
@@ -48,6 +48,7 @@ def get_reply_for_inbound(
     *,
     aws_request_id: Optional[str] = None,
     log_outcome: Optional[Callable[..., None]] = None,
+    effective_today: Optional[date] = None,
 ) -> Optional[str]:
     """
     Returns the reply body to send for this inbound email.
@@ -116,14 +117,20 @@ def get_reply_for_inbound(
         log_outcome=log_outcome,
     )
 
+    build_kwargs = {
+        "athlete_id": athlete_id,
+        "from_email": from_email,
+        "inbound_body": inbound_body,
+        "inbound_message_id": inbound_message_id,
+        "inbound_subject": inbound_subject,
+        "selected_model_name": route["selected_model"],
+        "rule_engine_decision": rule_engine_decision,
+        "aws_request_id": aws_request_id,
+        "log_outcome": log_outcome,
+    }
+    if effective_today is not None:
+        build_kwargs["effective_today"] = effective_today
+
     return build_profile_gated_reply(
-        athlete_id=athlete_id,
-        from_email=from_email,
-        inbound_body=inbound_body,
-        inbound_message_id=inbound_message_id,
-        inbound_subject=inbound_subject,
-        selected_model_name=route["selected_model"],
-        rule_engine_decision=rule_engine_decision,
-        aws_request_id=aws_request_id,
-        log_outcome=log_outcome,
+        **build_kwargs,
     )

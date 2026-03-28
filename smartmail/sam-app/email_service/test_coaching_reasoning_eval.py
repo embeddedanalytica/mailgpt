@@ -266,5 +266,388 @@ class TestTurn25ConservativeGuidance(unittest.TestCase):
         )
 
 
+# ---------------------------------------------------------------------------
+# Phase 4: Directive boundary eval fixtures
+# ---------------------------------------------------------------------------
+
+def _forbidden_topic_brief():
+    """Athlete explicitly says 'stop mentioning the Achilles'."""
+    brief = _base_brief()
+    brief["delivery_context"] = {
+        "inbound_body": (
+            "Achilles is fine — please stop bringing it up every message. "
+            "Do not revisit the Achilles unless I raise it. "
+            "Just tell me what's on the schedule this week."
+        ),
+        "athlete_instructions": {
+            "forbidden_topics": ["the Achilles"],
+            "requested_scope": "just tell me what's on the schedule this week",
+        },
+    }
+    return brief
+
+
+def _reply_suppression_brief():
+    """Athlete says 'only reply if there's a concern' and no concern exists."""
+    brief = _base_brief()
+    brief["decision_context"]["risk_flag"] = "green"
+    brief["decision_context"]["risk_recent_history"] = ["green", "green", "green", "green"]
+    brief["delivery_context"] = {
+        "inbound_body": (
+            "Ran easy 30 min, felt fine. Achilles quiet. "
+            "No issues. Please only reply if there's a concern."
+        ),
+        "athlete_instructions": {
+            "reply_suppression_hint": "only reply if there's a concern",
+        },
+    }
+    return brief
+
+
+def _scope_this_week_only_brief():
+    """Athlete says 'just tell me this week' — no future planning."""
+    brief = _base_brief()
+    brief["delivery_context"] = {
+        "inbound_body": (
+            "Just tell me this week — what are my sessions? "
+            "I don't need the big picture right now."
+        ),
+        "athlete_instructions": {
+            "requested_scope": "just tell me this week",
+        },
+    }
+    return brief
+
+
+def _format_constraint_brief():
+    """Athlete asks for 3 lines max."""
+    brief = _base_brief()
+    brief["delivery_context"] = {
+        "inbound_body": (
+            "Send the three lines I asked for: "
+            "1) Two must-not-miss sessions. "
+            "2) Confirm caps. "
+            "3) Calf flare rule. 3 lines max."
+        ),
+        "athlete_instructions": {
+            "format_constraints": "3 lines max",
+        },
+    }
+    return brief
+
+
+def _stop_week_labels_brief():
+    """Athlete explicitly asks to stop using week labels."""
+    brief = _base_brief()
+    brief["delivery_context"] = {
+        "inbound_body": (
+            "Stop labeling weeks — no 'Week 5' or 'initial_assessment'. "
+            "Just reference the locked 8-week build to Sep 24. "
+            "Confirm Sat ride and Sun run are locked."
+        ),
+        "athlete_instructions": {
+            "forbidden_topics": ["week labels", "initial_assessment"],
+        },
+    }
+    return brief
+
+
+@unittest.skipUnless(_LIVE, "ENABLE_LIVE_LLM_CALLS not set")
+class TestForbiddenTopicDirective(unittest.TestCase):
+    """Athlete says 'stop mentioning the Achilles'. Directive must comply."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.result = run_coaching_reasoning_workflow(_forbidden_topic_brief())
+        cls.directive = cls.result["directive"]
+
+    def test_avoid_contains_achilles(self):
+        avoid_text = " ".join(self.directive["avoid"]).lower()
+        self.assertTrue(
+            "achilles" in avoid_text,
+            f"Avoid must forbid Achilles: {self.directive['avoid']}",
+        )
+
+    def test_main_message_does_not_mention_achilles(self):
+        self.assertNotIn(
+            "achilles",
+            self.directive["main_message"].lower(),
+            "main_message must not mention Achilles",
+        )
+
+    def test_content_plan_does_not_mention_achilles(self):
+        content = " ".join(self.directive["content_plan"]).lower()
+        self.assertNotIn(
+            "achilles", content,
+            "content_plan must not mention Achilles",
+        )
+
+
+@unittest.skipUnless(_LIVE, "ENABLE_LIVE_LLM_CALLS not set")
+class TestReplySuppression(unittest.TestCase):
+    """Athlete says 'only reply if concern' and there is no concern."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.result = run_coaching_reasoning_workflow(_reply_suppression_brief())
+        cls.directive = cls.result["directive"]
+
+    def test_reply_action_is_suppress(self):
+        self.assertEqual(
+            self.directive.get("reply_action"), "suppress",
+            f"reply_action should be 'suppress', got: {self.directive.get('reply_action')}",
+        )
+
+
+@unittest.skipUnless(_LIVE, "ENABLE_LIVE_LLM_CALLS not set")
+class TestScopeThisWeekOnly(unittest.TestCase):
+    """Athlete says 'just this week'. Directive must not plan ahead."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.result = run_coaching_reasoning_workflow(_scope_this_week_only_brief())
+        cls.directive = cls.result["directive"]
+
+    def test_avoid_mentions_future(self):
+        avoid_text = " ".join(self.directive["avoid"]).lower()
+        future_signals = ["next week", "future", "long-term", "coming weeks", "beyond this week"]
+        self.assertTrue(
+            any(s in avoid_text for s in future_signals),
+            f"Avoid should block future scope: {self.directive['avoid']}",
+        )
+
+    def test_content_plan_is_narrow(self):
+        self.assertLessEqual(
+            len(self.directive["content_plan"]), 3,
+            f"content_plan should be narrow: {self.directive['content_plan']}",
+        )
+
+
+@unittest.skipUnless(_LIVE, "ENABLE_LIVE_LLM_CALLS not set")
+class TestFormatConstraint(unittest.TestCase):
+    """Athlete asks for 3 lines max."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.result = run_coaching_reasoning_workflow(_format_constraint_brief())
+        cls.directive = cls.result["directive"]
+
+    def test_avoid_mentions_length_constraint(self):
+        avoid_text = " ".join(self.directive["avoid"]).lower()
+        self.assertTrue(
+            any(s in avoid_text for s in ["3 lines", "three lines", "exceed"]),
+            f"Avoid should enforce format constraint: {self.directive['avoid']}",
+        )
+
+    def test_content_plan_is_tight(self):
+        self.assertLessEqual(
+            len(self.directive["content_plan"]), 3,
+            f"content_plan should have at most 3 items: {self.directive['content_plan']}",
+        )
+
+
+@unittest.skipUnless(_LIVE, "ENABLE_LIVE_LLM_CALLS not set")
+class TestStopWeekLabels(unittest.TestCase):
+    """Athlete says 'stop labeling weeks'."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.result = run_coaching_reasoning_workflow(_stop_week_labels_brief())
+        cls.directive = cls.result["directive"]
+
+    def test_avoid_contains_week_label_rule(self):
+        avoid_text = " ".join(self.directive["avoid"]).lower()
+        self.assertTrue(
+            any(s in avoid_text for s in ["week label", "week number", "week "]),
+            f"Avoid should forbid week labels: {self.directive['avoid']}",
+        )
+
+    def test_main_message_has_no_week_number(self):
+        import re
+        self.assertIsNone(
+            re.search(r"Week \d+", self.directive["main_message"]),
+            f"main_message should not contain 'Week N': {self.directive['main_message']}",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Phase 7: Expanded regression eval fixtures
+# ---------------------------------------------------------------------------
+
+def _stale_context_schedule_change_brief():
+    """Athlete says 5 days now, memory says 4. Directive must use the update."""
+    brief = _base_brief()
+    brief["delivery_context"] = {
+        "inbound_body": (
+            "Update: I can now do 5 days a week instead of 4. "
+            "My schedule opened up — add a Friday easy run. "
+            "Everything else stays the same."
+        ),
+        "athlete_instructions": {
+            "latest_overrides": ["Schedule changed from 4 to 5 days per week"],
+        },
+    }
+    brief["memory_context"]["structure_facts"] = [
+        "4 days/week runner",
+        "Available Mon/Wed/Fri/Sun",
+    ]
+    brief["memory_context"]["contradicted_facts"] = [
+        'Prior fact "4 days/week runner" may be superseded — athlete now says 5 days'
+    ]
+    return brief
+
+
+def _confirmed_detail_reopened_brief():
+    """Athlete confirmed Tuesday, coach should not re-ask."""
+    brief = _base_brief()
+    brief["delivery_context"] = {
+        "inbound_body": (
+            "Yes, Tuesday works. I confirmed this last message. "
+            "Please just send the plan."
+        ),
+    }
+    return brief
+
+
+def _answer_only_brief():
+    """Athlete asks a direct question, expects only an answer."""
+    brief = _base_brief()
+    brief["reply_mode"] = "lightweight_non_planning"
+    brief["delivery_context"] = {
+        "inbound_body": (
+            "Quick question: is 75 minutes too long for my weekend long run "
+            "at this point? That's all I need to know."
+        ),
+        "athlete_instructions": {
+            "requested_scope": "answer whether 75 minutes is too long",
+        },
+    }
+    return brief
+
+
+def _start_from_week_2_brief():
+    """Athlete says start from Week 2, not Week 1."""
+    brief = _base_brief()
+    brief["delivery_context"] = {
+        "inbound_body": (
+            "Start from Week 2, not Week 1. "
+            "I already did the intro week on my own."
+        ),
+        "athlete_instructions": {
+            "latest_overrides": ["Start from Week 2, not Week 1"],
+        },
+    }
+    return brief
+
+
+@unittest.skipUnless(_LIVE, "ENABLE_LIVE_LLM_CALLS not set")
+class TestStaleContextScheduleChange(unittest.TestCase):
+    """Athlete updates from 4 to 5 days. Directive must reflect the new schedule."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.result = run_coaching_reasoning_workflow(_stale_context_schedule_change_brief())
+        cls.directive = cls.result["directive"]
+
+    def test_main_message_references_5_days(self):
+        main = self.directive["main_message"].lower()
+        self.assertTrue(
+            any(s in main for s in ["5 days", "five days", "friday"]),
+            f"main_message should reference 5 days or Friday: {self.directive['main_message']}",
+        )
+
+    def test_avoid_blocks_stale_4_days(self):
+        avoid_text = " ".join(self.directive["avoid"]).lower()
+        # The directive should either avoid "4 days" or at least not assert it
+        main = self.directive["main_message"].lower()
+        content = " ".join(self.directive["content_plan"]).lower()
+        self.assertNotIn(
+            "4 days a week",
+            main + " " + content,
+            "Directive should not assert stale '4 days a week'",
+        )
+
+
+@unittest.skipUnless(_LIVE, "ENABLE_LIVE_LLM_CALLS not set")
+class TestConfirmedDetailNotReopened(unittest.TestCase):
+    """Athlete confirmed Tuesday. Directive should close that loop."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.result = run_coaching_reasoning_workflow(_confirmed_detail_reopened_brief())
+        cls.directive = cls.result["directive"]
+
+    def test_avoid_blocks_scheduling_re_ask(self):
+        avoid_text = " ".join(self.directive["avoid"]).lower()
+        self.assertTrue(
+            any(s in avoid_text for s in ["tuesday", "day", "schedule", "confirmed"]),
+            f"Avoid should block re-asking about Tuesday: {self.directive['avoid']}",
+        )
+
+    def test_content_plan_does_not_ask_about_day(self):
+        content = " ".join(self.directive["content_plan"]).lower()
+        re_ask_signals = ["which day", "what day", "confirm tuesday", "prefer"]
+        found = [s for s in re_ask_signals if s in content]
+        self.assertEqual(
+            found, [],
+            f"content_plan should not re-ask about day preference: {found}",
+        )
+
+
+@unittest.skipUnless(_LIVE, "ENABLE_LIVE_LLM_CALLS not set")
+class TestAnswerOnlyDirective(unittest.TestCase):
+    """Athlete asks a direct question. Directive should be narrow."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.result = run_coaching_reasoning_workflow(_answer_only_brief())
+        cls.directive = cls.result["directive"]
+
+    def test_content_plan_is_narrow(self):
+        self.assertLessEqual(
+            len(self.directive["content_plan"]), 2,
+            f"content_plan should be narrow for a direct question: {self.directive['content_plan']}",
+        )
+
+    def test_main_message_addresses_the_question(self):
+        main = self.directive["main_message"].lower()
+        self.assertTrue(
+            any(s in main for s in ["75", "long run", "appropriate", "fine", "ok", "good"]),
+            f"main_message should address the 75-min question: {self.directive['main_message']}",
+        )
+
+    def test_avoid_blocks_plan_rewrite(self):
+        avoid_text = " ".join(self.directive["avoid"]).lower()
+        block_signals = ["rewrite", "full plan", "restructure", "beyond", "extra"]
+        self.assertTrue(
+            any(s in avoid_text for s in block_signals),
+            f"Avoid should block plan rewrite: {self.directive['avoid']}",
+        )
+
+
+@unittest.skipUnless(_LIVE, "ENABLE_LIVE_LLM_CALLS not set")
+class TestStartFromWeek2(unittest.TestCase):
+    """Athlete says 'start from Week 2'. Directive must use Week 2 exactly."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.result = run_coaching_reasoning_workflow(_start_from_week_2_brief())
+        cls.directive = cls.result["directive"]
+
+    def test_main_message_says_week_2(self):
+        main = self.directive["main_message"].lower()
+        self.assertTrue(
+            "week 2" in main,
+            f"main_message should say 'week 2': {self.directive['main_message']}",
+        )
+
+    def test_main_message_does_not_say_week_1(self):
+        main = self.directive["main_message"].lower()
+        self.assertNotIn(
+            "week 1", main,
+            f"main_message should not say 'week 1': {self.directive['main_message']}",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

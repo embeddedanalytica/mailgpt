@@ -12,8 +12,12 @@ from skills.response_generation.errors import (
     ResponseGenerationContractError,
     ResponseGenerationProposalError,
 )
-from response_generation_contract import is_directive_input
-from skills.response_generation.prompt import DIRECTIVE_SYSTEM_PROMPT, SYSTEM_PROMPT
+from skills.response_generation.prompt import (
+    DIRECTIVE_SYSTEM_PROMPT,
+    build_continuity_prompt_section,
+    build_directive_constraints_section,
+    _is_narrow_directive,
+)
 from skills.response_generation.schema import JSON_SCHEMA, JSON_SCHEMA_NAME
 from skills.response_generation.validator import (
     validate_response_generation_brief,
@@ -26,13 +30,17 @@ logger = logging.getLogger(__name__)
 class ResponseGenerationLLM:
     """Language LLM boundary for athlete-facing final email generation."""
 
-    SYSTEM_PROMPT = SYSTEM_PROMPT
-
     @staticmethod
     def _select_prompt(brief: Dict[str, Any]) -> str:
-        if is_directive_input(brief):
-            return DIRECTIVE_SYSTEM_PROMPT
-        return SYSTEM_PROMPT
+        # For narrow directives, skip verbose continuity to reduce noise
+        if _is_narrow_directive(brief):
+            continuity_section = ""
+        else:
+            continuity_section = build_continuity_prompt_section(
+                brief.get("continuity_context")
+            )
+        constraints_section = build_directive_constraints_section(brief)
+        return DIRECTIVE_SYSTEM_PROMPT + continuity_section + constraints_section
 
     @staticmethod
     def generate_final_email_response(

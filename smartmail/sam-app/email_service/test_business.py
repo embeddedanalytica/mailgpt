@@ -1,5 +1,6 @@
 """Unit tests for business.get_reply_for_inbound (single entry point for reply logic)."""
 from contextlib import ExitStack
+from datetime import date
 import sys
 import unittest
 from unittest import mock
@@ -25,6 +26,33 @@ except ModuleNotFoundError as e:
 
 
 class TestGetReplyForInbound(unittest.TestCase):
+    def setUp(self):
+        patcher = mock.patch.object(
+            coaching, "run_coaching_reasoning_workflow",
+            return_value={
+                "directive": {
+                    "reply_action": "send",
+                    "opening": "Test opening",
+                    "main_message": "Test message",
+                    "content_plan": ["present the plan"],
+                    "avoid": [],
+                    "tone": "calm and direct",
+                    "recommend_material": None,
+                },
+                "doctrine_files_loaded": [],
+                "continuity_recommendation": {
+                    "recommended_goal_horizon_type": "general_fitness",
+                    "recommended_phase": "base",
+                    "recommended_block_focus": "controlled_load_progression",
+                    "recommended_transition_action": "keep",
+                    "recommended_transition_reason": "stable training",
+                    "recommended_goal_event_date": None,
+                },
+            },
+        )
+        self._mock_coaching_reasoning = patcher.start()
+        self.addCleanup(patcher.stop)
+
     def _profile_ready_patches(self):
         return (
             mock.patch.object(
@@ -32,7 +60,7 @@ class TestGetReplyForInbound(unittest.TestCase):
                 "get_coach_profile",
                 return_value={
                     "primary_goal": "10k",
-                    "time_availability": {"hours_per_week": 2.0},
+                    "time_availability": {"availability_notes": "About 2 hours per week"},
                     "experience_level": "unknown",
                     "injury_status": {"has_injuries": False},
                 },
@@ -146,6 +174,39 @@ class TestGetReplyForInbound(unittest.TestCase):
                 log_outcome=log_outcome,
             )
 
+    def test_passes_effective_today_when_provided(self):
+        with mock.patch.object(
+            business,
+            "analyze_conversation_intelligence",
+            return_value={
+                "intent": "question",
+                "complexity_score": 2,
+                "model_name": "gpt-5-mini",
+            },
+        ), mock.patch.object(
+            business,
+            "put_message_intelligence",
+            return_value=True,
+        ), mock.patch.object(
+            business,
+            "route_inbound_with_rule_engine",
+            return_value={"intent": "question", "mode": "read_only"},
+        ), mock.patch.object(business, "build_profile_gated_reply") as build:
+            build.return_value = "Ok"
+            effective_today = date(2026, 1, 15)
+
+            business.get_reply_for_inbound(
+                "ath_1",
+                "u@example.com",
+                {"body": "Hi"},
+                effective_today=effective_today,
+            )
+
+            self.assertEqual(
+                build.call_args.kwargs["effective_today"],
+                effective_today,
+            )
+
     def test_returns_fallback_when_intelligence_fails(self):
         with mock.patch.object(
             business,
@@ -187,6 +248,36 @@ class TestGetReplyForInbound(unittest.TestCase):
             persist.assert_called_once()
             build.assert_not_called()
 
+    def test_propagates_suppressed_reply_sentinel(self):
+        with mock.patch.object(
+            business,
+            "analyze_conversation_intelligence",
+            return_value={
+                "intent": "question",
+                "complexity_score": 2,
+                "model_name": "gpt-5-mini",
+            },
+        ), mock.patch.object(
+            business,
+            "put_message_intelligence",
+            return_value=True,
+        ), mock.patch.object(
+            business,
+            "route_inbound_with_rule_engine",
+            return_value={"intent": "question", "mode": "read_only"},
+        ), mock.patch.object(
+            business,
+            "build_profile_gated_reply",
+            return_value=business.SUPPRESSED_REPLY,
+        ):
+            reply = business.get_reply_for_inbound(
+                "ath_1",
+                "u@example.com",
+                {"body": "No need to reply unless needed"},
+            )
+
+        self.assertIs(reply, business.SUPPRESSED_REPLY)
+
     def test_persists_intelligence_before_rule_engine_router(self):
         call_order = []
 
@@ -227,27 +318,10 @@ class TestGetReplyForInbound(unittest.TestCase):
 
         self.assertEqual(call_order, ["persist", "router"])
 
-    def test_rule_engine_guided_reply_keeps_selected_model_but_uses_deterministic_reply_path(self):
+    def test_coaching_reply_keeps_selected_model_without_rule_engine_payload(self):
         guided_decision = {
             "intent": "coaching",
             "mode": "mutate",
-            "reply_strategy": "rule_engine_guided",
-            "engine_output": {
-                "track": "main_build",
-                "risk_flag": "green",
-                "plan_update_status": "updated",
-                "next_email_payload": {
-                    "subject_hint": "This week: execute with control",
-                    "summary": "Training can continue.",
-                    "sessions": ["session_1: easy_aerobic"],
-                    "plan_focus_line": "Hit the key sessions without forcing extra load.",
-                    "technique_cue": "Keep effort smooth, relaxed, and technically tidy.",
-                    "recovery_target": "Support the work with steady sleep and simple recovery habits.",
-                    "if_then_rules": ["Do not make up missed intensity later in the week."],
-                    "disclaimer_short": "",
-                    "safety_note": "No hard sessions when risk is red-tier.",
-                },
-            },
         }
         with mock.patch.object(
             business,
@@ -279,32 +353,10 @@ class TestGetReplyForInbound(unittest.TestCase):
         self.assertEqual(build.call_args.kwargs["rule_engine_decision"], guided_decision)
 
     @unittest.skipIf(coaching is None, "coaching module unavailable")
-    def test_rule_engine_guided_reply_renders_payload_through_business(self):
+    def test_business_no_longer_threads_rule_engine_payload_into_response_generation(self):
         guided_decision = {
             "intent": "coaching",
             "mode": "mutate",
-            "reply_strategy": "rule_engine_guided",
-            "engine_output": {
-                "classification_label": "deterministic_re3_transition",
-                "track": "return_or_risk_managed",
-                "phase": "build",
-                "risk_flag": "yellow",
-                "weekly_skeleton": ["easy_aerobic", "strength"],
-                "today_action": "prioritize_big_2_anchors",
-                "plan_update_status": "updated",
-                "adjustments": ["prioritize_big_2_anchors"],
-                "next_email_payload": {
-                    "subject_hint": "This week: stay safe and keep it steady",
-                    "summary": "This is a risk-managed week.",
-                    "sessions": ["Priority: long easy aerobic session", "Priority: strength session"],
-                    "plan_focus_line": "Use safety and consistency as the primary filter.",
-                    "technique_cue": "Keep cadence light and posture tall.",
-                    "recovery_target": "Prioritize recovery basics before adding any load.",
-                    "if_then_rules": ["If symptoms rise, remove intensity immediately."],
-                    "disclaimer_short": "",
-                    "safety_note": "No hard sessions when risk is red-tier.",
-                },
-            },
         }
         with ExitStack() as stack:
             stack.enter_context(
@@ -351,43 +403,15 @@ class TestGetReplyForInbound(unittest.TestCase):
         runner.assert_called_once()
         brief = runner.call_args.args[0]
         self.assertEqual(brief["reply_mode"], "normal_coaching")
-        self.assertEqual(brief["decision_context"]["track"], "return_or_risk_managed")
-        self.assertEqual(
-            brief["validated_plan"]["session_guidance"],
-            ["Priority: long easy aerobic session", "Priority: strength session"],
-        )
-        self.assertEqual(
-            brief["validated_plan"]["if_then_rules"],
-            ["If symptoms rise, remove intensity immediately."],
-        )
+        response_brief = self._mock_coaching_reasoning.call_args.args[0]
+        self.assertNotIn("track", response_brief["decision_context"])
+        self.assertEqual(brief["plan_data"], {"plan_summary": "Current plan - Goal: 10k."})
 
     @unittest.skipIf(coaching is None, "coaching module unavailable")
-    def test_red_b_guided_reply_includes_disclaimer_and_clinician_guidance_through_business(self):
+    def test_safety_intent_routes_without_rule_engine_guided_payload(self):
         guided_decision = {
-            "intent": "coaching",
-            "mode": "mutate",
-            "reply_strategy": "rule_engine_guided",
-            "engine_output": {
-                "classification_label": "deterministic_re3_transition",
-                "track": "return_or_risk_managed",
-                "phase": "build",
-                "risk_flag": "red_b",
-                "weekly_skeleton": ["easy_aerobic"],
-                "today_action": "stop_training_intensity_low_impact_only_if_pain_free",
-                "plan_update_status": "updated",
-                "adjustments": ["consult_clinician"],
-                "next_email_payload": {
-                    "subject_hint": "This week: stop intensity and get assessed",
-                    "summary": "Pain is the highest-priority signal. Stop training intensity and get clinical input.",
-                    "sessions": ["Optional short mobility/recovery touch only."],
-                    "plan_focus_line": "Protect health first. Training progression is paused.",
-                    "technique_cue": "Keep cadence light and posture tall.",
-                    "recovery_target": "Rest, reduce load, and seek clinical guidance before resuming training.",
-                    "if_then_rules": ["If symptoms persist or worsen, contact a clinician/physio immediately."],
-                    "disclaimer_short": "Please stop training and consult a clinician/physio.",
-                    "safety_note": "Please stop training and consult a clinician/physio.",
-                },
-            },
+            "intent": "safety_concern",
+            "mode": "skip",
         }
         with ExitStack() as stack:
             stack.enter_context(
@@ -433,7 +457,8 @@ class TestGetReplyForInbound(unittest.TestCase):
         self.assertEqual(reply, "Safety-composed guided reply.")
         runner.assert_called_once()
         brief = runner.call_args.args[0]
-        self.assertEqual(brief["validated_plan"]["safety_note"], "Please stop training and consult a clinician/physio.")
+        self.assertEqual(brief["reply_mode"], "safety_risk_managed")
+        self.assertEqual(brief["plan_data"], {"plan_summary": "Current plan - Goal: 10k."})
 
 
 if __name__ == "__main__":

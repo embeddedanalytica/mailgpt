@@ -11,6 +11,7 @@ import sys
 import tempfile
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from email.message import EmailMessage
 from html import unescape
 from pathlib import Path
@@ -43,6 +44,7 @@ if str(EMAIL_SERVICE_DIR) not in sys.path:
     sys.path.insert(0, str(EMAIL_SERVICE_DIR))
 
 import app as email_service_app  # type: ignore
+import business as email_business  # type: ignore
 import dynamodb_models  # type: ignore
 import email_reply_sender  # type: ignore
 
@@ -336,6 +338,10 @@ class LiveCoachingHarness:
             resolved_date_received = time.strftime("%a, %d %b %Y %H:%M:%S +0000", now_struct)
         else:
             resolved_date_received = date_received
+        effective_today = datetime.strptime(
+            resolved_date_received,
+            "%a, %d %b %Y %H:%M:%S +0000",
+        ).date()
 
         event = _build_sns_event(
             sender=normalized,
@@ -345,10 +351,21 @@ class LiveCoachingHarness:
             date_received=resolved_date_received,
         )
         with mock.patch.object(email_reply_sender.ses_client, "send_raw_email", side_effect=capture.send_raw_email):
-            response = email_service_app.lambda_handler(
-                event,
-                SimpleNamespace(aws_request_id=f"req-live-athlete-sim-{secrets.token_hex(6)}"),
-            )
+            with mock.patch.object(
+                email_service_app,
+                "get_reply_for_inbound",
+                side_effect=lambda athlete_id, from_email, email_data, **kwargs: email_business.get_reply_for_inbound(
+                    athlete_id,
+                    from_email,
+                    email_data,
+                    effective_today=effective_today,
+                    **kwargs,
+                ),
+            ):
+                response = email_service_app.lambda_handler(
+                    event,
+                    SimpleNamespace(aws_request_id=f"req-live-athlete-sim-{secrets.token_hex(6)}"),
+                )
 
         status_code = int(response.get("statusCode", 0) or 0)
         response_body = str(response.get("body", ""))

@@ -30,7 +30,7 @@ def _write_prompt_pack(root: Path, version: str) -> Path:
             "editable_surfaces": list(prompt_patch_apply.SURFACE_FILE_MAP.keys()),
         },
     )
-    _write_json(target / "response_generation.json", {"system_prompt_lines": ["base-system"], "directive_system_prompt_lines": ["base-directive"]})
+    _write_json(target / "response_generation.json", {"directive_system_prompt_lines": ["base-directive"]})
     _write_json(target / "coaching_reasoning.json", {"base_prompt_lines": ["base-coaching"]})
     return target
 
@@ -48,7 +48,7 @@ class TestPromptPatchApply(unittest.TestCase):
                     "proposed_version": "v1-proposal",
                     "changes": [
                         {
-                            "target_surface": "response_generation.system_prompt",
+                            "target_surface": "response_generation.directive_system_prompt",
                             "issue_tags": ["too_vague"],
                             "patch_strategy": "Require concrete workout guidance.",
                             "evidence": {"example_refs": [{"improved_reply_example": "Run 4 x 5 minutes."}]},
@@ -71,8 +71,8 @@ class TestPromptPatchApply(unittest.TestCase):
             manifest = json.loads((target_dir / "manifest.json").read_text(encoding="utf-8"))
 
         self.assertEqual(target_dir.name, "v1-proposal")
-        self.assertIn("Require concrete workout guidance.", response_generation["system_prompt_lines"])
-        self.assertIn("Representative improved example: Run 4 x 5 minutes.", response_generation["system_prompt_lines"])
+        self.assertIn("Require concrete workout guidance.", response_generation["directive_system_prompt_lines"])
+        self.assertIn("Representative improved example: Run 4 x 5 minutes.", response_generation["directive_system_prompt_lines"])
         self.assertIn("State the main next step clearly.", coaching_reasoning["base_prompt_lines"])
         self.assertEqual(manifest["parent_version"], "v1")
         self.assertIn("source_proposal", manifest)

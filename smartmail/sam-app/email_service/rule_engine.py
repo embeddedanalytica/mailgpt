@@ -78,6 +78,7 @@ _REQUIRED_TOP_LEVEL_FIELDS = {
 }
 _OPTIONAL_TOP_LEVEL_FIELDS = {
     "risk_recent_history",
+    "planner_rationale",
 }
 _REQUIRED_NEXT_EMAIL_PAYLOAD_FIELDS = {
     "subject_hint",
@@ -333,9 +334,10 @@ class RuleEngineOutput:
     adjustments: List[str]
     next_email_payload: Dict[str, Any]
     risk_recent_history: List[str] = ()  # type: ignore[assignment]
+    planner_rationale: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        result = {
             "classification_label": self.classification_label,
             "track": self.track,
             "phase": self.phase,
@@ -347,6 +349,9 @@ class RuleEngineOutput:
             "next_email_payload": dict(self.next_email_payload),
             "risk_recent_history": list(self.risk_recent_history),
         }
+        if self.planner_rationale:
+            result["planner_rationale"] = self.planner_rationale
+        return result
 
     @classmethod
     def from_dict(cls, payload: Dict[str, Any]) -> "RuleEngineOutput":
@@ -365,6 +370,7 @@ class RuleEngineOutput:
             adjustments=list(normalized["adjustments"]),
             next_email_payload=dict(normalized["next_email_payload"]),
             risk_recent_history=list(normalized["risk_recent_history"]),
+            planner_rationale=str(normalized.get("planner_rationale", "")).strip(),
         )
 
 

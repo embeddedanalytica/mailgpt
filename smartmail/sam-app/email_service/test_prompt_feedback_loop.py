@@ -34,7 +34,6 @@ def _write_prompt_pack(root: Path, version: str) -> Path:
             "created_at": "2026-03-22T00:00:00Z",
             "parent_version": None,
             "editable_surfaces": [
-                "response_generation.system_prompt",
                 "response_generation.directive_system_prompt",
                 "coaching_reasoning.base_prompt",
             ],
@@ -43,7 +42,6 @@ def _write_prompt_pack(root: Path, version: str) -> Path:
     _write_json(
         target / "response_generation.json",
         {
-            "system_prompt_lines": [f"{version}-system"],
             "directive_system_prompt_lines": [f"{version}-directive"],
         },
     )

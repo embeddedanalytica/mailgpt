@@ -260,3 +260,80 @@ class TestPlannerEval(unittest.TestCase):
         )
         self.assertEqual(len(results), 1)
         self.assertTrue(results[0]["matched"])
+
+
+def _base_decision_envelope() -> dict:
+    return build_decision_envelope(
+        {"main_sport_current": "run"},
+        {"days_available": 4, "structure_preference": "structure"},
+        "build",
+        "green",
+        "return_or_risk_managed",
+        False,
+        {},
+        fallback_skeleton=["easy_aerobic", "strength"],
+        adjustments=[],
+        plan_update_status="updated",
+        today_action="prioritize_big_2_anchors",
+        routing_context={"winning_signal": "stable"},
+    )
+
+
+class TestPlannerBriefContinuityContext(unittest.TestCase):
+
+    def test_planner_brief_accepts_continuity_context(self):
+        ctx = {
+            "goal_horizon_type": "event",
+            "current_phase": "build",
+            "current_block_focus": "event_specific_build",
+            "weeks_in_current_block": 4,
+        }
+        brief = build_planner_brief(
+            {"structure_preference": "structure"},
+            {"days_available": 4},
+            _base_decision_envelope(),
+            {},
+            continuity_context=ctx,
+        )
+        self.assertEqual(brief["continuity_context"]["current_block_focus"], "event_specific_build")
+
+    def test_planner_brief_without_continuity_context(self):
+        brief = build_planner_brief(
+            {"structure_preference": "structure"},
+            {"days_available": 4},
+            _base_decision_envelope(),
+            {},
+        )
+        self.assertNotIn("continuity_context", brief)
+
+    def test_validate_planner_brief_accepts_continuity_context(self):
+        brief = _planner_brief()
+        brief["continuity_context"] = {"current_block_focus": "maintain_fitness"}
+        validated = validate_planner_brief(brief)
+        self.assertIn("continuity_context", validated)
+
+    def test_validate_planner_brief_still_rejects_unknown_keys(self):
+        brief = _planner_brief()
+        brief["totally_unknown"] = True
+        with self.assertRaises(PlannerContractError):
+            validate_planner_brief(brief)
+
+    def test_planner_prompt_with_continuity(self):
+        from skills.planner.prompt import build_planner_system_prompt
+
+        ctx = {
+            "current_block_focus": "event_specific_build",
+            "weeks_in_current_block": 4,
+            "weeks_until_event": 8,
+        }
+        prompt = build_planner_system_prompt(ctx)
+        self.assertIn("event specific build", prompt)
+        self.assertIn("Weeks in current block: 4", prompt)
+        self.assertIn("Weeks until event: 8", prompt)
+
+    def test_planner_prompt_without_continuity(self):
+        from skills.planner.prompt import build_planner_system_prompt
+
+        prompt = build_planner_system_prompt(None)
+        self.assertNotIn("continuity context", prompt.lower())
+        self.assertIn("expert endurance coach", prompt)

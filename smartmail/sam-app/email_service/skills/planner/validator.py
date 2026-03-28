@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from rule_engine import (
     ALLOWED_SESSION_TAGS,
@@ -42,7 +42,7 @@ def validate_planner_brief(payload: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(payload, dict):
         raise PlannerContractError("planner_brief must be a dict")
 
-    allowed_keys = {
+    required_keys = {
         "phase",
         "risk_flag",
         "track",
@@ -58,12 +58,17 @@ def validate_planner_brief(payload: Dict[str, Any]) -> Dict[str, Any]:
         "messaging_guardrails",
         "fallback_skeleton",
     }
+    optional_keys = {
+        "continuity_context",
+        "athlete_session_preferences",
+    }
+    allowed_keys = required_keys | optional_keys
     unknown_keys = sorted(set(payload.keys()) - allowed_keys)
     if unknown_keys:
         raise PlannerContractError(
             "planner_brief contains unknown keys: " + ", ".join(unknown_keys)
         )
-    missing_keys = sorted(allowed_keys - set(payload.keys()))
+    missing_keys = sorted(required_keys - set(payload.keys()))
     if missing_keys:
         raise PlannerContractError(
             "planner_brief is missing keys: " + ", ".join(missing_keys)
@@ -131,7 +136,7 @@ def validate_planner_brief(payload: Dict[str, Any]) -> Dict[str, Any]:
                 f"fallback_skeleton[{idx}] must be one of {sorted(ALLOWED_SESSION_TAGS)}"
             )
 
-    return {
+    result = {
         "phase": phase,
         "risk_flag": risk_flag,
         "track": track,
@@ -147,6 +152,14 @@ def validate_planner_brief(payload: Dict[str, Any]) -> Dict[str, Any]:
         "messaging_guardrails": messaging_guardrails,
         "fallback_skeleton": fallback_skeleton,
     }
+    if "continuity_context" in payload:
+        result["continuity_context"] = payload["continuity_context"]
+    if "athlete_session_preferences" in payload:
+        result["athlete_session_preferences"] = _normalize_string_list(
+            payload["athlete_session_preferences"],
+            field_name="athlete_session_preferences",
+        )
+    return result
 
 
 def build_planner_brief(
@@ -154,6 +167,8 @@ def build_planner_brief(
     checkin: Dict[str, Any],
     decision_envelope: Dict[str, Any],
     rule_state: Dict[str, Any],
+    continuity_context: Optional[Dict[str, Any]] = None,
+    athlete_session_preferences: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     if not isinstance(profile, dict):
         raise PlannerContractError("profile must be a dict")
@@ -186,34 +201,37 @@ def build_planner_brief(
     max_sessions = max(1, max_sessions)
     allowed_session_budget = min(max_sessions, max(1, _days_available(checkin)))
 
-    return validate_planner_brief(
-        {
-            "phase": str(decision_envelope.get("phase", "base")).strip().lower() or "base",
-            "risk_flag": str(decision_envelope.get("risk_flag", "green")).strip().lower() or "green",
-            "track": str(decision_envelope.get("track", "general_low_time")).strip().lower()
-            or "general_low_time",
-            "plan_update_status": str(decision_envelope.get("plan_update_status", "updated")).strip().lower()
-            or "updated",
-            "hard_limits": hard_limits,
-            "weekly_targets": weekly_targets,
-            "allowed_session_budget": allowed_session_budget,
-            "max_sessions_per_week": max_sessions,
-            "track_specific_objective": str(weekly_targets.get("track_objective", "")).strip(),
-            "priority_sessions": [
-                str(item)
-                for item in weekly_targets.get("priority_sessions", [])
-                if str(item).strip()
-            ],
-            "disallowed_patterns": [
-                str(item).strip().lower()
-                for item in weekly_targets.get("disallowed_patterns", [])
-                if str(item).strip()
-            ],
-            "structure_preference": output_mode,
-            "messaging_guardrails": dict(decision_envelope.get("messaging_guardrails", {})),
-            "fallback_skeleton": fallback_skeleton,
-        }
-    )
+    brief_payload: Dict[str, Any] = {
+        "phase": str(decision_envelope.get("phase", "base")).strip().lower() or "base",
+        "risk_flag": str(decision_envelope.get("risk_flag", "green")).strip().lower() or "green",
+        "track": str(decision_envelope.get("track", "general_low_time")).strip().lower()
+        or "general_low_time",
+        "plan_update_status": str(decision_envelope.get("plan_update_status", "updated")).strip().lower()
+        or "updated",
+        "hard_limits": hard_limits,
+        "weekly_targets": weekly_targets,
+        "allowed_session_budget": allowed_session_budget,
+        "max_sessions_per_week": max_sessions,
+        "track_specific_objective": str(weekly_targets.get("track_objective", "")).strip(),
+        "priority_sessions": [
+            str(item)
+            for item in weekly_targets.get("priority_sessions", [])
+            if str(item).strip()
+        ],
+        "disallowed_patterns": [
+            str(item).strip().lower()
+            for item in weekly_targets.get("disallowed_patterns", [])
+            if str(item).strip()
+        ],
+        "structure_preference": output_mode,
+        "messaging_guardrails": dict(decision_envelope.get("messaging_guardrails", {})),
+        "fallback_skeleton": fallback_skeleton,
+    }
+    if continuity_context is not None:
+        brief_payload["continuity_context"] = continuity_context
+    if athlete_session_preferences:
+        brief_payload["athlete_session_preferences"] = list(athlete_session_preferences)
+    return validate_planner_brief(brief_payload)
 
 
 def validate_planner_response(payload: Dict[str, Any], *, model_name: str = "") -> Dict[str, Any]:

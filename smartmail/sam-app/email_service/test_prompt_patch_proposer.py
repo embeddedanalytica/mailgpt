@@ -74,7 +74,7 @@ class TestPromptPatchProposer(unittest.TestCase):
             proposal["target_surfaces"],
             [
                 "coaching_reasoning.base_prompt",
-                "response_generation.system_prompt",
+                "response_generation.directive_system_prompt",
             ],
         )
         self.assertEqual(len(proposal["changes"]), 3)

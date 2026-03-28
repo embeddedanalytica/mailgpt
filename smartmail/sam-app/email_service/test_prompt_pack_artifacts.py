@@ -24,7 +24,6 @@ class TestPromptPackArtifacts(unittest.TestCase):
         self.assertEqual(
             manifest["editable_surfaces"],
             [
-                "response_generation.system_prompt",
                 "response_generation.directive_system_prompt",
                 "coaching_reasoning.base_prompt",
             ],
@@ -32,10 +31,6 @@ class TestPromptPackArtifacts(unittest.TestCase):
 
     def test_response_generation_prompt_pack_matches_current_inline_prompts(self):
         payload = _load_json(PROMPT_PACK_ROOT / "response_generation.json")
-        self.assertEqual(
-            "\n".join(payload["system_prompt_lines"]),
-            response_generation_prompt.SYSTEM_PROMPT,
-        )
         self.assertEqual(
             "\n".join(payload["directive_system_prompt_lines"]),
             response_generation_prompt.DIRECTIVE_SYSTEM_PROMPT,
@@ -58,8 +53,8 @@ class TestPromptPackArtifacts(unittest.TestCase):
         payload = prompt_pack_loader.load_coach_reply_prompt_pack(version="v1")
         self.assertEqual(payload["version"], "v1")
         self.assertEqual(
-            payload["response_generation"]["system_prompt"],
-            response_generation_prompt.SYSTEM_PROMPT,
+            payload["response_generation"]["directive_system_prompt"],
+            response_generation_prompt.DIRECTIVE_SYSTEM_PROMPT,
         )
 
     def test_loader_uses_env_override(self):

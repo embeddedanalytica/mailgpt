@@ -13,29 +13,21 @@ def _valid_scenario(scenario_id: str = "RG-001") -> dict:
         "name": "sample",
         "response_brief": {
             "reply_mode": "normal_coaching",
-            "athlete_context": {
-                "goal_summary": "10k race in 8 weeks",
-                "experience_level": "intermediate",
-                "structure_preference": "flexibility",
+            "coaching_directive": {
+                "opening": "Test opening",
+                "main_message": "Keep one controlled quality session this week.",
+                "content_plan": ["present the plan"],
+                "avoid": [],
+                "tone": "calm and direct",
+                "recommend_material": None,
             },
-            "decision_context": {
-                "track": "main_build",
-                "phase": "build",
-                "risk_flag": "yellow",
-                "today_action": "do_planned_but_conservative",
-            },
-            "validated_plan": {
+            "plan_data": {
                 "weekly_skeleton": ["easy_aerobic", "strength", "tempo"],
                 "plan_summary": "Current plan: rebuild consistency while protecting recovery.",
             },
             "delivery_context": {
                 "inbound_subject": "Weekly check-in",
                 "selected_model_name": "gpt-5-mini",
-                "response_channel": "email",
-            },
-            "memory_context": {
-                "memory_available": False,
-                "continuity_summary": None,
             },
         },
     }

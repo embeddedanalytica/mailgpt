@@ -21,7 +21,7 @@ from dynamodb_models import (
 )
 from auth import is_registered, handle_unverified_sender
 from rate_limits import check_verified_quota_or_block
-from business import get_reply_for_inbound
+from business import SUPPRESSED_REPLY, get_reply_for_inbound
 from email_processor import EmailProcessor
 from email_reply_sender import EmailReplySender
 from email_copy import EmailCopy
@@ -114,6 +114,16 @@ def lambda_handler(event, context):
             aws_request_id=aws_request_id,
             log_outcome=_log_inbound_outcome,
         )
+        if reply_body is SUPPRESSED_REPLY:
+            _log_inbound_outcome(
+                from_email=from_email,
+                verified=True,
+                result="reply_suppressed_no_reply_needed",
+                aws_request_id=aws_request_id,
+                athlete_id=athlete_id,
+                message_id=email_data.get("message_id"),
+            )
+            return {"statusCode": 200, "body": "No reply sent because no coaching response was needed."}
         if reply_body is None:
             _log_inbound_outcome(
                 from_email=from_email,

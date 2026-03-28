@@ -5,8 +5,13 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Dict
 
+import logging as _logging
+
+_orch_logger = _logging.getLogger(__name__)
+
 try:  # pragma: no cover - import style depends on runner context
-    from .dynamodb_models import update_current_plan
+    from .dynamodb_models import update_current_plan, get_continuity_state
+    from .continuity_state_contract import ContinuityState, ContinuityStateContractError
     from .rule_engine import (
         RuleEngineContractError,
         RuleEngineOutput,
@@ -36,7 +41,8 @@ try:  # pragma: no cover - import style depends on runner context
     from .skills.planner import build_planner_brief, run_planner_workflow
     from .skills.response_generation import LanguageRenderError, LanguageReplyRenderer
 except ImportError:  # pragma: no cover
-    from dynamodb_models import update_current_plan
+    from dynamodb_models import update_current_plan, get_continuity_state
+    from continuity_state_contract import ContinuityState, ContinuityStateContractError
     from rule_engine import (
         RuleEngineContractError,
         RuleEngineOutput,
@@ -197,6 +203,25 @@ def apply_rule_engine_plan_update(
     )
 
 
+def _extract_session_preferences(memory_notes: list[Dict[str, Any]]) -> list[str]:
+    """Extract schedule and preference facts from memory notes for the planner.
+
+    Returns a list of plain-text summaries that describe the athlete's
+    stated session preferences (frequency, days, durations, session types).
+    """
+    preferences: list[str] = []
+    for note in memory_notes:
+        if not isinstance(note, dict):
+            continue
+        fact_type = str(note.get("fact_type", "")).strip().lower()
+        if fact_type not in ("schedule", "preference", "constraint"):
+            continue
+        summary = str(note.get("summary", "")).strip()
+        if summary:
+            preferences.append(summary)
+    return preferences
+
+
 def run_rule_engine_for_week(
     athlete_id: str,
     profile: Dict[str, Any],
@@ -204,6 +229,7 @@ def run_rule_engine_for_week(
     today_date: date,
     *,
     persist_state: bool = True,
+    memory_notes: list[Dict[str, Any]] | None = None,
 ) -> RuleEngineOutput:
     if not isinstance(athlete_id, str) or not athlete_id.strip():
         raise RuleEngineOrchestratorError("athlete_id must be a non-empty string")
@@ -322,11 +348,24 @@ def run_rule_engine_for_week(
         today_action=today_action,
         routing_context=routed_plan["routing_context"],
     )
+    # Load previously persisted continuity state for planner context
+    planner_continuity_context = None
+    try:
+        raw_cs = get_continuity_state(athlete_id)
+        if raw_cs is not None:
+            cs = ContinuityState.from_dict(raw_cs)
+            planner_continuity_context = cs.to_continuity_context(today_date)
+    except (ContinuityStateContractError, Exception) as exc:
+        _orch_logger.debug("continuity_state unavailable for planner: %s", exc)
+
+    athlete_session_preferences = _extract_session_preferences(memory_notes or [])
     planner_brief = build_planner_brief(
         effective_profile,
         checkin,
         decision_envelope,
         rule_state,
+        continuity_context=planner_continuity_context,
+        athlete_session_preferences=athlete_session_preferences,
     )
     final_plan = {
         "source": "deterministic_fallback",
@@ -391,6 +430,9 @@ def run_rule_engine_for_week(
         "next_email_payload": next_email_payload,
         "risk_recent_history": risk_recent_history,
     }
+    planner_rationale = str(final_plan.get("planner_rationale", "")).strip()
+    if planner_rationale:
+        output_payload["planner_rationale"] = planner_rationale
     validate_rule_engine_output(output_payload)
 
     prior_weeks_since_deload = int(rule_state.get("weeks_since_deload", 0) or 0)

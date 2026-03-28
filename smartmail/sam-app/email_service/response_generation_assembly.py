@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import re
 import time as _time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from athlete_memory_contract import (
     AthleteMemoryContractError,
@@ -11,7 +12,6 @@ from athlete_memory_contract import (
     validate_memory_notes,
 )
 from response_generation_contract import ResponseBrief, normalize_reply_mode
-from rule_engine import RuleEngineContractError, validate_rule_engine_output
 from skills.response_generation import build_clarification_questions
 
 
@@ -20,22 +20,6 @@ def _string_field(value: Any) -> Optional[str]:
         return None
     normalized = value.strip()
     return normalized or None
-
-
-def _validated_engine_output(
-    rule_engine_decision: Optional[Dict[str, Any]],
-) -> Optional[Dict[str, Any]]:
-    if not isinstance(rule_engine_decision, dict):
-        return None
-    engine_output = rule_engine_decision.get("engine_output")
-    if not isinstance(engine_output, dict):
-        return None
-
-    try:
-        validate_rule_engine_output(engine_output)
-    except RuleEngineContractError:
-        return None
-    return engine_output
 
 
 # Fact type ordering for deterministic salience
@@ -116,6 +100,184 @@ def _constraint_summaries(profile_after: Dict[str, Any]) -> Optional[str]:
     return "; ".join(parts) if parts else None
 
 
+# ---------------------------------------------------------------------------
+# Athlete instruction extraction (deterministic, pattern-based)
+# ---------------------------------------------------------------------------
+
+# Patterns that indicate forbidden topics / "do not revisit" instructions
+_FORBIDDEN_TOPIC_PATTERNS = [
+    re.compile(
+        r"(?:do\s*n[o']?t|don't|stop|please\s+stop|quit|no\s+more)\s+"
+        r"(?:bring(?:ing)?\s+up|mention(?:ing)?|revisit(?:ing)?|reopen(?:ing)?|"
+        r"repeat(?:ing)?|re-?ask(?:ing)?|talk(?:ing)?\s+about|reference|"
+        r"label(?:ing)?|us(?:e|ing))\s+"
+        r"(.+?)(?:\.|$|;|\s+unless|\s+until)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:stop|please\s+stop|quit)\s+(.+?)(?:\.|$|;)",
+        re.IGNORECASE,
+    ),
+]
+
+# Patterns that indicate scope constraints
+_SCOPE_PATTERNS = [
+    re.compile(r"(?:just|only)\s+(?:tell|give|send|show)\s+me\s+(.+?)(?:\.|$|;)", re.IGNORECASE),
+    re.compile(r"keep\s+(?:it|this|the\s+reply)\s+(?:short|brief|concise|to\s+\w+\s+lines?)", re.IGNORECASE),
+    re.compile(r"(?:\d+)\s+lines?\s+(?:max|only|or\s+less)", re.IGNORECASE),
+    re.compile(r"one\s+(?:short\s+)?(?:paragraph|line|sentence)", re.IGNORECASE),
+]
+
+# Patterns that indicate reply suppression preference
+_SUPPRESSION_PATTERNS = [
+    re.compile(
+        r"(?:please\s+)?(?:only|don't|do\s*not)\s+reply\s+"
+        r"(?:if|unless|when)\s+(.+?)(?:\.|$|;)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"no\s+reply\s+(?:needed|necessary|unless)\s*(.+?)(?:\.|$|;)",
+        re.IGNORECASE,
+    ),
+]
+
+# Patterns that indicate latest overrides / corrections
+_OVERRIDE_PATTERNS = [
+    re.compile(
+        r"(?:please\s+)?(?:correct|fix|update|change)\s*:?\s+(.+?)(?:\.|$|;)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:I\s+(?:can\s+)?now|my\s+\w+\s+(?:changed|opened|updated))\s+(.+?)(?:\.|$|;)",
+        re.IGNORECASE,
+    ),
+]
+
+
+def extract_athlete_instructions(inbound_body: Optional[str]) -> Dict[str, Any]:
+    """Extract structured athlete instructions from the inbound message body.
+
+    Returns a dict with only populated fields. Returns empty dict if no
+    instructions are detected. All extraction is deterministic and pattern-based.
+    """
+    if not inbound_body:
+        return {}
+
+    text = inbound_body.strip()
+    instructions: Dict[str, Any] = {}
+
+    # Forbidden topics
+    forbidden: List[str] = []
+    for pattern in _FORBIDDEN_TOPIC_PATTERNS:
+        for match in pattern.finditer(text):
+            topic = match.group(1).strip().rstrip(".,;")
+            if topic and len(topic) < 200:
+                forbidden.append(topic)
+    if forbidden:
+        instructions["forbidden_topics"] = forbidden
+
+    # Requested scope
+    for pattern in _SCOPE_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            instructions["requested_scope"] = match.group(0).strip().rstrip(".,;")
+            break
+
+    # Format constraints (capture the full matched phrase)
+    format_match = re.search(
+        r"(\d+\s+lines?\s+(?:max|only|or\s+less)|"
+        r"one\s+(?:short\s+)?(?:paragraph|line|sentence)|"
+        r"keep\s+(?:it|this|the\s+reply)\s+(?:short|brief|concise))",
+        text,
+        re.IGNORECASE,
+    )
+    if format_match:
+        instructions["format_constraints"] = format_match.group(0).strip()
+
+    # Reply suppression hint
+    for pattern in _SUPPRESSION_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            instructions["reply_suppression_hint"] = match.group(0).strip().rstrip(".,;")
+            break
+
+    # Latest overrides
+    overrides: List[str] = []
+    for pattern in _OVERRIDE_PATTERNS:
+        for match in pattern.finditer(text):
+            override = match.group(0).strip().rstrip(".,;")
+            if override and len(override) < 300:
+                overrides.append(override)
+    if overrides:
+        instructions["latest_overrides"] = overrides
+
+    return instructions
+
+
+# ---------------------------------------------------------------------------
+# Memory contradiction detection
+# ---------------------------------------------------------------------------
+
+def detect_contradicted_facts(
+    inbound_body: Optional[str],
+    memory_facts: List[str],
+) -> List[str]:
+    """Detect memory facts that appear to be contradicted by the inbound message.
+
+    Uses simple keyword overlap to find facts where the athlete's message
+    explicitly negates or updates the stored information. Returns a list of
+    human-readable contradiction descriptions.
+
+    This is intentionally conservative — it only flags facts where the inbound
+    body contains clear negation or correction language near the fact's keywords.
+    """
+    if not inbound_body or not memory_facts:
+        return []
+
+    text_lower = inbound_body.lower()
+    contradictions: List[str] = []
+
+    # Negation/correction phrases that signal a fact may be outdated
+    _NEGATION_PHRASES = [
+        "no longer", "not anymore", "no more", "resolved", "cleared up",
+        "gone now", "don't have", "do not have", "isn't an issue",
+        "is not an issue", "stopped", "changed", "updated", "now I can",
+        "I can now", "actually",
+    ]
+
+    for fact in memory_facts:
+        fact_lower = fact.lower()
+        # Extract key nouns from the fact (words > 3 chars, skip common words)
+        _SKIP_WORDS = {"with", "that", "this", "from", "have", "been", "when", "than", "also"}
+        fact_keywords = [
+            w for w in re.findall(r"[a-z]+", fact_lower)
+            if len(w) > 3 and w not in _SKIP_WORDS
+        ]
+        if not fact_keywords:
+            continue
+
+        # Check if any fact keyword appears near a negation phrase in the inbound text
+        for keyword in fact_keywords:
+            if keyword not in text_lower:
+                continue
+            # Look for negation phrases within ~60 chars of the keyword
+            for neg in _NEGATION_PHRASES:
+                if neg not in text_lower:
+                    continue
+                kw_pos = text_lower.find(keyword)
+                neg_pos = text_lower.find(neg)
+                if abs(kw_pos - neg_pos) < 60:
+                    contradictions.append(
+                        f"Prior fact \"{fact}\" may be superseded by current message"
+                    )
+                    break
+            else:
+                continue
+            break
+
+    return contradictions
+
+
 def _missing_injury_only(missing_profile_fields: list[str]) -> bool:
     return set(missing_profile_fields) == {"injury_status"}
 
@@ -141,7 +303,6 @@ def build_response_brief(
     del athlete_id  # reserved for future assembly expansion
 
     reply_mode = normalize_reply_mode(reply_kind)
-    validated_engine_output = _validated_engine_output(rule_engine_decision)
     athlete_context: Dict[str, Any] = {}
     goal_summary = _string_field(profile_after.get("primary_goal"))
     if goal_summary:
@@ -184,26 +345,14 @@ def build_response_brief(
                 clarification_fields
             )
 
-    include_decision_fields = reply_mode not in {"off_topic_redirect", "intake"}
-    if validated_engine_output is not None and include_decision_fields:
-        for field_name in ("track", "phase", "risk_flag", "today_action", "plan_update_status"):
-            field_value = _string_field(validated_engine_output.get(field_name))
-            if field_value:
-                decision_context[field_name] = field_value
-        risk_recent_history = validated_engine_output.get("risk_recent_history")
-        if isinstance(risk_recent_history, list) and risk_recent_history:
-            decision_context["risk_recent_history"] = [
-                str(f).strip() for f in risk_recent_history if isinstance(f, str) and f.strip()
-            ]
-
     if intake_completed_this_turn:
         decision_context["intake_completed_this_turn"] = True
 
-    # Athlete directive signals from conversation intelligence
+    # Athlete presentation signals from conversation intelligence
+    # Note: requested_action is intentionally NOT forwarded here — it is used
+    # for routing only (inbound_rule_router). Coaching reasoning decides behavior
+    # from first principles.
     if isinstance(rule_engine_decision, dict):
-        ra = str(rule_engine_decision.get("requested_action", "")).strip()
-        if ra:
-            decision_context["requested_action"] = ra
         bp = str(rule_engine_decision.get("brevity_preference", "")).strip()
         if bp and bp != "normal":
             decision_context["brevity_preference"] = bp
@@ -221,46 +370,6 @@ def build_response_brief(
         if normalized_plan_summary:
             validated_plan["plan_summary"] = normalized_plan_summary
 
-    include_weekly_skeleton = reply_mode == "normal_coaching"
-    if validated_engine_output is not None and include_weekly_skeleton:
-        weekly_skeleton = validated_engine_output.get("weekly_skeleton")
-        if isinstance(weekly_skeleton, list):
-            validated_plan["weekly_skeleton"] = [
-                str(item).strip()
-                for item in weekly_skeleton
-                if isinstance(item, str) and str(item).strip()
-            ]
-        next_email_payload = validated_engine_output.get("next_email_payload")
-        if isinstance(next_email_payload, dict):
-            session_guidance = next_email_payload.get("sessions")
-            if isinstance(session_guidance, list):
-                normalized_session_guidance = [
-                    str(item).strip()
-                    for item in session_guidance
-                    if isinstance(item, str) and str(item).strip()
-                ]
-                if normalized_session_guidance:
-                    validated_plan["session_guidance"] = normalized_session_guidance
-            adjustments_or_priorities = []
-            for field_name in ("summary", "plan_focus_line", "technique_cue", "recovery_target"):
-                field_value = _string_field(next_email_payload.get(field_name))
-                if field_value:
-                    adjustments_or_priorities.append(field_value)
-            if adjustments_or_priorities:
-                validated_plan["adjustments_or_priorities"] = adjustments_or_priorities
-            if_then_rules = next_email_payload.get("if_then_rules")
-            if isinstance(if_then_rules, list):
-                normalized_if_then_rules = [
-                    str(item).strip()
-                    for item in if_then_rules
-                    if isinstance(item, str) and str(item).strip()
-                ]
-                if normalized_if_then_rules:
-                    validated_plan["if_then_rules"] = normalized_if_then_rules
-            safety_note = _string_field(next_email_payload.get("safety_note"))
-            if safety_note:
-                validated_plan["safety_note"] = safety_note
-
     delivery_context: Dict[str, Any] = {}
     normalized_subject = _string_field(inbound_subject)
     if normalized_subject:
@@ -275,6 +384,11 @@ def build_response_brief(
     normalized_connect_strava_link = _string_field(connect_strava_link)
     if normalized_connect_strava_link:
         delivery_context["connect_strava_link"] = normalized_connect_strava_link
+
+    # Extract structured athlete instructions from inbound body
+    athlete_instructions = extract_athlete_instructions(normalized_body if normalized_body else None)
+    if athlete_instructions:
+        delivery_context["athlete_instructions"] = athlete_instructions
 
     normalized_memory_context = memory_context if isinstance(memory_context, dict) else {}
 
@@ -318,6 +432,19 @@ def build_response_brief(
     if memory_salience["continuity_focus"]:
         memory_payload["continuity_focus"] = memory_salience["continuity_focus"]
 
+    # Detect memory facts contradicted by the current inbound message
+    all_memory_summaries = (
+        memory_salience["priority_facts"]
+        + memory_salience["structure_facts"]
+        + memory_salience["context_facts"]
+    )
+    contradicted = detect_contradicted_facts(
+        normalized_body if normalized_body else None,
+        all_memory_summaries,
+    )
+    if contradicted:
+        memory_payload["contradicted_facts"] = contradicted
+
     payload = {
         "reply_mode": reply_mode,
         "athlete_context": athlete_context,
@@ -333,19 +460,25 @@ def build_response_generation_input(
     *,
     directive: Dict[str, Any],
     brief: ResponseBrief,
+    continuity_context: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Reshape a CoachingDirective + ResponseBrief into a WriterBrief for the response generation skill.
 
-    Strips `rationale` from the directive (internal reasoning, not for the writer).
+    Strips strategist-only fields from the directive before handing it to the writer.
     """
-    # Strip rationale — it's for eval/logging only
+    # These fields are used by orchestration and eval, not by the writer contract.
     writer_directive = {
-        k: v for k, v in directive.items() if k != "rationale"
+        k: v
+        for k, v in directive.items()
+        if k not in {"rationale", "reply_action"}
     }
 
-    return {
+    result = {
         "reply_mode": brief.reply_mode,
         "coaching_directive": writer_directive,
         "plan_data": dict(brief.validated_plan),
         "delivery_context": dict(brief.delivery_context),
     }
+    if continuity_context is not None:
+        result["continuity_context"] = continuity_context
+    return result

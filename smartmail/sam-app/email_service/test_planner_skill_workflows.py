@@ -76,8 +76,8 @@ class TestProfileExtractionWorkflow(unittest.TestCase):
 
     def test_rejects_time_placeholder_only_payload(self):
         with mock.patch.object(skill_runtime, "openai", _stub_openai_with_contents([
-            '{"primary_goal":null,"time_availability":{"sessions_per_week":0,"hours_per_week":0},"experience_level":"unknown","experience_level_note":null,"constraints":[]}',
-            '{"primary_goal":null,"time_availability":{"sessions_per_week":0,"hours_per_week":0},"experience_level":"unknown","experience_level_note":null,"constraints":[]}',
+            '{"primary_goal":null,"time_availability":{"sessions_per_week":"","daily_windows":[],"availability_notes":""},"experience_level":"unknown","experience_level_note":null,"constraints":[]}',
+            '{"primary_goal":null,"time_availability":{"sessions_per_week":"","daily_windows":[],"availability_notes":""},"experience_level":"unknown","experience_level_note":null,"constraints":[]}',
         ])):
             with self.assertRaises(ProfileExtractionProposalError):
                 run_profile_extraction_workflow("No clear profile details yet.")

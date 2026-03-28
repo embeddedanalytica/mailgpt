@@ -389,5 +389,117 @@ class TestExpandedAthleteContextFields(unittest.TestCase):
         self.assertEqual(brief.athlete_context["primary_sport"], "running")
 
 
+def _sample_continuity_context():
+    return {
+        "goal_horizon_type": "event",
+        "current_phase": "build",
+        "current_block_focus": "event_specific_build",
+        "weeks_in_current_block": 4,
+        "weeks_until_event": 8,
+        "goal_event_date": "2026-06-15",
+        "last_transition_reason": "Ready for build phase",
+    }
+
+
+class TestResponseBriefContinuityContext(unittest.TestCase):
+
+    def test_accepts_with_continuity_context(self):
+        payload = _valid_brief()
+        payload["continuity_context"] = _sample_continuity_context()
+        brief = ResponseBrief.from_dict(payload)
+        self.assertIsNotNone(brief.continuity_context)
+        self.assertEqual(brief.continuity_context["current_block_focus"], "event_specific_build")
+
+    def test_accepts_without_continuity_context(self):
+        payload = _valid_brief()
+        brief = ResponseBrief.from_dict(payload)
+        self.assertIsNone(brief.continuity_context)
+
+    def test_round_trip_with_continuity_context(self):
+        payload = _valid_brief()
+        payload["continuity_context"] = _sample_continuity_context()
+        brief = ResponseBrief.from_dict(payload)
+        d = brief.to_dict()
+        self.assertIn("continuity_context", d)
+
+    def test_round_trip_without_continuity_context(self):
+        payload = _valid_brief()
+        brief = ResponseBrief.from_dict(payload)
+        d = brief.to_dict()
+        self.assertNotIn("continuity_context", d)
+
+
+class TestWriterBriefContinuityContext(unittest.TestCase):
+
+    def test_accepts_with_continuity_context(self):
+        payload = _valid_writer_brief()
+        payload["continuity_context"] = _sample_continuity_context()
+        brief = WriterBrief.from_dict(payload)
+        self.assertIsNotNone(brief.continuity_context)
+
+    def test_accepts_without_continuity_context(self):
+        payload = _valid_writer_brief()
+        brief = WriterBrief.from_dict(payload)
+        self.assertIsNone(brief.continuity_context)
+
+    def test_is_directive_input_with_continuity(self):
+        payload = _valid_writer_brief()
+        payload["continuity_context"] = _sample_continuity_context()
+        self.assertTrue(is_directive_input(payload))
+
+    def test_round_trip_with_continuity_context(self):
+        payload = _valid_writer_brief()
+        payload["continuity_context"] = _sample_continuity_context()
+        brief = WriterBrief.from_dict(payload)
+        d = brief.to_dict()
+        self.assertIn("continuity_context", d)
+
+    def test_round_trip_without_continuity_context(self):
+        payload = _valid_writer_brief()
+        brief = WriterBrief.from_dict(payload)
+        d = brief.to_dict()
+        self.assertNotIn("continuity_context", d)
+
+
+class TestResponseGenerationContinuityPrompt(unittest.TestCase):
+
+    def test_continuity_section_with_context(self):
+        from skills.response_generation.prompt import build_continuity_prompt_section
+
+        section = build_continuity_prompt_section(_sample_continuity_context())
+        self.assertIn("week 4", section)
+        self.assertIn("event specific build", section)
+        self.assertIn("8 weeks until", section)
+
+    def test_continuity_section_none(self):
+        from skills.response_generation.prompt import build_continuity_prompt_section
+
+        section = build_continuity_prompt_section(None)
+        self.assertEqual(section, "")
+
+    def test_continuity_section_empty(self):
+        from skills.response_generation.prompt import build_continuity_prompt_section
+
+        section = build_continuity_prompt_section({})
+        self.assertEqual(section, "")
+
+    def test_no_event_omits_weeks_until(self):
+        from skills.response_generation.prompt import build_continuity_prompt_section
+
+        ctx = {
+            "goal_horizon_type": "general_fitness",
+            "current_phase": "base",
+            "current_block_focus": "maintain_fitness",
+            "weeks_in_current_block": 3,
+            "last_transition_reason": "bootstrap_initial_state",
+        }
+        section = build_continuity_prompt_section(ctx)
+        self.assertIn("week 3", section)
+        # No "N weeks until their goal event" line should appear
+        self.assertNotIn("weeks until their goal event", section)
+        # bootstrap reason should be omitted
+        self.assertNotIn("bootstrap_initial_state", section)
+
+
 if __name__ == "__main__":
     unittest.main()

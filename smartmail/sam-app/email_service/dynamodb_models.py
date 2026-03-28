@@ -29,6 +29,10 @@ from athlete_memory_contract import (
     ContinuitySummary,
     validate_memory_notes,
 )
+from continuity_state_contract import (
+    ContinuityState,
+    ContinuityStateContractError,
+)
 
 logger = logging.getLogger()
 
@@ -184,12 +188,20 @@ def normalize_profile_updates(updates: Dict[str, Any]) -> Dict[str, Any]:
     if isinstance(time_availability, dict):
         normalized_time: Dict[str, Any] = {}
         sessions_per_week = time_availability.get("sessions_per_week")
-        if isinstance(sessions_per_week, (int, float)) and int(sessions_per_week) > 0:
-            normalized_time["sessions_per_week"] = int(sessions_per_week)
-        hours_per_week = time_availability.get("hours_per_week")
-        hours_decimal = _to_dynamodb_decimal(hours_per_week)
-        if hours_decimal is not None:
-            normalized_time["hours_per_week"] = hours_decimal
+        if isinstance(sessions_per_week, str) and sessions_per_week.strip():
+            normalized_time["sessions_per_week"] = sessions_per_week.strip()
+        daily_windows = time_availability.get("daily_windows")
+        if isinstance(daily_windows, list):
+            normalized_windows = [
+                str(item).strip()
+                for item in daily_windows
+                if isinstance(item, str) and item.strip()
+            ]
+            if normalized_windows:
+                normalized_time["daily_windows"] = normalized_windows
+        availability_notes = time_availability.get("availability_notes")
+        if isinstance(availability_notes, str) and availability_notes.strip():
+            normalized_time["availability_notes"] = availability_notes.strip()
         if normalized_time:
             normalized["time_availability"] = normalized_time
 
@@ -254,11 +266,20 @@ def normalize_profile_record(profile: Optional[Dict[str, Any]]) -> Dict[str, Any
     time_availability = profile.get("time_availability")
     if isinstance(time_availability, dict):
         sessions_per_week = time_availability.get("sessions_per_week")
-        if isinstance(sessions_per_week, (int, Decimal)) and int(sessions_per_week) > 0:
-            normalized["time_availability"]["sessions_per_week"] = int(sessions_per_week)
-        hours_per_week = time_availability.get("hours_per_week")
-        if isinstance(hours_per_week, (int, float, Decimal)) and float(hours_per_week) > 0:
-            normalized["time_availability"]["hours_per_week"] = float(hours_per_week)
+        if isinstance(sessions_per_week, str) and sessions_per_week.strip():
+            normalized["time_availability"]["sessions_per_week"] = sessions_per_week.strip()
+        daily_windows = time_availability.get("daily_windows")
+        if isinstance(daily_windows, list):
+            normalized_windows = [
+                str(item).strip()
+                for item in daily_windows
+                if isinstance(item, str) and item.strip()
+            ]
+            if normalized_windows:
+                normalized["time_availability"]["daily_windows"] = normalized_windows
+        availability_notes = time_availability.get("availability_notes")
+        if isinstance(availability_notes, str) and availability_notes.strip():
+            normalized["time_availability"]["availability_notes"] = availability_notes.strip()
 
     experience_level = str(profile.get("experience_level", "unknown")).strip().lower()
     if experience_level in _EXPERIENCE_LEVELS:
@@ -570,6 +591,87 @@ def get_memory_context_for_response_generation(athlete_id: str) -> Dict[str, Any
         "memory_notes": memory_notes,
         "continuity_summary": continuity_summary,
     }
+
+
+# ============================================================================
+# CONTINUITY STATE
+# ============================================================================
+
+
+def get_continuity_state(athlete_id: str) -> Optional[Dict[str, Any]]:
+    """Returns the persisted continuity_state when present and valid.
+
+    Returns None when:
+    - The attribute is missing (first turn, or pre-feature athlete)
+    - The stored object is partial or invalid (logs warning, caller bootstraps)
+    """
+    profile = _get_raw_coach_profile(athlete_id) or {}
+    raw = profile.get("continuity_state")
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        logger.warning(
+            "continuity_state is not a dict athlete_id=%s type=%s",
+            athlete_id,
+            type(raw).__name__,
+        )
+        return None
+    try:
+        return ContinuityState.from_dict(raw).to_dict()
+    except ContinuityStateContractError as exc:
+        logger.warning(
+            "Invalid persisted continuity_state athlete_id=%s error=%s",
+            athlete_id,
+            exc,
+        )
+        return None
+
+
+def update_continuity_state(athlete_id: str, state_dict: Dict[str, Any]) -> bool:
+    """Persists a validated continuity_state to coach_profiles.
+
+    Validates via ContinuityState.from_dict before writing.
+    Returns True on success, False on validation or DynamoDB error.
+    """
+    try:
+        validated = ContinuityState.from_dict(state_dict).to_dict()
+    except ContinuityStateContractError as exc:
+        logger.error(
+            "Invalid continuity_state payload athlete_id=%s error=%s",
+            athlete_id,
+            exc,
+        )
+        return False
+
+    table = dynamodb.Table(COACH_PROFILES_TABLE)
+    now = int(time.time())
+    try:
+        table.update_item(
+            Key={"athlete_id": athlete_id},
+            UpdateExpression=(
+                "SET #created_at = if_not_exists(#created_at, :created_at), "
+                "#updated_at = :updated_at, "
+                "#continuity_state = :continuity_state"
+            ),
+            ExpressionAttributeNames={
+                "#created_at": "created_at",
+                "#updated_at": "updated_at",
+                "#continuity_state": "continuity_state",
+            },
+            ExpressionAttributeValues=serialize_dynamodb_payload({
+                ":created_at": now,
+                ":updated_at": now,
+                ":continuity_state": validated,
+            }),
+        )
+        return True
+    except ClientError as e:
+        logger.error(
+            "Error updating continuity_state for athlete_id=%s: %s",
+            athlete_id,
+            e,
+        )
+        return False
 
 
 # ============================================================================

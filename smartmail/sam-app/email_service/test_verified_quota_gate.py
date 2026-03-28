@@ -464,6 +464,22 @@ class VerifiedPathGateTests(unittest.TestCase):
         get_reply_mock.assert_called_once()
         send_reply_mock.assert_not_called()
 
+    def test_handler_skips_send_when_coach_suppresses_reply(self):
+        email_data = self._verified_email_data()
+        with mock.patch.object(app.EmailProcessor, "parse_sns_event", return_value=email_data), \
+            mock.patch.object(app, "is_verified", return_value=True), \
+            mock.patch.object(app, "is_registered", return_value=True), \
+            mock.patch.object(app, "check_verified_quota_or_block", return_value=None), \
+            mock.patch.object(app, "ensure_athlete_id_for_email", return_value="ath_1"), \
+            mock.patch.object(app, "ensure_progress_snapshot_exists", return_value=True), \
+            mock.patch.object(app, "get_reply_for_inbound", return_value=app.SUPPRESSED_REPLY) as get_reply_mock, \
+            mock.patch.object(app.EmailReplySender, "send_reply") as send_reply_mock:
+            response = app.lambda_handler(event={"Records": []}, context=None)
+        self.assertEqual(response["statusCode"], 200)
+        self.assertIn("No reply sent because no coaching response was needed.", response["body"])
+        get_reply_mock.assert_called_once()
+        send_reply_mock.assert_not_called()
+
     def test_handler_blocks_verified_over_limit_before_reply(self):
         email_data = self._verified_email_data()
         block_response = {"statusCode": 200, "body": "Dropped (verified quota exceeded)"}

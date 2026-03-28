@@ -19,6 +19,7 @@ import tempfile
 import time
 import unittest
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from html import unescape
 from pathlib import Path
@@ -62,6 +63,14 @@ REQUIRED_INTENTS = {
     "coaching",
     "question",
 }
+SYNTHETIC_START_DATETIME = datetime(2026, 1, 1, 15, 0, 0, tzinfo=timezone.utc)
+SYNTHETIC_DAYS_PER_TURN = 5
+
+
+def _format_rfc2822_utc(value: datetime) -> str:
+    return value.astimezone(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S +0000")
+
+
 def _http_request(
     method: str,
     url: str,
@@ -393,6 +402,8 @@ class TestLiveCoachingWorkflow(unittest.TestCase):
                 "phase": "run_start",
                 "run_id": artifact_run_id,
                 "email_address": self.email_address,
+                "synthetic_start_date": SYNTHETIC_START_DATETIME.isoformat(),
+                "synthetic_days_per_turn": SYNTHETIC_DAYS_PER_TURN,
             }
         )
         self.ddb.cleanup_for_email(self.email_address)
@@ -515,10 +526,17 @@ class TestLiveCoachingWorkflow(unittest.TestCase):
                 turn_started_at = time.time()
                 self.ddb.delete_item(RATE_LIMITS_TABLE, {"email": self.email_address.lower()})
                 before_capture_count = len(self.capture.messages)
-                now_struct = time.gmtime(time.time() + turn.number)
-                date_received = time.strftime("%a, %d %b %Y %H:%M:%S +0000", now_struct)
+                turn_offset_days = SYNTHETIC_DAYS_PER_TURN * (turn.number - 1)
+                synthetic_datetime = SYNTHETIC_START_DATETIME + timedelta(days=turn_offset_days)
+                date_received = _format_rfc2822_utc(synthetic_datetime)
                 message_id = f"<live-e2e-{turn.number}-{secrets.token_hex(6)}@example.com>"
-                self._log_turn(turn, phase="start", message_id=message_id)
+                self._log_turn(
+                    turn,
+                    phase="start",
+                    message_id=message_id,
+                    synthetic_date=synthetic_datetime.isoformat(),
+                )
+                effective_today = synthetic_datetime.date()
                 event = _build_sns_event(
                     sender=self.email_address,
                     subject=turn.subject,
@@ -533,7 +551,17 @@ class TestLiveCoachingWorkflow(unittest.TestCase):
                 ), mock.patch.object(
                     email_service_app,
                     "get_reply_for_inbound",
-                    side_effect=self._wrap_live_call(turn, "get_reply_for_inbound", email_service_app.get_reply_for_inbound),
+                    side_effect=self._wrap_live_call(
+                        turn,
+                        "get_reply_for_inbound",
+                        lambda athlete_id, from_email, email_data, **kwargs: email_business.get_reply_for_inbound(
+                            athlete_id,
+                            from_email,
+                            email_data,
+                            effective_today=effective_today,
+                            **kwargs,
+                        ),
+                    ),
                 ), mock.patch.object(
                     email_business,
                     "analyze_conversation_intelligence",
@@ -638,6 +666,7 @@ class TestLiveCoachingWorkflow(unittest.TestCase):
                             "sender": self.email_address,
                             "message_id": message_id,
                             "date_received": date_received,
+                            "synthetic_date": synthetic_datetime.isoformat(),
                             "subject": turn.subject,
                             "body": turn.body,
                         },

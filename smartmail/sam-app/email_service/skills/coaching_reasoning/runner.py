@@ -21,17 +21,27 @@ def run_coaching_reasoning_workflow(
     response_brief: Dict[str, Any],
     *,
     model_name: Optional[str] = None,
+    continuity_context: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Run the coaching reasoning skill and return a validated directive with metadata.
 
+    Args:
+        response_brief: The response brief for the current turn.
+        model_name: Optional model override.
+        continuity_context: Optional continuity state context for prompt enrichment.
+
     Returns:
-        {"directive": <validated CoachingDirective dict>, "doctrine_files_loaded": [str, ...]}
+        {
+            "directive": <validated CoachingDirective dict>,
+            "doctrine_files_loaded": [str, ...],
+            "continuity_recommendation": <validated recommendation dict or None>,
+        }
     """
     raw_content = ""
 
     try:
         selected_model = str(model_name or LANGUAGE_RENDER_MODEL).strip() or LANGUAGE_RENDER_MODEL
-        system_prompt = build_system_prompt(response_brief)
+        system_prompt = build_system_prompt(response_brief, continuity_context=continuity_context)
 
         payload, raw_content = skill_runtime.execute_json_schema(
             logger=logger,
@@ -45,10 +55,15 @@ def run_coaching_reasoning_workflow(
             retries=1,
         )
 
-        directive = validate_coaching_directive(payload)
+        validated = validate_coaching_directive(payload)
+
+        # Extract continuity_recommendation (may or may not be present)
+        continuity_recommendation = validated.pop("continuity_recommendation", None)
+
         return {
-            "directive": directive,
+            "directive": validated,
             "doctrine_files_loaded": list_loaded_files(response_brief),
+            "continuity_recommendation": continuity_recommendation,
         }
 
     except CoachingReasoningError:

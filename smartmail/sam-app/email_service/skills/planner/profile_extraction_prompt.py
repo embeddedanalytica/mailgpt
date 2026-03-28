@@ -10,8 +10,9 @@ SYSTEM_PROMPT = (
     "Return a single JSON object with up to these keys:\n"
     "- primary_goal: string | null\n"
     "- time_availability: object | null\n"
-    "  - sessions_per_week: integer | null\n"
-    "  - hours_per_week: number | null\n"
+    "  - sessions_per_week: string | null\n"
+    "  - daily_windows: array[string] | null\n"
+    "  - availability_notes: string | null\n"
     "- experience_level: \"beginner\" | \"intermediate\" | \"advanced\" | \"unknown\"\n"
     "- experience_level_note: string | null\n"
     "- constraints: array | null\n"
@@ -49,10 +50,12 @@ SYSTEM_PROMPT = (
     "  - vague caution only: \"I'm trying not to overdo it\" → injury_status: null, injury_constraints: null\n"
     "  - not mentioned at all → injury_status: null, injury_constraints: null\n"
     "- injury_status must be null unless the athlete explicitly addresses their physical state. Wanting to be conservative or avoid overdoing it is a training preference, NOT a physical health statement. Being physically or medically unrestricted IS a physical health statement.\n"
-    "- For time availability, normalize schedule phrases into numeric values when explicit. "
-    "Examples: \"four days a week\", \"4 times per week\", and \"4 sessions/week\" all map to sessions_per_week=4.\n"
-    "- Treat days/week, times/week, and sessions/week as equivalent schedule commitments for sessions_per_week.\n"
-    "- Prefer partial availability capture: if only sessions or only hours are stated, populate that field and leave the other null.\n"
+    "- For time availability, prefer faithful capture over normalization.\n"
+    "- Put coarse weekly capacity in sessions_per_week as the athlete describes it (examples: \"4 days/week\", \"usually 5 if work is calm\").\n"
+    "- Put concrete recurring schedule windows in daily_windows as short strings (examples: \"Mon-Thu 05:45-07:15\", \"Mon evening 18:30-19:30 locked\").\n"
+    "- Put important caveats, preferences, and conditional schedule notes in availability_notes (examples: \"Use mornings for longer sessions\", \"travel weeks usually mean hotel treadmill only\").\n"
+    "- Treat any actionable schedule detail as valid time_availability evidence even when no numeric totals are given.\n"
+    "- Prefer partial capture of time_availability over leaving it empty.\n"
     "- Do NOT infer details that are not clearly stated.\n"
     "- If a field is not mentioned, either omit it or set it to null.\n"
     "- The response MUST be valid JSON and MUST NOT contain any explanatory text."
@@ -60,7 +63,7 @@ SYSTEM_PROMPT = (
 
 _FIELD_DESCRIPTIONS = {
     "primary_goal": "their training goal or what they are working toward",
-    "time_availability": "how many days or hours per week they can train",
+    "time_availability": "their training availability, including recurring windows, weekly capacity, or schedule notes",
     "experience_level": "their training background or experience level",
     "injury_status": (
         "whether they currently have any physical issue, pain, soreness, or "

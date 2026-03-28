@@ -381,9 +381,9 @@ class TestConnectorDataModels(unittest.TestCase):
 
     def test_normalize_profile_record_accepts_decimal_hours_per_week(self):
         normalized = dynamodb_models.normalize_profile_record(
-            {"time_availability": {"hours_per_week": Decimal("4.5")}}
+            {"time_availability": {"availability_notes": "Weekday mornings only"}}
         )
-        self.assertEqual(normalized["time_availability"]["hours_per_week"], 4.5)
+        self.assertEqual(normalized["time_availability"]["availability_notes"], "Weekday mornings only")
 
     def test_normalize_profile_updates_new_fields(self):
         oversized = " y " * 700
@@ -416,9 +416,12 @@ class TestConnectorDataModels(unittest.TestCase):
 
     def test_normalize_profile_updates_converts_hours_per_week_to_decimal(self):
         normalized = dynamodb_models.normalize_profile_updates(
-            {"time_availability": {"hours_per_week": 4.5}}
+            {"time_availability": {"daily_windows": ["Mon 06:00-07:00", "Thu 18:30-19:30"]}}
         )
-        self.assertEqual(normalized["time_availability"]["hours_per_week"], Decimal("4.5"))
+        self.assertEqual(
+            normalized["time_availability"]["daily_windows"],
+            ["Mon 06:00-07:00", "Thu 18:30-19:30"],
+        )
 
     def test_merge_coach_profile_fields_writes_sanitized_values(self):
         profile_table = _ProfileSeedTable()
@@ -448,14 +451,24 @@ class TestConnectorDataModels(unittest.TestCase):
         ):
             ok = dynamodb_models.merge_coach_profile_fields(
                 "ath_123",
-                {"time_availability": {"sessions_per_week": 4, "hours_per_week": 4.5}},
+                {
+                    "time_availability": {
+                        "sessions_per_week": "4 days/week",
+                        "daily_windows": ["Mon 06:00-07:00"],
+                        "availability_notes": "Friday protected easy day",
+                    }
+                },
             )
 
         self.assertTrue(ok)
         values = profile_table.last_update_kwargs["ExpressionAttributeValues"]
         self.assertEqual(
             values[":v_time_availability"],
-            {"sessions_per_week": 4, "hours_per_week": Decimal("4.5")},
+            {
+                "sessions_per_week": "4 days/week",
+                "daily_windows": ["Mon 06:00-07:00"],
+                "availability_notes": "Friday protected easy day",
+            },
         )
 
 if __name__ == "__main__":

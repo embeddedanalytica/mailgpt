@@ -10,7 +10,13 @@ from skills.response_generation.errors import (
     ResponseGenerationContractError,
     ResponseGenerationProposalError,
 )
-from skills.response_generation.prompt import SYSTEM_PROMPT
+from skills.response_generation.prompt import (
+    DIRECTIVE_SYSTEM_PROMPT,
+    build_directive_constraints_section,
+    _content_plan_has_decision,
+    _is_narrow_directive,
+)
+from skills.response_generation.runner import ResponseGenerationLLM
 from skills.response_generation.schema import JSON_SCHEMA, JSON_SCHEMA_NAME
 from skills.response_generation.validator import (
     validate_response_generation_brief,
@@ -57,38 +63,21 @@ def _context_note(label: str = "Schedule", summary: str = "Weekday sessions need
 def _valid_brief() -> dict:
     return {
         "reply_mode": "normal_coaching",
-        "athlete_context": {
-            "goal_summary": "10k race in 8 weeks",
-            "experience_level": "intermediate",
-            "structure_preference": "flexibility",
+        "coaching_directive": {
+            "opening": "Test opening",
+            "main_message": "Keep one controlled quality session this week.",
+            "content_plan": ["present the plan"],
+            "avoid": [],
+            "tone": "calm and direct",
+            "recommend_material": None,
         },
-        "decision_context": {
-            "track": "main_build",
-            "phase": "build",
-            "risk_flag": "yellow",
-            "today_action": "do planned but conservative",
-            "clarification_needed": False,
-        },
-        "validated_plan": {
+        "plan_data": {
             "weekly_skeleton": ["easy_aerobic", "strength", "tempo"],
             "plan_summary": "Current plan: rebuild consistency while protecting recovery.",
         },
         "delivery_context": {
             "inbound_subject": "Weekly check-in",
             "selected_model_name": "gpt-5-mini",
-            "response_channel": "email",
-        },
-        "memory_context": {
-            "memory_available": True,
-            "priority_facts": ["Weekday sessions need to finish before 7am"],
-            "context_facts": ["Prefers concise bullets"],
-            "continuity_summary": {
-                "summary": "Athlete is rebuilding consistency.",
-                "last_recommendation": "Keep one controlled quality session this week.",
-                "open_loops": ["How did the quality session feel?"],
-                "updated_at": 1773273600,
-            },
-            "continuity_focus": "Athlete is rebuilding consistency.",
         },
     }
 
@@ -105,22 +94,8 @@ def _valid_output() -> dict:
 def _brief_for_mode(reply_mode: str) -> dict:
     payload = _valid_brief()
     payload["reply_mode"] = reply_mode
-    if reply_mode == "clarification":
-        payload["decision_context"] = {"clarification_needed": True}
-        payload["validated_plan"] = {}
-    elif reply_mode == "safety_risk_managed":
-        payload["decision_context"] = {
-            "risk_flag": "red_a",
-            "today_action": "pause_training_and_get_clinical_guidance",
-            "clarification_needed": False,
-        }
-        payload["validated_plan"] = {}
-    elif reply_mode == "lightweight_non_planning":
-        payload["decision_context"] = {}
-        payload["validated_plan"] = {}
-    elif reply_mode == "off_topic_redirect":
-        payload["decision_context"] = {}
-        payload["validated_plan"] = {}
+    if reply_mode in ("clarification", "safety_risk_managed", "lightweight_non_planning", "off_topic_redirect"):
+        payload["plan_data"] = {}
     return payload
 
 
@@ -181,26 +156,14 @@ class TestResponseGenerationSkill(unittest.TestCase):
 
 
 class TestResponseGenerationPromptAndSchema(unittest.TestCase):
-    def test_prompt_instructs_authority_split_and_final_email_body(self):
-        self.assertIn("response_brief JSON object", SYSTEM_PROMPT)
-        self.assertIn("Never contradict risk posture", SYSTEM_PROMPT)
-        self.assertIn("final_email_body must contain the complete email body", SYSTEM_PROMPT)
-        self.assertIn("continuity_focus is context from the previous exchange", SYSTEM_PROMPT)
-        self.assertIn("priority_facts are the athlete's most important durable facts", SYSTEM_PROMPT)
-        self.assertIn("Do not repeat every memory fact mechanically", SYSTEM_PROMPT)
-        self.assertIn("clarification: ask only for the specific items listed in decision_context.clarification_questions", SYSTEM_PROMPT)
-        self.assertIn("safety_risk_managed: prioritize caution", SYSTEM_PROMPT)
-        self.assertIn("lightweight_non_planning: answer the athlete's question", SYSTEM_PROMPT)
-        self.assertIn("off_topic_redirect: briefly redirect", SYSTEM_PROMPT)
-        self.assertIn("Lead with the most important point", SYSTEM_PROMPT)
-        self.assertIn("When the athlete is struggling", SYSTEM_PROMPT)
-        self.assertIn("realistic coaching tone", SYSTEM_PROMPT)
-        self.assertIn("Read the athlete's emotional state from inbound_body", SYSTEM_PROMPT)
-        self.assertIn("Match the athlete's energy", SYSTEM_PROMPT)
-        self.assertIn("do not become overly verbose", SYSTEM_PROMPT)
-        self.assertIn("Do not contradict the brief", SYSTEM_PROMPT)
-        self.assertIn("Avoid boilerplate closers", SYSTEM_PROMPT)
-        self.assertIn("Never open with 'Hi there'", SYSTEM_PROMPT)
+    def test_directive_prompt_instructs_authority_split_and_final_email_body(self):
+        self.assertIn("writer_brief JSON object", DIRECTIVE_SYSTEM_PROMPT)
+        self.assertIn("coaching_directive is authoritative", DIRECTIVE_SYSTEM_PROMPT)
+        self.assertIn("final_email_body must contain the complete email body", DIRECTIVE_SYSTEM_PROMPT)
+        self.assertIn("Never contradict the directive's avoid list", DIRECTIVE_SYSTEM_PROMPT)
+        self.assertIn("Never open with 'Hi there'", DIRECTIVE_SYSTEM_PROMPT)
+        self.assertIn("Avoid boilerplate closers", DIRECTIVE_SYSTEM_PROMPT)
+        self.assertIn("Prefer a short email", DIRECTIVE_SYSTEM_PROMPT)
 
     def test_schema_matches_final_email_output(self):
         validated = validate_response_generation_output(_valid_output())
@@ -303,6 +266,196 @@ class TestResponseGenerationPromptAndSchema(unittest.TestCase):
 
         results = evaluate_cases(cases, evaluator=_fixture_evaluator)
         self.assertTrue(all(result["matched"] for result in results), results)
+
+
+class TestPromptPackWriterInstructionFidelity(unittest.TestCase):
+    """Verify the prompt pack contains writer-side instruction fidelity rules."""
+
+    def test_instruction_fidelity_section_exists(self):
+        self.assertIn("INSTRUCTION FIDELITY", DIRECTIVE_SYSTEM_PROMPT)
+
+    def test_avoid_list_is_hard_constraint(self):
+        self.assertIn("avoid list is a hard constraint", DIRECTIVE_SYSTEM_PROMPT)
+
+    def test_content_plan_is_scope_lock(self):
+        self.assertIn("content_plan is a scope lock", DIRECTIVE_SYSTEM_PROMPT)
+        self.assertIn("no more, no less", DIRECTIVE_SYSTEM_PROMPT)
+
+    def test_extras_are_violations(self):
+        self.assertIn("Extras are violations, not value", DIRECTIVE_SYSTEM_PROMPT)
+
+    def test_final_check_instruction(self):
+        self.assertIn("does this email contain anything not covered by the directive", DIRECTIVE_SYSTEM_PROMPT)
+
+    def test_no_bonus_tips_rule(self):
+        self.assertIn("a bonus tip", DIRECTIVE_SYSTEM_PROMPT)
+
+    def test_writer_not_strategist_role(self):
+        self.assertIn("You are a writer, not a strategist", DIRECTIVE_SYSTEM_PROMPT)
+
+    def test_coach_identity_boundary(self):
+        self.assertIn("remote", DIRECTIVE_SYSTEM_PROMPT.lower())
+        self.assertIn("cannot meet", DIRECTIVE_SYSTEM_PROMPT.lower())
+        self.assertIn("physically present", DIRECTIVE_SYSTEM_PROMPT.lower())
+
+
+class TestDirectiveConstraintsSection(unittest.TestCase):
+    """Verify build_directive_constraints_section surfaces avoid and scope locks."""
+
+    def test_empty_avoid_no_constraints(self):
+        brief = _valid_brief()
+        brief["coaching_directive"]["avoid"] = []
+        # content_plan has 1 item, so scope lock still applies
+        section = build_directive_constraints_section(brief)
+        self.assertNotIn("HARD CONSTRAINTS", section)
+        self.assertIn("Scope lock", section)
+
+    def test_avoid_items_surfaced_as_hard_constraints(self):
+        brief = _valid_brief()
+        brief["coaching_directive"]["avoid"] = [
+            "Do not mention the Achilles",
+            "Do not re-ask about Tuesday",
+        ]
+        section = build_directive_constraints_section(brief)
+        self.assertIn("HARD CONSTRAINTS", section)
+        self.assertIn("Do not mention the Achilles", section)
+        self.assertIn("Do not re-ask about Tuesday", section)
+        self.assertIn("Do not mention, reference, or allude", section)
+
+    def test_narrow_content_plan_triggers_scope_lock(self):
+        brief = _valid_brief()
+        brief["coaching_directive"]["content_plan"] = ["acknowledge check-in"]
+        section = build_directive_constraints_section(brief)
+        self.assertIn("Scope lock", section)
+        self.assertIn("1 item", section)
+
+    def test_wide_content_plan_no_scope_lock(self):
+        brief = _valid_brief()
+        brief["coaching_directive"]["content_plan"] = [
+            "present the plan",
+            "discuss recovery",
+            "answer question about tempo",
+        ]
+        section = build_directive_constraints_section(brief)
+        self.assertNotIn("Scope lock", section)
+
+    def test_decision_content_plan_no_scope_lock(self):
+        brief = _valid_brief()
+        brief["coaching_directive"]["content_plan"] = ["approve Thursday pickups"]
+        section = build_directive_constraints_section(brief)
+        self.assertNotIn("Scope lock", section)
+
+    def test_no_directive_returns_empty(self):
+        section = build_directive_constraints_section({})
+        self.assertEqual(section, "")
+
+
+class TestNarrowDirectiveDetection(unittest.TestCase):
+    """Verify _is_narrow_directive correctly identifies minimal directives."""
+
+    def test_short_message_few_items_is_narrow(self):
+        brief = _valid_brief()
+        brief["coaching_directive"]["main_message"] = "Got it."
+        brief["coaching_directive"]["content_plan"] = ["acknowledge"]
+        self.assertTrue(_is_narrow_directive(brief))
+
+    def test_long_message_is_not_narrow(self):
+        brief = _valid_brief()
+        brief["coaching_directive"]["main_message"] = "x" * 150
+        brief["coaching_directive"]["content_plan"] = ["acknowledge"]
+        self.assertFalse(_is_narrow_directive(brief))
+
+    def test_many_content_items_is_not_narrow(self):
+        brief = _valid_brief()
+        brief["coaching_directive"]["main_message"] = "Brief"
+        brief["coaching_directive"]["content_plan"] = ["a", "b", "c"]
+        self.assertFalse(_is_narrow_directive(brief))
+
+    def test_decision_in_content_plan_is_not_narrow(self):
+        brief = _valid_brief()
+        brief["coaching_directive"]["main_message"] = "Brief."
+        brief["coaching_directive"]["content_plan"] = ["approve Thursday pickups"]
+        self.assertFalse(_is_narrow_directive(brief))
+
+    def test_progression_in_content_plan_is_not_narrow(self):
+        brief = _valid_brief()
+        brief["coaching_directive"]["main_message"] = "Brief."
+        brief["coaching_directive"]["content_plan"] = ["progress to 2x strength"]
+        self.assertFalse(_is_narrow_directive(brief))
+
+    def test_transition_in_content_plan_is_not_narrow(self):
+        brief = _valid_brief()
+        brief["coaching_directive"]["main_message"] = "Ready."
+        brief["coaching_directive"]["content_plan"] = ["move to build phase"]
+        self.assertFalse(_is_narrow_directive(brief))
+
+
+class TestContentPlanDecisionDetection(unittest.TestCase):
+    """Verify _content_plan_has_decision catches decision language."""
+
+    def test_simple_ack_is_not_decision(self):
+        self.assertFalse(_content_plan_has_decision(["acknowledge check-in"]))
+
+    def test_approve_is_decision(self):
+        self.assertTrue(_content_plan_has_decision(["approve Thursday pickups"]))
+
+    def test_add_session_is_decision(self):
+        self.assertTrue(_content_plan_has_decision(["add Friday easy run"]))
+
+    def test_progress_is_decision(self):
+        self.assertTrue(_content_plan_has_decision(["progress to 2x strength per week"]))
+
+    def test_increase_is_decision(self):
+        self.assertTrue(_content_plan_has_decision(["increase long run to 90 min"]))
+
+    def test_cleared_for_is_decision(self):
+        self.assertTrue(_content_plan_has_decision(["cleared for tempo work"]))
+
+    def test_start_is_decision(self):
+        self.assertTrue(_content_plan_has_decision(["start Thursday pickups"]))
+
+    def test_empty_is_not_decision(self):
+        self.assertFalse(_content_plan_has_decision([]))
+
+
+class TestWriterPromptAssembly(unittest.TestCase):
+    """Verify the runner assembles constraints and conditionally trims continuity."""
+
+    def test_narrow_directive_skips_continuity(self):
+        brief = _valid_brief()
+        brief["coaching_directive"]["main_message"] = "Got it."
+        brief["coaching_directive"]["content_plan"] = ["acknowledge"]
+        brief["continuity_context"] = {
+            "goal_horizon_type": "event",
+            "current_phase": "base",
+            "current_block_focus": "rebuild_consistency",
+            "weeks_in_current_block": 2,
+        }
+        prompt = ResponseGenerationLLM._select_prompt(brief)
+        # Continuity section should be omitted for narrow directives
+        self.assertNotIn("Training continuity context", prompt)
+        # Constraints section should still be present
+        self.assertIn("Scope lock", prompt)
+
+    def test_wide_directive_includes_continuity(self):
+        brief = _valid_brief()
+        brief["coaching_directive"]["main_message"] = "Here is a full weekly plan with several adjustments based on your race schedule and recovery status."
+        brief["coaching_directive"]["content_plan"] = ["present plan", "discuss recovery", "answer question"]
+        brief["continuity_context"] = {
+            "goal_horizon_type": "event",
+            "current_phase": "base",
+            "current_block_focus": "rebuild_consistency",
+            "weeks_in_current_block": 2,
+        }
+        prompt = ResponseGenerationLLM._select_prompt(brief)
+        self.assertIn("Training continuity context", prompt)
+
+    def test_avoid_items_appear_in_assembled_prompt(self):
+        brief = _valid_brief()
+        brief["coaching_directive"]["avoid"] = ["Do not mention the Achilles"]
+        prompt = ResponseGenerationLLM._select_prompt(brief)
+        self.assertIn("HARD CONSTRAINTS", prompt)
+        self.assertIn("Do not mention the Achilles", prompt)
 
 
 if __name__ == "__main__":

@@ -61,13 +61,6 @@ def load_coach_reply_prompt_pack(*, version: str | None = None) -> Dict[str, Any
         "version": resolved_version,
         "manifest": manifest,
         "response_generation": {
-            "system_prompt": "\n".join(
-                _require_string_list(
-                    response_generation,
-                    key="system_prompt_lines",
-                    path=base / "response_generation.json",
-                )
-            ),
             "directive_system_prompt": "\n".join(
                 _require_string_list(
                     response_generation,

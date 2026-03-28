@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional
 import skills.runtime as skill_runtime
 from config import PLANNING_LLM_MODEL
 from skills.planner.errors import PlannerContractError, PlannerProposalError
-from skills.planner.prompt import SYSTEM_PROMPT
+from skills.planner.prompt import SYSTEM_PROMPT, build_planner_system_prompt
 from skills.planner.schema import JSON_SCHEMA, JSON_SCHEMA_NAME
 from skills.planner.validator import (
     repair_or_fallback_plan,
@@ -39,10 +39,11 @@ class PlanningLLM:
             raise PlannerProposalError(str(exc)) from exc
         try:
             selected_model = str(model_name or PLANNING_LLM_MODEL).strip() or PLANNING_LLM_MODEL
+            system_prompt = build_planner_system_prompt(brief.get("continuity_context"))
             payload, raw_content = skill_runtime.execute_json_schema(
                 logger=logger,
                 model_name=selected_model,
-                system_prompt=SYSTEM_PROMPT,
+                system_prompt=system_prompt,
                 user_content=json.dumps(brief, separators=(",", ":"), ensure_ascii=True),
                 schema_name=JSON_SCHEMA_NAME,
                 schema=JSON_SCHEMA,

@@ -60,10 +60,19 @@ JSON_SCHEMA = {
                 {
                     "type": "object",
                     "additionalProperties": False,
-                    "required": ["sessions_per_week", "hours_per_week"],
+                    "required": ["sessions_per_week", "daily_windows", "availability_notes"],
                     "properties": {
-                        "sessions_per_week": {"type": ["integer", "null"], "minimum": 0},
-                        "hours_per_week": {"type": ["number", "null"], "minimum": 0},
+                        "sessions_per_week": {"type": ["string", "null"]},
+                        "daily_windows": {
+                            "anyOf": [
+                                {"type": "null"},
+                                {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                },
+                            ],
+                        },
+                        "availability_notes": {"type": ["string", "null"]},
                     },
                 },
             ],

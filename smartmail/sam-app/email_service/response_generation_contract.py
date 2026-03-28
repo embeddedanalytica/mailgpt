@@ -5,7 +5,7 @@ Canonical contract for bounded athlete-facing response generation inputs.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from athlete_memory_contract import (
     AthleteMemoryContractError,
@@ -33,6 +33,10 @@ _REQUIRED_TOP_LEVEL_FIELDS = {
     "delivery_context",
     "memory_context",
 }
+_OPTIONAL_TOP_LEVEL_FIELDS = {
+    "continuity_context",
+}
+_ALLOWED_TOP_LEVEL_FIELDS = _REQUIRED_TOP_LEVEL_FIELDS | _OPTIONAL_TOP_LEVEL_FIELDS
 _ATHLETE_CONTEXT_FIELDS = {
     "goal_summary",
     "experience_level",
@@ -52,7 +56,6 @@ _DECISION_CONTEXT_FIELDS = {
     "risk_recent_history",
     "weeks_in_coaching",
     "intake_completed_this_turn",
-    "requested_action",
     "brevity_preference",
 }
 _VALIDATED_PLAN_FIELDS = {
@@ -70,6 +73,14 @@ _DELIVERY_CONTEXT_FIELDS = {
     "selected_model_name",
     "response_channel",
     "connect_strava_link",
+    "athlete_instructions",
+}
+_ATHLETE_INSTRUCTIONS_FIELDS = {
+    "forbidden_topics",
+    "requested_scope",
+    "format_constraints",
+    "reply_suppression_hint",
+    "latest_overrides",
 }
 _MEMORY_CONTEXT_FIELDS = {
     "memory_available",
@@ -78,6 +89,7 @@ _MEMORY_CONTEXT_FIELDS = {
     "context_facts",
     "continuity_summary",
     "continuity_focus",
+    "contradicted_facts",
 }
 _REQUIRED_MEMORY_CONTEXT_FIELDS = {
     "memory_available",
@@ -256,11 +268,6 @@ def _validate_decision_context(payload: Dict[str, Any]) -> Dict[str, Any]:
             "decision_context.intake_completed_this_turn",
             context["intake_completed_this_turn"],
         )
-    if "requested_action" in context:
-        normalized["requested_action"] = _require_string(
-            "decision_context.requested_action",
-            context["requested_action"],
-        )
     if "brevity_preference" in context:
         normalized["brevity_preference"] = _require_string(
             "decision_context.brevity_preference",
@@ -321,6 +328,36 @@ def _validate_delivery_context(payload: Dict[str, Any]) -> Dict[str, Any]:
             )
     if "response_channel" not in normalized:
         normalized["response_channel"] = "email"
+
+    if "athlete_instructions" in context:
+        normalized["athlete_instructions"] = _validate_athlete_instructions(
+            context["athlete_instructions"]
+        )
+    return normalized
+
+
+def _validate_athlete_instructions(payload: Any) -> Dict[str, Any]:
+    """Validate the optional athlete_instructions sub-object in delivery_context."""
+    instructions = _require_dict("athlete_instructions", payload)
+    _validate_allowed_fields(
+        payload=instructions,
+        allowed_fields=_ATHLETE_INSTRUCTIONS_FIELDS,
+        object_name="athlete_instructions",
+    )
+
+    normalized: Dict[str, Any] = {}
+    for field_name in ("forbidden_topics", "latest_overrides"):
+        if field_name in instructions:
+            normalized[field_name] = _require_string_list(
+                f"athlete_instructions.{field_name}",
+                instructions[field_name],
+            )
+    for field_name in ("requested_scope", "format_constraints", "reply_suppression_hint"):
+        if field_name in instructions:
+            normalized[field_name] = _require_string(
+                f"athlete_instructions.{field_name}",
+                instructions[field_name],
+            )
     return normalized
 
 
@@ -382,6 +419,19 @@ def _validate_memory_context(payload: Dict[str, Any]) -> Dict[str, Any]:
                 )
             normalized_context_facts.append(item.strip())
 
+    # Contradicted durable facts (optional list of strings describing what was superseded)
+    normalized_contradicted_facts: list[str] = []
+    if "contradicted_facts" in context:
+        raw = context["contradicted_facts"]
+        if not isinstance(raw, list):
+            raise ResponseGenerationContractError("memory_context.contradicted_facts must be a list")
+        for idx, item in enumerate(raw):
+            if not isinstance(item, str) or not item.strip():
+                raise ResponseGenerationContractError(
+                    f"memory_context.contradicted_facts[{idx}] must be a non-empty string"
+                )
+            normalized_contradicted_facts.append(item.strip())
+
     raw_continuity_summary = context["continuity_summary"]
     normalized_continuity_summary = None
     if raw_continuity_summary is not None:
@@ -422,6 +472,8 @@ def _validate_memory_context(payload: Dict[str, Any]) -> Dict[str, Any]:
         result["context_facts"] = normalized_context_facts
     if normalized_continuity_focus:
         result["continuity_focus"] = normalized_continuity_focus
+    if normalized_contradicted_facts:
+        result["contradicted_facts"] = normalized_contradicted_facts
     return result
 
 
@@ -435,7 +487,7 @@ def validate_response_brief(payload: Dict[str, Any]) -> None:
             f"response_brief is missing required fields: {', '.join(missing_fields)}"
         )
 
-    extra_fields = sorted(set(payload.keys()) - _REQUIRED_TOP_LEVEL_FIELDS)
+    extra_fields = sorted(set(payload.keys()) - _ALLOWED_TOP_LEVEL_FIELDS)
     if extra_fields:
         raise ResponseGenerationContractError(
             f"response_brief has unknown fields: {', '.join(extra_fields)}"
@@ -518,6 +570,7 @@ class ResponseBrief:
     validated_plan: Dict[str, Any]
     delivery_context: Dict[str, Any]
     memory_context: Dict[str, Any]
+    continuity_context: Optional[Dict[str, Any]] = None
 
     @classmethod
     def from_dict(cls, payload: Dict[str, Any]) -> "ResponseBrief":
@@ -529,10 +582,11 @@ class ResponseBrief:
             validated_plan=_validate_validated_plan(payload["validated_plan"]),
             delivery_context=_validate_delivery_context(payload["delivery_context"]),
             memory_context=_validate_memory_context(payload["memory_context"]),
+            continuity_context=payload.get("continuity_context"),
         )
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        result = {
             "reply_mode": self.reply_mode,
             "athlete_context": dict(self.athlete_context),
             "decision_context": dict(self.decision_context),
@@ -540,6 +594,9 @@ class ResponseBrief:
             "delivery_context": dict(self.delivery_context),
             "memory_context": dict(self.memory_context),
         }
+        if self.continuity_context is not None:
+            result["continuity_context"] = dict(self.continuity_context)
+        return result
 
 
 # ---------------------------------------------------------------------------
@@ -656,12 +713,16 @@ class FinalEmailResponse:
 # WriterBrief validation + model (directive-guided writer input)
 # ---------------------------------------------------------------------------
 
-_WRITER_BRIEF_TOP_LEVEL_FIELDS = {
+_WRITER_BRIEF_REQUIRED_FIELDS = {
     "reply_mode",
     "coaching_directive",
     "plan_data",
     "delivery_context",
 }
+_WRITER_BRIEF_OPTIONAL_FIELDS = {
+    "continuity_context",
+}
+_WRITER_BRIEF_TOP_LEVEL_FIELDS = _WRITER_BRIEF_REQUIRED_FIELDS | _WRITER_BRIEF_OPTIONAL_FIELDS
 
 _COACHING_DIRECTIVE_FIELDS = {
     "opening",
@@ -677,7 +738,8 @@ def is_directive_input(payload: Dict[str, Any]) -> bool:
     """Check if a payload is a WriterBrief (directive-guided) vs a ResponseBrief."""
     if not isinstance(payload, dict):
         return False
-    return set(payload.keys()) == _WRITER_BRIEF_TOP_LEVEL_FIELDS
+    keys = set(payload.keys())
+    return _WRITER_BRIEF_REQUIRED_FIELDS <= keys <= _WRITER_BRIEF_TOP_LEVEL_FIELDS
 
 
 def _validate_coaching_directive_for_writer(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -723,9 +785,10 @@ def validate_writer_brief(payload: Dict[str, Any]) -> None:
     if not isinstance(payload, dict):
         raise ResponseGenerationContractError("payload must be a dict")
 
-    if set(payload.keys()) != _WRITER_BRIEF_TOP_LEVEL_FIELDS:
-        extra = sorted(set(payload.keys()) - _WRITER_BRIEF_TOP_LEVEL_FIELDS)
-        missing = sorted(_WRITER_BRIEF_TOP_LEVEL_FIELDS - set(payload.keys()))
+    keys = set(payload.keys())
+    missing = sorted(_WRITER_BRIEF_REQUIRED_FIELDS - keys)
+    extra = sorted(keys - _WRITER_BRIEF_TOP_LEVEL_FIELDS)
+    if missing or extra:
         parts = []
         if missing:
             parts.append(f"missing: {', '.join(missing)}")
@@ -747,6 +810,7 @@ class WriterBrief:
     coaching_directive: Dict[str, Any]
     plan_data: Dict[str, Any]
     delivery_context: Dict[str, Any]
+    continuity_context: Optional[Dict[str, Any]] = None
 
     @classmethod
     def from_dict(cls, payload: Dict[str, Any]) -> "WriterBrief":
@@ -756,12 +820,16 @@ class WriterBrief:
             coaching_directive=_validate_coaching_directive_for_writer(payload["coaching_directive"]),
             plan_data=_validate_validated_plan(payload["plan_data"]),
             delivery_context=_validate_delivery_context(payload["delivery_context"]),
+            continuity_context=payload.get("continuity_context"),
         )
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        result = {
             "reply_mode": self.reply_mode,
             "coaching_directive": dict(self.coaching_directive),
             "plan_data": dict(self.plan_data),
             "delivery_context": dict(self.delivery_context),
         }
+        if self.continuity_context is not None:
+            result["continuity_context"] = dict(self.continuity_context)
+        return result

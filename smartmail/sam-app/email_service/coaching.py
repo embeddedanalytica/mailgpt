@@ -2,9 +2,12 @@
 Profile-gated coaching flow: apply profile updates from email and decide reply.
 Business logic only; auth/verification/rate limits are handled by the handler.
 """
+import hashlib
 import logging
 import json
 from typing import Optional, Dict, Any, Callable
+
+from datetime import date
 
 from dynamodb_models import (
     get_coach_profile,
@@ -13,12 +16,18 @@ from dynamodb_models import (
     fetch_current_plan_summary,
     get_memory_notes,
     get_continuity_summary,
+    get_continuity_state,
     get_memory_context_for_response_generation,
     replace_memory,
+    update_continuity_state,
     create_action_token,
     put_manual_activity_snapshot,
     get_progress_snapshot,
 )
+from continuity_state_contract import ContinuityState, ContinuityStateContractError
+from continuity_bootstrap import bootstrap_continuity_state
+from continuity_recommendation_contract import ContinuityRecommendation, ContinuityRecommendationError
+from continuity_updater import apply_continuity_recommendation
 from config import ACTION_BASE_URL
 from activity_snapshot import parse_manual_activity_snapshot_from_email
 from ai_extraction_contract import (
@@ -36,7 +45,6 @@ from profile import (
     get_missing_required_profile_fields,
 )
 from config import ENABLE_COACHING_REASONING, ENABLE_SESSION_CHECKIN_EXTRACTION
-from rule_engine import RuleEngineContractError, validate_rule_engine_output
 from skills.planner import (
     SessionCheckinExtractionProposalError,
     run_session_checkin_extraction_workflow,
@@ -45,6 +53,11 @@ from coaching_memory import (
     maybe_post_reply_memory_refresh,
     should_attempt_memory_refresh,
 )
+from rule_engine_orchestrator import (
+    RuleEngineOrchestratorError,
+    apply_rule_engine_plan_update,
+    run_rule_engine_for_week,
+)
 from response_generation_contract import normalize_reply_mode
 from response_generation_assembly import build_response_brief, build_response_generation_input
 from skills.coaching_reasoning import CoachingReasoningError, run_coaching_reasoning_workflow
@@ -52,9 +65,16 @@ from skills.response_generation import (
     ResponseGenerationProposalError,
     run_response_generation_workflow,
 )
+from skills.obedience_eval import run_obedience_eval
 
 logger = logging.getLogger(__name__)
 _READ_ONLY_REPLY_INTENTS = {"question"}
+_LIGHTWEIGHT_ACTIONS = {"checkin_ack", "clarify_only"}
+SUPPRESSED_REPLY = object()
+
+# Last obedience eval result — set after each response generation for observability.
+# Consumers (e.g. live_athlete_sim_runner) can read this after each turn.
+last_obedience_eval_result: Optional[Dict[str, Any]] = None
 
 
 def _missing_injury_only(missing_profile_fields: list[str]) -> bool:
@@ -76,6 +96,83 @@ def _build_connect_strava_link(from_email: str) -> Optional[str]:
     return f"{ACTION_BASE_URL}{token_id}"
 
 
+def _build_logical_request_id(
+    inbound_message_id: Optional[str],
+    inbound_body: str,
+) -> str:
+    message_id = str(inbound_message_id or "").strip()
+    if message_id:
+        return f"reply_mutation:{message_id[:256]}"
+    body_digest = hashlib.sha256(str(inbound_body or "").encode("utf-8")).hexdigest()[:24]
+    return f"reply_mutation:bodyhash:{body_digest}"
+
+
+def _maybe_apply_rule_engine_mutation(
+    *,
+    athlete_id: str,
+    inbound_body: str,
+    inbound_message_id: Optional[str],
+    profile_after: Dict[str, Any],
+    rule_engine_decision: Optional[Dict[str, Any]],
+    effective_today: Optional[date],
+    log: Callable[..., None],
+) -> Optional[Dict[str, Any]]:
+    if not isinstance(rule_engine_decision, dict):
+        return rule_engine_decision
+    if str(rule_engine_decision.get("mode", "")).strip().lower() != "mutate":
+        return rule_engine_decision
+    if bool(rule_engine_decision.get("clarification_needed")):
+        return rule_engine_decision
+
+    try:
+        extracted_checkin = run_session_checkin_extraction_workflow(inbound_body)
+    except SessionCheckinExtractionProposalError as exc:
+        logger.warning(
+            "rule_engine_mutation_extraction_failed athlete_id=%s error=%s",
+            athlete_id,
+            exc,
+        )
+        log(result="rule_engine_mutation_extraction_failed")
+        return dict(rule_engine_decision)
+
+    if not extracted_checkin:
+        logger.info("rule_engine_mutation_skipped_empty_checkin athlete_id=%s", athlete_id)
+        log(result="rule_engine_mutation_skipped_empty_checkin")
+        return dict(rule_engine_decision)
+
+    try:
+        engine_output = run_rule_engine_for_week(
+            athlete_id=athlete_id,
+            profile=profile_after,
+            checkin=extracted_checkin,
+            today_date=effective_today or date.today(),
+            memory_notes=get_memory_notes(athlete_id),
+        )
+        plan_update_result = apply_rule_engine_plan_update(
+            athlete_id=athlete_id,
+            engine_output=engine_output,
+            logical_request_id=_build_logical_request_id(inbound_message_id, inbound_body),
+        )
+    except RuleEngineOrchestratorError as exc:
+        logger.error("rule_engine_mutation_failed athlete_id=%s error=%s", athlete_id, exc)
+        log(result="rule_engine_mutation_failed", error_code="rule_engine_orchestrator_error")
+        return dict(rule_engine_decision)
+
+    mutated_decision = dict(rule_engine_decision)
+    mutated_decision["rule_engine_ran"] = True
+    mutated_decision["engine_output"] = engine_output.to_dict()
+    mutated_decision["plan_update_result"] = plan_update_result
+    mutated_decision["rule_engine_status"] = (
+        str(plan_update_result.get("status", "")).strip().lower() or "completed"
+    )
+    log(
+        result="rule_engine_mutation_applied",
+        plan_update_status=engine_output.plan_update_status,
+        plan_update_result_status=plan_update_result.get("status"),
+    )
+    return mutated_decision
+
+
 def _resolve_reply_mode(
     *,
     missing_profile_fields: list[str],
@@ -86,20 +183,21 @@ def _resolve_reply_mode(
             return normalize_reply_mode("intake")
         return normalize_reply_mode("normal_coaching")
 
-    reply_strategy = str(rule_engine_decision.get("reply_strategy", "")).strip().lower()
-    if reply_strategy == "safety_concern":
+    intent = str(rule_engine_decision.get("intent", "")).strip().lower()
+    if intent == "safety_concern":
         return normalize_reply_mode("safety_risk_managed")
-    if reply_strategy == "off_topic":
+    if intent == "off_topic":
         return normalize_reply_mode("off_topic_redirect")
-    if reply_strategy == "clarification" or bool(rule_engine_decision.get("clarification_needed")):
+    if bool(rule_engine_decision.get("clarification_needed")):
         return normalize_reply_mode("clarification")
 
-    intent = str(rule_engine_decision.get("intent", "")).strip().lower()
-    if intent in _READ_ONLY_REPLY_INTENTS and _missing_injury_only(missing_profile_fields):
+    requested_action = str(rule_engine_decision.get("requested_action", "")).strip().lower()
+    is_lightweight = intent in _READ_ONLY_REPLY_INTENTS or requested_action in _LIGHTWEIGHT_ACTIONS
+    if is_lightweight and _missing_injury_only(missing_profile_fields):
         return normalize_reply_mode("lightweight_non_planning")
     if missing_profile_fields:
         return normalize_reply_mode("intake")
-    if intent in _READ_ONLY_REPLY_INTENTS:
+    if is_lightweight:
         return normalize_reply_mode("lightweight_non_planning")
     return normalize_reply_mode("normal_coaching")
 
@@ -121,6 +219,7 @@ def _generate_llm_reply(
     inbound_message_id: Optional[str],
     connect_strava_link: Optional[str] = None,
     intake_just_completed: bool = False,
+    effective_today: Optional[date] = None,
 ) -> Optional[str]:
     reply_mode = _resolve_reply_mode(
         missing_profile_fields=missing_profile_fields,
@@ -129,6 +228,32 @@ def _generate_llm_reply(
     memory_refresh_reply_kind = "profile_incomplete" if missing_profile_fields else reply_mode
 
     memory_context = get_memory_context_for_response_generation(athlete_id)
+
+    # -- Continuity state: load or bootstrap --
+    today = effective_today or date.today()
+    current_continuity_state = None
+    raw_continuity = get_continuity_state(athlete_id)
+    if raw_continuity is not None:
+        try:
+            current_continuity_state = ContinuityState.from_dict(raw_continuity)
+        except ContinuityStateContractError as exc:
+            logger.warning(
+                "continuity_state_invalid athlete_id=%s error=%s — will bootstrap",
+                athlete_id, exc,
+            )
+    if current_continuity_state is None:
+        current_continuity_state = bootstrap_continuity_state(
+            profile_after, "base", today,
+        )
+        logger.info(
+            "continuity_state_bootstrap athlete_id=%s focus=%s horizon=%s",
+            athlete_id,
+            current_continuity_state.current_block_focus,
+            current_continuity_state.goal_horizon_type,
+        )
+
+    current_continuity_context = current_continuity_state.to_continuity_context(today)
+
     response_brief = build_response_brief(
         athlete_id=athlete_id,
         reply_kind=reply_mode,
@@ -143,12 +268,16 @@ def _generate_llm_reply(
         connect_strava_link=connect_strava_link,
         intake_completed_this_turn=intake_just_completed and reply_mode == "normal_coaching",
     )
-    # Two-stage pipeline: coaching reasoning → response generation (if enabled)
+
+    # -- Two-stage pipeline: coaching reasoning → response generation --
     coaching_result = None
+    next_continuity_state = current_continuity_state
     if ENABLE_COACHING_REASONING:
         try:
             coaching_result = run_coaching_reasoning_workflow(
-                response_brief.to_dict(), model_name=selected_model_name,
+                response_brief.to_dict(),
+                model_name=selected_model_name,
+                continuity_context=current_continuity_context,
             )
             logger.info(
                 "coaching_directive athlete_id=%s rationale=%s doctrine_files=%s",
@@ -156,17 +285,55 @@ def _generate_llm_reply(
                 coaching_result["directive"].get("rationale", ""),
                 coaching_result.get("doctrine_files_loaded", []),
             )
-        except CoachingReasoningError as exc:
-            logger.warning(
-                "coaching_reasoning_fallback athlete_id=%s error=%s", athlete_id, exc,
-            )
 
-    if coaching_result is not None:
-        rg_input = build_response_generation_input(
-            directive=coaching_result["directive"], brief=response_brief,
+            # Apply continuity recommendation
+            raw_rec = coaching_result.get("continuity_recommendation")
+            if raw_rec is not None:
+                try:
+                    rec = ContinuityRecommendation.from_dict(raw_rec)
+                    next_continuity_state = apply_continuity_recommendation(
+                        current_continuity_state, rec, today,
+                    )
+                    logger.info(
+                        "continuity_update athlete_id=%s action=%s focus=%s phase=%s",
+                        athlete_id,
+                        raw_rec.get("recommended_transition_action"),
+                        next_continuity_state.current_block_focus,
+                        next_continuity_state.current_phase,
+                    )
+                except ContinuityRecommendationError as exc:
+                    logger.warning(
+                        "continuity_recommendation_invalid athlete_id=%s error=%s",
+                        athlete_id, exc,
+                    )
+        except CoachingReasoningError as exc:
+            logger.error(
+                "coaching_reasoning_failed athlete_id=%s error=%s", athlete_id, exc,
+            )
+            return None
+
+    # Build response generation input with NEXT continuity state (post-decision)
+    next_continuity_context = next_continuity_state.to_continuity_context(today)
+
+    directive = coaching_result["directive"]
+    if directive.get("reply_action") == "suppress":
+        if next_continuity_state != current_continuity_state or raw_continuity is None:
+            if not update_continuity_state(athlete_id, next_continuity_state.to_dict()):
+                logger.error(
+                    "continuity_state_persist_failed athlete_id=%s", athlete_id,
+                )
+        log(result="coach_suppressed_no_reply_needed")
+        logger.info(
+            "coach_reply_suppressed athlete_id=%s reason=no_reply_needed",
+            athlete_id,
         )
-    else:
-        rg_input = response_brief.to_dict()
+        return SUPPRESSED_REPLY
+
+    rg_input = build_response_generation_input(
+        directive=directive,
+        brief=response_brief,
+        continuity_context=next_continuity_context,
+    )
 
     try:
         generated_response = run_response_generation_workflow(
@@ -176,6 +343,38 @@ def _generate_llm_reply(
         reply = str(generated_response["final_email_body"]).strip()
         if not reply:
             raise ResponseGenerationProposalError("empty_final_email_body")
+
+        # Obedience eval: LLM-based last-line compliance check + correction
+        global last_obedience_eval_result
+        try:
+            obedience_result = run_obedience_eval(
+                email_body=reply,
+                directive=directive,
+                continuity_context=next_continuity_context,
+            )
+            original_reply = reply
+            if obedience_result["passed"]:
+                logger.info("obedience_eval_passed athlete_id=%s", athlete_id)
+            else:
+                violation_tags = [v["violation_type"] for v in obedience_result["violations"]]
+                logger.warning(
+                    "obedience_eval_corrected athlete_id=%s tags=%s reasoning=%s",
+                    athlete_id,
+                    ",".join(violation_tags),
+                    obedience_result["reasoning"],
+                )
+                reply = obedience_result["corrected_email_body"]
+            last_obedience_eval_result = {
+                "passed": obedience_result["passed"],
+                "violations": obedience_result["violations"],
+                "corrected": not obedience_result["passed"],
+                "original_email_body": original_reply if not obedience_result["passed"] else None,
+                "reasoning": obedience_result["reasoning"],
+            }
+        except Exception:
+            logger.warning("obedience_eval_error athlete_id=%s — using original email", athlete_id, exc_info=True)
+            last_obedience_eval_result = {"passed": None, "error": True}
+
     except ResponseGenerationProposalError as exc:
         _log_response_generation_failure(
             athlete_id=athlete_id,
@@ -190,6 +389,13 @@ def _generate_llm_reply(
         )
         return None
 
+    # Persist continuity state (skip write if unchanged)
+    if next_continuity_state != current_continuity_state or raw_continuity is None:
+        if not update_continuity_state(athlete_id, next_continuity_state.to_dict()):
+            logger.error(
+                "continuity_state_persist_failed athlete_id=%s", athlete_id,
+            )
+
     # AM2: single post-reply candidate-operation memory refresh
     maybe_post_reply_memory_refresh(
         athlete_id=athlete_id,
@@ -200,7 +406,7 @@ def _generate_llm_reply(
         parsed_updates=parsed_updates,
         manual_snapshot=manual_snapshot,
         selected_model_name=selected_model_name,
-        rule_engine_decision=rule_engine_decision,
+        rule_engine_decision=None,
         log=log,
         get_memory_notes_fn=get_memory_notes,
         get_continuity_summary_fn=get_continuity_summary,
@@ -329,6 +535,7 @@ def build_profile_gated_reply(
     *,
     aws_request_id: Optional[str] = None,
     log_outcome: Optional[Callable[..., None]] = None,
+    effective_today: Optional[date] = None,
 ) -> Optional[str]:
     """
     Applies profile updates from the email, then returns the reply text:
@@ -398,11 +605,22 @@ def build_profile_gated_reply(
             from_email=from_email,
             inbound_message_id=inbound_message_id,
             connect_strava_link=connect_link,
+            effective_today=effective_today,
         )
         return reply
 
     if intake_just_completed:
         log(result="intake_completed")
+
+    rule_engine_decision = _maybe_apply_rule_engine_mutation(
+        athlete_id=athlete_id,
+        inbound_body=inbound_body,
+        inbound_message_id=inbound_message_id,
+        profile_after=profile_after,
+        rule_engine_decision=rule_engine_decision,
+        effective_today=effective_today,
+        log=log,
+    )
 
     log(result="profile_ready_for_coaching")
     log(
@@ -411,14 +629,6 @@ def build_profile_gated_reply(
         missing_after=len(missing_after),
     )
     plan_summary = fetch_current_plan_summary(athlete_id)
-    if isinstance(rule_engine_decision, dict):
-        engine_output = rule_engine_decision.get("engine_output")
-        if isinstance(engine_output, dict):
-            try:
-                validate_rule_engine_output(engine_output)
-            except RuleEngineContractError:
-                logger.error("Invalid rule_engine output supplied to final reply path")
-
     if not selected_model_name:
         logger.error("selected_model_name is required for profile-gated athlete replies")
         return None
@@ -438,4 +648,5 @@ def build_profile_gated_reply(
         inbound_message_id=inbound_message_id,
         connect_strava_link=connect_link,
         intake_just_completed=intake_just_completed,
+        effective_today=effective_today,
     )
