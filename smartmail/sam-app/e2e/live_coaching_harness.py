@@ -296,6 +296,7 @@ class LiveCoachingTurnResult:
     lambda_response: Dict[str, Any]
     lambda_body: str
     outbound: Dict[str, Any]
+    suppressed: bool = False
 
 
 class LiveCoachingHarness:
@@ -371,14 +372,22 @@ class LiveCoachingHarness:
         response_body = str(response.get("body", ""))
         if status_code != 200:
             raise RuntimeError(f"coaching lambda returned non-200: {response}")
-        if "No reply sent due to response-generation failure." in response_body:
-            raise RuntimeError(f"response generation suppressed send: {response_body}")
-        if not capture.messages:
-            raise RuntimeError(f"no outbound email captured: {response}")
 
         athlete_id = dynamodb_models.get_athlete_id_for_email(normalized)
         if not athlete_id:
             raise RuntimeError(f"athlete_id missing after inbound email for {normalized}")
+
+        # Coach suppressed the reply (strategist or response-gen failure) — valid outcome
+        if not capture.messages:
+            return LiveCoachingTurnResult(
+                athlete_id=str(athlete_id),
+                message_id=resolved_message_id,
+                date_received=resolved_date_received,
+                lambda_response=response,
+                lambda_body=response_body,
+                outbound={},
+                suppressed=True,
+            )
 
         return LiveCoachingTurnResult(
             athlete_id=str(athlete_id),

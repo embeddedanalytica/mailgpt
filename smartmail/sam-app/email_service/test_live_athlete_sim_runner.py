@@ -57,6 +57,7 @@ class _HarnessStub:
                 "text": f"Coach reply {turn}",
                 "html": f"<p>Coach reply {turn}</p>",
             },
+            suppressed=False,
         )
 
     def fetch_state_snapshot(self, athlete_id: str):

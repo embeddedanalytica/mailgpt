@@ -22,7 +22,6 @@ import prompt_pack_loader
 
 PROMPT_PACKS_ROOT = prompt_pack_loader.PROMPT_PACKS_ROOT
 SURFACE_FILE_MAP = {
-    "response_generation.system_prompt": ("response_generation.json", "system_prompt_lines"),
     "response_generation.directive_system_prompt": (
         "response_generation.json",
         "directive_system_prompt_lines",

@@ -22,13 +22,12 @@ from prompt_pack_loader import PromptPackError, load_coach_reply_prompt_pack
 
 DEFAULT_OUTPUT_NAME = "proposal.json"
 ALLOWED_SURFACES = {
-    "response_generation.system_prompt",
     "response_generation.directive_system_prompt",
     "coaching_reasoning.base_prompt",
 }
 ISSUE_STRATEGIES = {
     "generic_reply": {
-        "target_surface": "response_generation.system_prompt",
+        "target_surface": "response_generation.directive_system_prompt",
         "patch_strategy": (
             "Add or strengthen instructions that force concrete athlete-specific references "
             "and prohibit generic filler phrasing."
@@ -36,7 +35,7 @@ ISSUE_STRATEGIES = {
         "expected_benefit": "Reduce generic responses and improve perceived specificity.",
     },
     "hallucinated_context": {
-        "target_surface": "response_generation.system_prompt",
+        "target_surface": "response_generation.directive_system_prompt",
         "patch_strategy": (
             "Strengthen the authority split around visible thread facts and memory context "
             "so the model does not invent athlete history or unsupported constraints."
@@ -44,7 +43,7 @@ ISSUE_STRATEGIES = {
         "expected_benefit": "Reduce invented context and improve trustworthiness.",
     },
     "missed_continuity": {
-        "target_surface": "response_generation.system_prompt",
+        "target_surface": "response_generation.directive_system_prompt",
         "patch_strategy": (
             "Emphasize continuity handling and near-term open loops so the reply carries forward "
             "relevant prior context when the athlete has not already resolved it."
@@ -52,7 +51,7 @@ ISSUE_STRATEGIES = {
         "expected_benefit": "Improve memory continuity and thread coherence.",
     },
     "missed_fact": {
-        "target_surface": "response_generation.system_prompt",
+        "target_surface": "response_generation.directive_system_prompt",
         "patch_strategy": (
             "Reinforce use of high-salience memory facts and current-message constraints when they "
             "materially affect this week's coaching guidance."
@@ -60,7 +59,7 @@ ISSUE_STRATEGIES = {
         "expected_benefit": "Reduce omissions of disclosed athlete facts.",
     },
     "too_vague": {
-        "target_surface": "response_generation.system_prompt",
+        "target_surface": "response_generation.directive_system_prompt",
         "patch_strategy": (
             "Require more concrete session guidance, clearer action language, and fewer abstract "
             "coaching generalities."

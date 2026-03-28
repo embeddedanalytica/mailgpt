@@ -13,7 +13,7 @@ import traceback
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from decimal import Decimal
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from time import perf_counter
 from typing import Any, Dict, Iterable, List, Optional
@@ -38,12 +38,14 @@ from athlete_simulation import (  # noqa: E402
     CoachReplyJudgeError,
 )
 from config import OPENAI_GENERIC_MODEL, OPENAI_REASONING_MODEL  # noqa: E402
+import coaching as _coaching_module  # noqa: E402
 from live_coaching_harness import LiveCoachingHarness  # noqa: E402
 
 
 DEFAULT_OUTPUT_ROOT = REPO_ROOT / "sam-app" / ".cache" / "live-athlete-sim"
 OK = "ok"
 ERROR = "error"
+DEFAULT_SYNTHETIC_DAYS_PER_TURN = 7
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -97,6 +99,20 @@ def build_parser() -> argparse.ArgumentParser:
         default=1,
         help="Maximum concurrent scenarios to run.",
     )
+    parser.add_argument(
+        "--synthetic-start-date",
+        help=(
+            "Synthetic UTC start datetime for inbound athlete messages. "
+            "Accepts ISO-8601 like 2026-03-25T15:00:00+00:00. "
+            "Defaults to current UTC time."
+        ),
+    )
+    parser.add_argument(
+        "--synthetic-days-per-turn",
+        type=int,
+        default=7,
+        help="How many synthetic calendar days to advance between athlete turns.",
+    )
     return parser
 
 
@@ -107,6 +123,7 @@ def require_prerequisites(
     min_turns: int,
     max_turns: int,
     max_parallel: int,
+    synthetic_days_per_turn: int,
 ) -> None:
     missing: list[str] = []
     if not bench_path.exists():
@@ -125,6 +142,8 @@ def require_prerequisites(
         raise RuntimeError("--min-turns cannot be greater than --max-turns.")
     if max_parallel < 1:
         raise RuntimeError("--max-parallel must be at least 1.")
+    if synthetic_days_per_turn < 0:
+        raise RuntimeError("--synthetic-days-per-turn cannot be negative.")
     os.environ["ENABLE_LIVE_LLM_CALLS"] = "true"
     os.environ["ENABLE_SESSION_CHECKIN_EXTRACTION"] = "true"
 
@@ -155,6 +174,24 @@ def select_scenarios(
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _resolve_synthetic_start_datetime(raw_value: Optional[str]) -> datetime:
+    if not raw_value:
+        return datetime.now(timezone.utc)
+    try:
+        parsed = datetime.fromisoformat(str(raw_value).strip())
+    except ValueError as exc:
+        raise RuntimeError(
+            "--synthetic-start-date must be a valid ISO-8601 datetime"
+        ) from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _format_rfc2822_utc(value: datetime) -> str:
+    return value.astimezone(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S +0000")
 
 
 def _append_jsonl(path: Path, payload: Dict[str, Any]) -> None:
@@ -250,10 +287,13 @@ def run_single_attempt(
     output_dir: Path,
     default_min_turns: int,
     default_max_turns: int,
+    synthetic_start_datetime: Optional[datetime] = None,
+    synthetic_days_per_turn: int = DEFAULT_SYNTHETIC_DAYS_PER_TURN,
     harness_factory=LiveCoachingHarness,
     athlete_client: Any = AthleteSimulator,
     judge_client: Any = CoachReplyJudge,
 ) -> Dict[str, Any]:
+    synthetic_start_datetime = synthetic_start_datetime or datetime.now(timezone.utc)
     started_at = _utc_now_iso()
     timer_start = perf_counter()
     min_turns, max_turns = _resolved_turn_bounds(
@@ -316,11 +356,16 @@ def run_single_attempt(
             if next_message is None:
                 break
             turn_count = turn_number
+            synthetic_received_at = synthetic_start_datetime + timedelta(
+                days=synthetic_days_per_turn * (turn_number - 1)
+            )
+            synthetic_date_received = _format_rfc2822_utc(synthetic_received_at)
             athlete_turn = {
                 "role": "athlete",
                 "turn": turn_number,
                 "subject": str(next_message["subject"]).strip(),
                 "body": str(next_message["body"]).strip(),
+                "date_received": synthetic_date_received,
             }
             transcript.append(athlete_turn)
             _append_jsonl(
@@ -330,15 +375,98 @@ def run_single_attempt(
                     "turn": turn_number,
                     "subject": athlete_turn["subject"],
                     "body": athlete_turn["body"],
+                    "date_received": synthetic_date_received,
                 },
             )
 
-            harness_result = harness.send_inbound_email(
-                email_address,
-                subject=athlete_turn["subject"],
-                body=athlete_turn["body"],
-            )
+            try:
+                harness_result = harness.send_inbound_email(
+                    email_address,
+                    subject=athlete_turn["subject"],
+                    body=athlete_turn["body"],
+                    date_received=synthetic_date_received,
+                )
+            except TypeError as exc:
+                if "unexpected keyword argument 'date_received'" not in str(exc):
+                    raise
+                harness_result = harness.send_inbound_email(
+                    email_address,
+                    subject=athlete_turn["subject"],
+                    body=athlete_turn["body"],
+                )
             athlete_id = harness_result.athlete_id
+
+            # ---- Handle suppressed replies (strategist suppress or response-gen failure) ----
+            if harness_result.suppressed:
+                print(f"  [suppressed] T{turn_number} — coach chose not to reply ({harness_result.lambda_body})")
+                _append_jsonl(
+                    transcript_path,
+                    {
+                        "phase": "coach_suppressed",
+                        "turn": turn_number,
+                        "lambda_body": harness_result.lambda_body,
+                    },
+                )
+                # Add a placeholder to the transcript so the athlete agent knows the coach was silent
+                coach_reply = {
+                    "role": "coach",
+                    "turn": turn_number,
+                    "suppressed": True,
+                    "text": "(Coach chose not to reply this turn.)",
+                    "lambda_body": harness_result.lambda_body,
+                }
+                transcript.append(coach_reply)
+
+                # Let the athlete react to the silence
+                reaction = athlete_client.react_to_coach_reply(
+                    scenario_name=scenario["name"],
+                    athlete_brief=scenario["athlete_brief"],
+                    transcript=transcript,
+                    latest_athlete_message=athlete_turn,
+                    latest_coach_reply=coach_reply,
+                    min_turns=min_turns,
+                    max_turns=max_turns,
+                    turn_number=turn_number,
+                    evaluation_focus=list(scenario.get("evaluation_focus", [])),
+                    communication_style_preferences=communication_style_preferences,
+                    model_name=athlete_model,
+                )
+                if turn_number < min_turns and not reaction["continue_conversation"]:
+                    if not reaction["next_subject"] or not reaction["next_body"]:
+                        raise AthleteSimulationError(
+                            f"athlete attempted to stop before min_turns={min_turns} without providing a follow-up"
+                        )
+                    reaction = dict(reaction)
+                    reaction["continue_conversation"] = True
+                    reaction["stop_reason"] = f"forced_continue_before_min_turns:{reaction['stop_reason'] or 'empty'}"
+                    reaction["forced_continue_before_min_turns"] = True
+                athlete_reactions.append(reaction)
+                _append_jsonl(
+                    transcript_path,
+                    {
+                        "phase": "athlete_reaction",
+                        "turn": turn_number,
+                        "reaction": reaction,
+                    },
+                )
+
+                if not reaction["continue_conversation"] and turn_number >= min_turns:
+                    stop_reason = reaction["stop_reason"] or "athlete_stopped"
+                    next_message = None
+                    break
+
+                if turn_number == max_turns:
+                    stop_reason = "max_turns_reached"
+                    next_message = None
+                    break
+
+                next_message = {
+                    "subject": reaction["next_subject"],
+                    "body": reaction["next_body"],
+                }
+                continue
+
+            # ---- Normal (non-suppressed) reply path ----
             coach_reply = {
                 "role": "coach",
                 "turn": turn_number,
@@ -346,8 +474,13 @@ def run_single_attempt(
                 "text": harness_result.outbound["text"],
                 "html": harness_result.outbound["html"],
                 "lambda_body": harness_result.lambda_body,
+                "date_received": harness_result.date_received,
             }
             transcript.append(coach_reply)
+            # Capture obedience eval result from coaching module
+            obedience_eval = getattr(_coaching_module, "last_obedience_eval_result", None)
+            _coaching_module.last_obedience_eval_result = None  # reset for next turn
+
             _append_jsonl(
                 transcript_path,
                 {
@@ -357,8 +490,17 @@ def run_single_attempt(
                     "text": coach_reply["text"],
                     "html": coach_reply["html"],
                     "lambda_body": coach_reply["lambda_body"],
+                    "obedience_eval": obedience_eval,
                 },
             )
+
+            if obedience_eval and not obedience_eval.get("passed"):
+                tags = [v["violation_type"] for v in obedience_eval.get("violations", [])]
+                print(f"  [obedience] T{turn_number} CORRECTED — {', '.join(tags)}")
+            elif obedience_eval and obedience_eval.get("passed"):
+                print(f"  [obedience] T{turn_number} passed")
+            elif obedience_eval and obedience_eval.get("error"):
+                print(f"  [obedience] T{turn_number} ERROR — used original email")
 
             state_snapshot = harness.fetch_state_snapshot(athlete_id)
             _append_jsonl(
@@ -464,6 +606,8 @@ def run_single_attempt(
             "duration_seconds": round(perf_counter() - timer_start, 4),
             "athlete_id": athlete_id,
             "email_address": email_address,
+            "synthetic_start_datetime": synthetic_start_datetime.isoformat(),
+            "synthetic_days_per_turn": synthetic_days_per_turn,
             "turn_count": turn_count,
             "stop_reason": stop_reason,
             "average_judge_scores": avg_scores,
@@ -517,6 +661,8 @@ def run_scenario_attempts(
     output_dir: Path,
     default_min_turns: int,
     default_max_turns: int,
+    synthetic_start_datetime: datetime,
+    synthetic_days_per_turn: int,
 ) -> List[Dict[str, Any]]:
     return [
         run_single_attempt(
@@ -527,6 +673,8 @@ def run_scenario_attempts(
             output_dir=output_dir,
             default_min_turns=default_min_turns,
             default_max_turns=default_max_turns,
+            synthetic_start_datetime=synthetic_start_datetime,
+            synthetic_days_per_turn=synthetic_days_per_turn,
         )
         for attempt in range(1, runs_per_scenario + 1)
     ]
@@ -544,6 +692,8 @@ def aggregate_results(
     default_min_turns: int,
     default_max_turns: int,
     max_parallel: int,
+    synthetic_start_datetime: datetime,
+    synthetic_days_per_turn: int,
 ) -> Dict[str, Any]:
     runs_sorted = sorted(runs, key=lambda item: (item["scenario_id"], item["attempt"]))
     by_scenario: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
@@ -591,6 +741,8 @@ def aggregate_results(
         "default_min_turns": default_min_turns,
         "default_max_turns": default_max_turns,
         "max_parallel": max_parallel,
+        "synthetic_start_datetime": synthetic_start_datetime.isoformat(),
+        "synthetic_days_per_turn": synthetic_days_per_turn,
         "total_scenarios": len(scenarios),
         "total_runs": len(runs_sorted),
         "ok_runs": len([run for run in runs_sorted if run["status"] == OK]),
@@ -625,12 +777,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(argv)
 
     bench_path = Path(args.bench).expanduser().resolve()
+    synthetic_start_datetime = _resolve_synthetic_start_datetime(args.synthetic_start_date)
     require_prerequisites(
         bench_path,
         runs_per_scenario=args.runs_per_scenario,
         min_turns=args.min_turns,
         max_turns=args.max_turns,
         max_parallel=args.max_parallel,
+        synthetic_days_per_turn=args.synthetic_days_per_turn,
     )
     scenarios = select_scenarios(
         load_athlete_agent_bench_scenarios(bench_path),
@@ -653,6 +807,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                 output_dir=output_dir,
                 default_min_turns=args.min_turns,
                 default_max_turns=args.max_turns,
+                synthetic_start_datetime=synthetic_start_datetime,
+                synthetic_days_per_turn=args.synthetic_days_per_turn,
             ): scenario
             for scenario in scenarios
         }
@@ -673,6 +829,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         default_min_turns=args.min_turns,
         default_max_turns=args.max_turns,
         max_parallel=args.max_parallel,
+        synthetic_start_datetime=synthetic_start_datetime,
+        synthetic_days_per_turn=args.synthetic_days_per_turn,
     )
     results_path = output_dir / "results.json"
     write_results_json(summary, results_path)

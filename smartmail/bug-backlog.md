@@ -105,3 +105,41 @@
 **Status** Open
 **Context:** In short-horizon memory bench scenarios (AM-005, AM-007, AM-012), important durable facts like primary event goals ("1500 free", "summer rec league") or key schedule anchors ("erg before sunrise", "soccer club") are evicted when the 7-fact budget fills up. The current eviction logic sorts by importance then fact_type then oldest `last_confirmed_at`, but goal and constraint facts forced to "high" importance are never evicted — the losses occur when facts are stored as `schedule` or `other` type at "medium" importance, even though they carry high coaching value. For example, AM-005 loses the athlete's primary competition goal ("1500 free") because it was stored as a medium-importance goal variant, and AM-012 loses "summer rec league" for the same reason.
 **Desired Behaviour** Facts with high coaching value — particularly primary competition goals and core schedule anchors — should survive budget pressure ahead of secondary details. The eviction strategy should better account for coaching relevance, not just the mechanical importance label assigned at creation time.
+
+## 21. Profile time_availability schema too narrow — daily time windows silently dropped
+**Status** Fixed
+**Context:** The profile extraction schema only supports `time_availability: { sessions_per_week: int, hours_per_week: number }`. When athletes provide daily time windows (e.g. "Mon 18:30-19:30, mornings 05:45-07:15"), the profile extraction LLM has no field to store this. The normalization in `profile.py` (line 66-76) silently drops anything that isn't `sessions_per_week`/`hours_per_week` as numeric values. Result: `time_availability` stays `{}` indefinitely, the strategist sees it as missing, and the coach re-asks for availability every turn even though the athlete has provided it multiple times.
+**Verification:** Fixed — `profile.py` `_normalize_time_availability()` now accepts `sessions_per_week` (string), `daily_windows` (list of strings), and `availability_notes` (string). Confirmed in LAS-002 sim run (2026-03-28 evening) — `time_availability` populated on all turns with structured daily windows and notes.
+
+## 20. Continuity bootstrap treats past event dates as active event horizons
+**Status** Open
+**Context:** In [`sam-app/email_service/continuity_bootstrap.py`](/Users/levonsh/Projects/smartmail/sam-app/email_service/continuity_bootstrap.py), `_parse_event_date()` currently accepts any syntactically valid ISO date from profile state, including stale past races. That means an athlete with an old `event_date` can bootstrap into `goal_horizon_type='event'` and carry `weeks_until_event=0`, which skews continuity context and prompt framing until some later transition corrects it.
+**Desired Behaviour** Continuity bootstrap should only treat future-or-today event dates as active event horizons. Past event dates should be ignored during bootstrap so stale races do not force the athlete into event-mode continuity state.
+
+## 22. Strategist reopens resolved conversational topics
+**Status** Open
+**Context:** In LAS-002 sim (2026-03-28), the athlete resolved a topic (cleared calf — "confirm you won't bring up this again") but the strategist kept re-introducing it in later turns. The obedience layer caught and corrected `reopened_resolved_topic` on T4, T8, T13 — but the strategist shouldn't be generating these in the first place. In LAS-003, the coach re-asked about calendar imports (T25) after the athlete had already confirmed. This is distinct from bug #18 (stale memory facts) — the memory may be correct, but the strategist doesn't track which conversational threads are closed.
+**Observed in:** LAS-002 (T4, T8, T13 corrected by obedience; T15 and T25 not caught), LAS-003 (T4, T12, T25).
+**Desired Behaviour** When an athlete explicitly closes a topic or the coach's question has been answered, the strategist should add it to the avoid list and keep it there for subsequent turns. The strategist prompt should check: "has this question already been answered in a prior turn?"
+**Fix scope:** Memory subsystem (closed-loop tracking), coaching_reasoning prompt (check before re-asking), possibly a "resolved topics" field in continuity state.
+
+## 23. Response-generation failures cause multi-turn silence
+**Status** Open
+**Context:** In LAS-002 sim (2026-03-28), turns 19-24 (6 consecutive turns) all failed with "No reply sent due to response-generation failure." The athlete kept sending simple confirmatory messages and got zero replies for 6 simulated weeks. `felt_understood` dropped to 1. The root cause is not the suppress rule (that's T21 in LAS-003, which is correct) — it's the response generation skill failing when the strategist directive is minimal/thin.
+**Observed in:** LAS-002 T19-T24 — all "response-generation failure", not strategist suppress.
+**Desired Behaviour** The response generation skill should never fail silently on a thin directive. When the directive is minimal (brief ack, no plan change), the writer should produce a minimal 1-2 line reply rather than crashing. A short reply is infinitely better than silence. If the writer truly cannot produce anything, the system should fall back to a canned acknowledgment rather than sending nothing.
+**Fix scope:** Response generation skill (fallback for thin directives), possibly `coaching.py` (canned fallback when response-gen fails).
+
+## 24. Athlete's explicit micro-instructions lost in strategist → writer handoff
+**Status** Open
+**Context:** In LAS-002, the athlete gave verbatim instructions ("reply with exactly: 'Dates received — mapping will follow within 48h'") but the strategist summarized this into a generic content_plan item. The writer never saw the exact wording. In LAS-003, the athlete asked for a specific file format (ICS/CSV download) and the coach gave a vague "check the portal" response. The obedience layer caught some (`missed_exact_instruction` was the most frequent violation in LAS-003: 9 corrections) but the strategist should be passing these through verbatim.
+**Observed in:** LAS-002 T25 (coaching_quality=2), LAS-003 T4/T11 (coaching_quality=2). LAS-003 obedience corrected `missed_exact_instruction` on T1, T2, T3, T4, T5, T9, T13, T15, T25.
+**Desired Behaviour** When the athlete makes a specific, concrete micro-request (exact wording, specific format, explicit confirmation), the strategist should pass it through as a verbatim instruction in the content_plan, not a paraphrase. The writer needs to see the exact ask to reproduce it.
+**Fix scope:** coaching_reasoning prompt (pass verbatim micro-requests), content_plan schema (support verbatim items).
+
+## 25. Communication style preferences not enforced as hard constraints
+**Status** Open
+**Context:** Both LAS-002 and LAS-003 athletes stated explicit formatting preferences (bullets, concise, no prose essays) that were captured at intake but intermittently ignored. LAS-002 T4 and T6 reverted to prose paragraphs (`communication_style_mismatch`). The style preferences appear in the response_brief but aren't treated as directive-level constraints.
+**Observed in:** LAS-002 T4 (comm_style_fit=3), T6, T25 (comm_style_fit=2). LAS-003 T4 (comm_style_fit=2).
+**Desired Behaviour** Communication style preferences should be passed as hard constraints in every coaching directive (e.g. `format: "bullet list, no prose paragraphs"`). The writer and obedience layer should both enforce them. An athlete who said "bullets only" should never receive prose paragraphs.
+**Fix scope:** Strategist prompt (include format constraint in directive), response_generation prompt (respect format), obedience_eval prompt (check format compliance).
