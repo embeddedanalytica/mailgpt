@@ -100,119 +100,6 @@ def _constraint_summaries(profile_after: Dict[str, Any]) -> Optional[str]:
     return "; ".join(parts) if parts else None
 
 
-# ---------------------------------------------------------------------------
-# Athlete instruction extraction (deterministic, pattern-based)
-# ---------------------------------------------------------------------------
-
-# Patterns that indicate forbidden topics / "do not revisit" instructions
-_FORBIDDEN_TOPIC_PATTERNS = [
-    re.compile(
-        r"(?:do\s*n[o']?t|don't|stop|please\s+stop|quit|no\s+more)\s+"
-        r"(?:bring(?:ing)?\s+up|mention(?:ing)?|revisit(?:ing)?|reopen(?:ing)?|"
-        r"repeat(?:ing)?|re-?ask(?:ing)?|talk(?:ing)?\s+about|reference|"
-        r"label(?:ing)?|us(?:e|ing))\s+"
-        r"(.+?)(?:\.|$|;|\s+unless|\s+until)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"(?:stop|please\s+stop|quit)\s+(.+?)(?:\.|$|;)",
-        re.IGNORECASE,
-    ),
-]
-
-# Patterns that indicate scope constraints
-_SCOPE_PATTERNS = [
-    re.compile(r"(?:just|only)\s+(?:tell|give|send|show)\s+me\s+(.+?)(?:\.|$|;)", re.IGNORECASE),
-    re.compile(r"keep\s+(?:it|this|the\s+reply)\s+(?:short|brief|concise|to\s+\w+\s+lines?)", re.IGNORECASE),
-    re.compile(r"(?:\d+)\s+lines?\s+(?:max|only|or\s+less)", re.IGNORECASE),
-    re.compile(r"one\s+(?:short\s+)?(?:paragraph|line|sentence)", re.IGNORECASE),
-]
-
-# Patterns that indicate reply suppression preference
-_SUPPRESSION_PATTERNS = [
-    re.compile(
-        r"(?:please\s+)?(?:only|don't|do\s*not)\s+reply\s+"
-        r"(?:if|unless|when)\s+(.+?)(?:\.|$|;)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"no\s+reply\s+(?:needed|necessary|unless)\s*(.+?)(?:\.|$|;)",
-        re.IGNORECASE,
-    ),
-]
-
-# Patterns that indicate latest overrides / corrections
-_OVERRIDE_PATTERNS = [
-    re.compile(
-        r"(?:please\s+)?(?:correct|fix|update|change)\s*:?\s+(.+?)(?:\.|$|;)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"(?:I\s+(?:can\s+)?now|my\s+\w+\s+(?:changed|opened|updated))\s+(.+?)(?:\.|$|;)",
-        re.IGNORECASE,
-    ),
-]
-
-
-def extract_athlete_instructions(inbound_body: Optional[str]) -> Dict[str, Any]:
-    """Extract structured athlete instructions from the inbound message body.
-
-    Returns a dict with only populated fields. Returns empty dict if no
-    instructions are detected. All extraction is deterministic and pattern-based.
-    """
-    if not inbound_body:
-        return {}
-
-    text = inbound_body.strip()
-    instructions: Dict[str, Any] = {}
-
-    # Forbidden topics
-    forbidden: List[str] = []
-    for pattern in _FORBIDDEN_TOPIC_PATTERNS:
-        for match in pattern.finditer(text):
-            topic = match.group(1).strip().rstrip(".,;")
-            if topic and len(topic) < 200:
-                forbidden.append(topic)
-    if forbidden:
-        instructions["forbidden_topics"] = forbidden
-
-    # Requested scope
-    for pattern in _SCOPE_PATTERNS:
-        match = pattern.search(text)
-        if match:
-            instructions["requested_scope"] = match.group(0).strip().rstrip(".,;")
-            break
-
-    # Format constraints (capture the full matched phrase)
-    format_match = re.search(
-        r"(\d+\s+lines?\s+(?:max|only|or\s+less)|"
-        r"one\s+(?:short\s+)?(?:paragraph|line|sentence)|"
-        r"keep\s+(?:it|this|the\s+reply)\s+(?:short|brief|concise))",
-        text,
-        re.IGNORECASE,
-    )
-    if format_match:
-        instructions["format_constraints"] = format_match.group(0).strip()
-
-    # Reply suppression hint
-    for pattern in _SUPPRESSION_PATTERNS:
-        match = pattern.search(text)
-        if match:
-            instructions["reply_suppression_hint"] = match.group(0).strip().rstrip(".,;")
-            break
-
-    # Latest overrides
-    overrides: List[str] = []
-    for pattern in _OVERRIDE_PATTERNS:
-        for match in pattern.finditer(text):
-            override = match.group(0).strip().rstrip(".,;")
-            if override and len(override) < 300:
-                overrides.append(override)
-    if overrides:
-        instructions["latest_overrides"] = overrides
-
-    return instructions
-
 
 # ---------------------------------------------------------------------------
 # Memory contradiction detection
@@ -384,11 +271,6 @@ def build_response_brief(
     normalized_connect_strava_link = _string_field(connect_strava_link)
     if normalized_connect_strava_link:
         delivery_context["connect_strava_link"] = normalized_connect_strava_link
-
-    # Extract structured athlete instructions from inbound body
-    athlete_instructions = extract_athlete_instructions(normalized_body if normalized_body else None)
-    if athlete_instructions:
-        delivery_context["athlete_instructions"] = athlete_instructions
 
     normalized_memory_context = memory_context if isinstance(memory_context, dict) else {}
 

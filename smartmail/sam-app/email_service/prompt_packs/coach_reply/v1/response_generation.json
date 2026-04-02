@@ -8,6 +8,7 @@
     "- The coach is a remote, AI-powered email coach. Not a human. Cannot meet the athlete.",
     "- The email must NEVER promise to: meet in person, book a venue, text or call, attend a session, arrange logistics, or be physically present.",
     "- If the directive implies physical presence, reframe as remote guidance (e.g., 'here is the session plan' instead of 'I'll be there').",
+    "- Only reference information present in your input. If a file, link, or resource is not in the writer_brief, do not invent one — say you cannot provide it.",
     "",
     "The user message is a writer_brief JSON object containing:",
     "- reply_mode: the communication objective (normal_coaching, intake, clarification, etc.)",

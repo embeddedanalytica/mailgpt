@@ -140,6 +140,24 @@ def validate_candidate_memory_response(data: Any) -> Dict[str, Any]:
             candidate["fact_key"] = fact_key
             candidate["summary"] = summary
             candidate["importance"] = importance
+            raw_supersedes = item.get("supersedes_fact_keys")
+            if raw_supersedes is not None:
+                if not isinstance(raw_supersedes, list):
+                    raise MemoryRefreshError(f"{prefix}.supersedes_fact_keys must be a list")
+                supersedes_fact_keys: List[str] = []
+                seen_supersedes: set[str] = set()
+                for key_idx, raw_key in enumerate(raw_supersedes):
+                    cleaned_key = _require_str(
+                        f"{prefix}.supersedes_fact_keys[{key_idx}]",
+                        raw_key,
+                    )
+                    canonical_key = normalize_fact_key(fact_type, cleaned_key.removeprefix(f"{fact_type}:"))
+                    if canonical_key in seen_supersedes:
+                        continue
+                    seen_supersedes.add(canonical_key)
+                    supersedes_fact_keys.append(canonical_key)
+                if supersedes_fact_keys:
+                    candidate["supersedes_fact_keys"] = supersedes_fact_keys
 
         elif action == "upsert" and target_id:
             # Update existing fact — fact_type and fact_key are forbidden (immutable)
@@ -183,6 +201,12 @@ def validate_candidate_memory_response(data: Any) -> Dict[str, Any]:
                 raise MemoryRefreshError(
                     f"{prefix}: evidence_source 'rule_engine_state' cannot retire facts"
                 )
+            raw_fact_key = item.get("fact_key")
+            if raw_fact_key is not None:
+                candidate["fact_key"] = _require_str(f"{prefix}.fact_key", raw_fact_key)
+            raw_summary = item.get("summary")
+            if raw_summary is not None and isinstance(raw_summary, str) and raw_summary.strip():
+                candidate["summary"] = raw_summary.strip()
 
         # --- cross-candidate checks for target_id conflicts ---
         if target_id:

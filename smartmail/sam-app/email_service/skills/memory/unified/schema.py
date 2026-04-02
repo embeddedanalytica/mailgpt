@@ -16,6 +16,7 @@ class CandidateOp(TypedDict, total=False):
     fact_key: str              # required for new upsert; forbidden on upsert-with-target_id
     summary: str               # required for upsert; optional for confirm/retire
     importance: str            # required for new upsert; optional for upsert-with-target_id
+    supersedes_fact_keys: List[str]  # optional for new upsert; deterministic retirement hints
     evidence_source: str       # required: athlete_email | profile_update | manual_activity | rule_engine_state
     evidence_strength: str     # required: explicit | strong_inference | weak_inference
 
@@ -49,6 +50,7 @@ JSON_SCHEMA: Dict[str, Any] = {
                     "fact_key",
                     "summary",
                     "importance",
+                    "supersedes_fact_keys",
                     "evidence_source",
                     "evidence_strength",
                 ],
@@ -67,6 +69,10 @@ JSON_SCHEMA: Dict[str, Any] = {
                     "importance": {
                         "type": ["string", "null"],
                         "enum": ["high", "medium", None],
+                    },
+                    "supersedes_fact_keys": {
+                        "type": ["array", "null"],
+                        "items": {"type": "string", "minLength": 1},
                     },
                     "evidence_source": {
                         "type": "string",

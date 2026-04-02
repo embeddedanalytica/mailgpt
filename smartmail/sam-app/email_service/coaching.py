@@ -66,15 +66,112 @@ from skills.response_generation import (
     run_response_generation_workflow,
 )
 from skills.obedience_eval import run_obedience_eval
+from config import LIGHTWEIGHT_RESPONSE_MODEL
+import skills.runtime as skill_runtime
 
 logger = logging.getLogger(__name__)
 _READ_ONLY_REPLY_INTENTS = {"question"}
 _LIGHTWEIGHT_ACTIONS = {"checkin_ack", "clarify_only"}
+_QUICK_REPLY_ACTIONS = {"checkin_ack"}
 SUPPRESSED_REPLY = object()
 
 # Last obedience eval result — set after each response generation for observability.
 # Consumers (e.g. live_athlete_sim_runner) can read this after each turn.
 last_obedience_eval_result: Optional[Dict[str, Any]] = None
+
+# Pipeline trace — captures strategist/writer inputs and outputs for observability.
+last_pipeline_trace: Optional[Dict[str, Any]] = None
+
+
+_QUICK_REPLY_SCHEMA_NAME = "quick_reply"
+_QUICK_REPLY_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["reply"],
+    "properties": {
+        "reply": {"type": "string", "minLength": 1},
+    },
+}
+
+
+def _build_quick_reply_avoid_list(
+    memory_context: Optional[Dict[str, Any]],
+    profile_after: Dict[str, Any],
+) -> list[str]:
+    """Build an avoid list from memory facts and profile constraints for the quick-reply path."""
+    avoid: list[str] = []
+    # Inactive injury constraints (athlete asked not to mention)
+    for ic in profile_after.get("injury_constraints") or []:
+        if not ic.get("active", True):
+            summary = str(ic.get("summary", "")).strip()
+            if summary:
+                avoid.append(summary)
+    # Contradicted facts from memory
+    if isinstance(memory_context, dict):
+        for fact in memory_context.get("contradicted_facts") or []:
+            if isinstance(fact, str) and fact.strip():
+                avoid.append(fact.strip())
+    return avoid
+
+
+def _generate_quick_reply(
+    *,
+    athlete_id: str,
+    inbound_body: str,
+    inbound_subject: Optional[str],
+    memory_context: Optional[Dict[str, Any]],
+    profile_after: Dict[str, Any],
+    continuity_context: Optional[Dict[str, Any]],
+) -> Optional[str]:
+    """Generate a 1-sentence reply for simple ack/confirmation messages.
+
+    Skips the full strategist + response-generation pipeline. Uses a minimal
+    prompt with a lightweight model. Returns None on failure so the caller
+    can fall through to the full pipeline.
+    """
+    avoid = _build_quick_reply_avoid_list(memory_context, profile_after)
+    avoid_section = ""
+    if avoid:
+        items = "\n".join(f"- {a}" for a in avoid)
+        avoid_section = f"\n\nDo NOT mention or reference:\n{items}"
+
+    system_prompt = (
+        "You answer a person's message in no more than 1 short sentence."
+        " Be direct and helpful. Do not ask follow-up questions."
+        " Do not give coaching advice, plans, or suggestions."
+        f"{avoid_section}"
+    )
+
+    user_content = inbound_body
+    if inbound_subject:
+        user_content = f"Subject: {inbound_subject}\n\n{inbound_body}"
+
+    try:
+        payload, _ = skill_runtime.execute_json_schema(
+            logger=logger,
+            model_name=LIGHTWEIGHT_RESPONSE_MODEL,
+            system_prompt=system_prompt,
+            user_content=user_content,
+            schema_name=_QUICK_REPLY_SCHEMA_NAME,
+            schema=_QUICK_REPLY_SCHEMA,
+            disabled_message="live quick-reply LLM calls are disabled",
+            warning_log_name="quick_reply",
+            retries=1,
+        )
+        reply = str(payload.get("reply", "")).strip()
+        if not reply:
+            return None
+        logger.info(
+            "quick_reply_generated athlete_id=%s reply_len=%d",
+            athlete_id, len(reply),
+        )
+        return reply
+    except Exception as exc:
+        logger.warning(
+            "quick_reply_failed athlete_id=%s error=%s — falling through to full pipeline",
+            athlete_id, exc,
+        )
+        return None
 
 
 def _missing_injury_only(missing_profile_fields: list[str]) -> bool:
@@ -221,6 +318,8 @@ def _generate_llm_reply(
     intake_just_completed: bool = False,
     effective_today: Optional[date] = None,
 ) -> Optional[str]:
+    global last_obedience_eval_result, last_pipeline_trace
+    last_pipeline_trace = None
     reply_mode = _resolve_reply_mode(
         missing_profile_fields=missing_profile_fields,
         rule_engine_decision=rule_engine_decision,
@@ -253,6 +352,79 @@ def _generate_llm_reply(
         )
 
     current_continuity_context = current_continuity_state.to_continuity_context(today)
+
+    # -- Quick-reply short-circuit for simple ack/confirmation messages --
+    requested_action = ""
+    if isinstance(rule_engine_decision, dict):
+        requested_action = str(rule_engine_decision.get("requested_action", "")).strip().lower()
+
+    if (
+        reply_mode == "lightweight_non_planning"
+        and requested_action in _QUICK_REPLY_ACTIONS
+    ):
+        quick_reply = _generate_quick_reply(
+            athlete_id=athlete_id,
+            inbound_body=inbound_body,
+            inbound_subject=inbound_subject,
+            memory_context=memory_context,
+            profile_after=profile_after,
+            continuity_context=current_continuity_context,
+        )
+        if quick_reply is not None:
+            # Build a minimal directive for obedience eval
+            quick_directive = {
+                "avoid": _build_quick_reply_avoid_list(memory_context, profile_after),
+                "content_plan": ["Answer the person's message"],
+                "main_message": "Brief acknowledgment",
+                "tone": "warm, brief",
+            }
+            try:
+                obedience_result = run_obedience_eval(
+                    email_body=quick_reply,
+                    directive=quick_directive,
+                    continuity_context=current_continuity_context,
+                )
+                if obedience_result["passed"]:
+                    logger.info("quick_reply_obedience_passed athlete_id=%s", athlete_id)
+                else:
+                    violation_tags = [v["violation_type"] for v in obedience_result["violations"]]
+                    logger.warning(
+                        "quick_reply_obedience_corrected athlete_id=%s tags=%s",
+                        athlete_id, ",".join(violation_tags),
+                    )
+                    quick_reply = obedience_result["corrected_email_body"]
+                last_obedience_eval_result = {
+                    "passed": obedience_result["passed"],
+                    "violations": obedience_result["violations"],
+                    "corrected": not obedience_result["passed"],
+                    "original_email_body": quick_reply if not obedience_result["passed"] else None,
+                    "reasoning": obedience_result["reasoning"],
+                }
+            except Exception:
+                logger.warning(
+                    "quick_reply_obedience_error athlete_id=%s — using original",
+                    athlete_id, exc_info=True,
+                )
+                last_obedience_eval_result = {"passed": None, "error": True}
+
+            # Memory refresh still runs on quick-reply path
+            maybe_post_reply_memory_refresh(
+                athlete_id=athlete_id,
+                inbound_body=inbound_body,
+                inbound_subject=inbound_subject,
+                reply_text=quick_reply,
+                reply_kind=memory_refresh_reply_kind,
+                parsed_updates=parsed_updates,
+                manual_snapshot=manual_snapshot,
+                selected_model_name=selected_model_name,
+                rule_engine_decision=None,
+                log=log,
+                get_memory_notes_fn=get_memory_notes,
+                get_continuity_summary_fn=get_continuity_summary,
+                replace_memory_fn=replace_memory,
+            )
+            log(result="quick_reply_sent")
+            return quick_reply
 
     response_brief = build_response_brief(
         athlete_id=athlete_id,
@@ -344,8 +516,14 @@ def _generate_llm_reply(
         if not reply:
             raise ResponseGenerationProposalError("empty_final_email_body")
 
+        last_pipeline_trace = {
+            "strategist_input": response_brief.to_dict(),
+            "strategist_output": coaching_result["directive"] if coaching_result else None,
+            "writer_input": rg_input,
+            "writer_output": generated_response,
+        }
+
         # Obedience eval: LLM-based last-line compliance check + correction
-        global last_obedience_eval_result
         try:
             obedience_result = run_obedience_eval(
                 email_body=reply,

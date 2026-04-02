@@ -6,9 +6,11 @@ All persistence decisions are deterministic — the LLM interprets, code persist
 
 from __future__ import annotations
 
+import difflib
 import logging
+import re
 import uuid
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from athlete_memory_contract import (
     ADMISSION_THRESHOLD,
@@ -21,10 +23,110 @@ from athlete_memory_contract import (
 )
 
 logger = logging.getLogger(__name__)
+_TEXT_STOPWORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "been", "for", "from", "has",
+    "have", "in", "is", "it", "its", "of", "on", "or", "that", "the", "their",
+    "this", "to", "was", "were", "with",
+}
 
 
 class CandidateReducerError(ValueError):
     """Raised when candidate application fails validation."""
+
+
+def _normalize_text_tokens(value: Optional[str]) -> set[str]:
+    if not isinstance(value, str):
+        return set()
+    return {
+        token
+        for token in re.findall(r"[a-z0-9]+", value.lower())
+        if len(token) >= 3 and token not in _TEXT_STOPWORDS
+    }
+
+
+def _fact_reference_tokens(fact: Dict[str, Any]) -> set[str]:
+    tokens = _normalize_text_tokens(fact.get("summary"))
+    tokens.update(_normalize_text_tokens(str(fact.get("fact_key", "")).replace(":", " ")))
+    return tokens
+
+
+def _materially_references_fact(text: str, fact: Dict[str, Any]) -> bool:
+    candidate_tokens = _normalize_text_tokens(text)
+    fact_tokens = _fact_reference_tokens(fact)
+    if not candidate_tokens or not fact_tokens:
+        return False
+
+    overlap = candidate_tokens & fact_tokens
+    if len(overlap) >= 3:
+        return True
+
+    smaller = min(len(candidate_tokens), len(fact_tokens))
+    if smaller >= 2 and len(overlap) == smaller:
+        return True
+
+    return False
+
+
+def _drop_superseded_fact_references(text: str, superseded_facts: List[Dict[str, Any]]) -> str:
+    if not text or not superseded_facts:
+        return text
+
+    segments = [segment.strip(" ,;") for segment in re.split(r"[;()]", text) if segment.strip(" ,;")]
+    kept_segments: List[str] = []
+    for segment in segments:
+        if not any(_materially_references_fact(segment, fact) for fact in superseded_facts):
+            kept_segments.append(segment)
+
+    if not kept_segments:
+        return ""
+    return "; ".join(kept_segments)
+
+
+def _resolve_retire_target_id(
+    *,
+    candidate: Dict[str, Any],
+    facts_by_id: Dict[str, Dict[str, Any]],
+) -> Optional[str]:
+    target_id = candidate.get("target_id")
+    if target_id in facts_by_id:
+        return target_id
+
+    fact_key = candidate.get("fact_key")
+    if isinstance(fact_key, str) and fact_key.strip():
+        cleaned_key = fact_key.strip()
+        for existing_id, fact in facts_by_id.items():
+            if fact.get("fact_key") == cleaned_key:
+                return existing_id
+
+    summary_tokens = _normalize_text_tokens(candidate.get("summary"))
+    if summary_tokens:
+        best_match_id: Optional[str] = None
+        best_overlap = 0.0
+        for existing_id, fact in facts_by_id.items():
+            fact_tokens = _normalize_text_tokens(fact.get("summary"))
+            if not fact_tokens:
+                continue
+            overlap = len(summary_tokens & fact_tokens) / max(len(summary_tokens), len(fact_tokens))
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_match_id = existing_id
+        if best_match_id is not None and best_overlap >= 0.5:
+            return best_match_id
+
+    if isinstance(target_id, str) and target_id.strip():
+        ranked = sorted(
+            (
+                (existing_id, difflib.SequenceMatcher(a=target_id, b=existing_id).ratio())
+                for existing_id in facts_by_id
+            ),
+            key=lambda item: item[1],
+            reverse=True,
+        )
+        if ranked and ranked[0][1] >= 0.92:
+            if len(ranked) == 1 or ranked[0][1] - ranked[1][1] >= 0.02:
+                return ranked[0][0]
+
+    return None
 
 
 def apply_candidate_refresh(
@@ -37,8 +139,8 @@ def apply_candidate_refresh(
     Returns a dict with keys ``memory_notes`` and ``continuity_summary``
     ready for DynamoDB persistence.
 
-    Raises CandidateReducerError if any candidate references a non-existent
-    target_id (entire batch is rejected).
+    Raises CandidateReducerError if a confirm or targeted upsert references a
+    non-existent target_id.
     """
     # Build lookup from current active facts
     facts_by_id: Dict[str, Dict[str, Any]] = {}
@@ -48,6 +150,7 @@ def apply_candidate_refresh(
             facts_by_id[mid] = dict(fact_dict)  # shallow copy
 
     candidates = validated_llm_output["candidates"]
+    superseded_facts: List[Dict[str, Any]] = []
 
     for candidate in candidates:
         action = candidate["action"]
@@ -85,6 +188,26 @@ def apply_candidate_refresh(
                 "updated_at": now_epoch,
                 "last_confirmed_at": now_epoch,
             }
+            superseded_keys = candidate.get("supersedes_fact_keys") or []
+            if superseded_keys and fact_type in {"schedule", "constraint"}:
+                superseded_keys = {
+                    str(key).strip() for key in superseded_keys if isinstance(key, str) and str(key).strip()
+                }
+                for existing_id, fact in list(facts_by_id.items()):
+                    if existing_id == new_id:
+                        continue
+                    if fact.get("fact_type") != fact_type:
+                        continue
+                    if fact.get("fact_key") in superseded_keys:
+                        superseded_facts.append(dict(fact))
+                        del facts_by_id[existing_id]
+
+                sanitized_summary = _drop_superseded_fact_references(
+                    facts_by_id[new_id]["summary"],
+                    superseded_facts,
+                )
+                if sanitized_summary:
+                    facts_by_id[new_id]["summary"] = sanitized_summary
 
         elif action == "upsert" and target_id:
             # --- Update existing fact ---
@@ -113,11 +236,20 @@ def apply_candidate_refresh(
 
         elif action == "retire":
             # --- Delete from active list ---
-            if target_id not in facts_by_id:
-                raise CandidateReducerError(
-                    f"retire target_id {target_id!r} not found in current active facts"
+            resolved_target_id = _resolve_retire_target_id(
+                candidate=candidate,
+                facts_by_id=facts_by_id,
+            )
+            if resolved_target_id is None:
+                logger.warning(
+                    "retire_target_missing: skipping retire for target_id=%r fact_key=%r summary=%r",
+                    target_id,
+                    candidate.get("fact_key"),
+                    candidate.get("summary"),
                 )
-            del facts_by_id[target_id]
+                continue
+            superseded_facts.append(dict(facts_by_id[resolved_target_id]))
+            del facts_by_id[resolved_target_id]
 
     # Collect active facts
     active_facts = list(facts_by_id.values())
@@ -180,10 +312,22 @@ def apply_candidate_refresh(
 
     # --- Continuity (unchanged from AM3) ---
     continuity_raw = validated_llm_output["continuity"]
+    sanitized_summary = _drop_superseded_fact_references(
+        continuity_raw["summary"],
+        superseded_facts,
+    )
+    sanitized_recommendation = _drop_superseded_fact_references(
+        continuity_raw["last_recommendation"],
+        superseded_facts,
+    )
     continuity = ContinuitySummary(
-        summary=continuity_raw["summary"],
-        last_recommendation=continuity_raw["last_recommendation"],
-        open_loops=list(continuity_raw["open_loops"]),
+        summary=sanitized_summary or "Current coaching context updated.",
+        last_recommendation=sanitized_recommendation or "Use the updated current schedule and constraints going forward.",
+        open_loops=[
+            sanitized_loop
+            for loop in continuity_raw["open_loops"]
+            if (sanitized_loop := _drop_superseded_fact_references(loop, superseded_facts)).strip()
+        ],
         updated_at=now_epoch,
     )
 

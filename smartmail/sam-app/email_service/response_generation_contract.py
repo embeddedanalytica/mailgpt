@@ -73,14 +73,6 @@ _DELIVERY_CONTEXT_FIELDS = {
     "selected_model_name",
     "response_channel",
     "connect_strava_link",
-    "athlete_instructions",
-}
-_ATHLETE_INSTRUCTIONS_FIELDS = {
-    "forbidden_topics",
-    "requested_scope",
-    "format_constraints",
-    "reply_suppression_hint",
-    "latest_overrides",
 }
 _MEMORY_CONTEXT_FIELDS = {
     "memory_available",
@@ -329,35 +321,6 @@ def _validate_delivery_context(payload: Dict[str, Any]) -> Dict[str, Any]:
     if "response_channel" not in normalized:
         normalized["response_channel"] = "email"
 
-    if "athlete_instructions" in context:
-        normalized["athlete_instructions"] = _validate_athlete_instructions(
-            context["athlete_instructions"]
-        )
-    return normalized
-
-
-def _validate_athlete_instructions(payload: Any) -> Dict[str, Any]:
-    """Validate the optional athlete_instructions sub-object in delivery_context."""
-    instructions = _require_dict("athlete_instructions", payload)
-    _validate_allowed_fields(
-        payload=instructions,
-        allowed_fields=_ATHLETE_INSTRUCTIONS_FIELDS,
-        object_name="athlete_instructions",
-    )
-
-    normalized: Dict[str, Any] = {}
-    for field_name in ("forbidden_topics", "latest_overrides"):
-        if field_name in instructions:
-            normalized[field_name] = _require_string_list(
-                f"athlete_instructions.{field_name}",
-                instructions[field_name],
-            )
-    for field_name in ("requested_scope", "format_constraints", "reply_suppression_hint"):
-        if field_name in instructions:
-            normalized[field_name] = _require_string(
-                f"athlete_instructions.{field_name}",
-                instructions[field_name],
-            )
     return normalized
 
 

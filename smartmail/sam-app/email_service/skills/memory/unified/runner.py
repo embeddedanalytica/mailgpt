@@ -5,6 +5,7 @@ import logging
 import re
 from typing import Any, Dict, List, Optional
 
+from athlete_memory_contract import normalize_fact_key
 from athlete_memory_contract import format_unix_timestamp_for_prompt
 from config import PROFILE_EXTRACTION_MODEL
 from skills.memory.unified.errors import MemoryRefreshError, MemoryRefreshPromptError
@@ -14,6 +15,11 @@ from skills.memory.unified.validator import validate_candidate_memory_response
 from skills.runtime import SkillExecutionError, execute_json_schema, preview_text
 
 logger = logging.getLogger(__name__)
+_TEXT_STOPWORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "been", "for", "from", "has",
+    "have", "in", "is", "it", "its", "of", "on", "or", "that", "the", "their",
+    "this", "to", "was", "were", "with",
+}
 
 # Reversal-cue patterns for the backstop check
 _REVERSAL_CUE_PATTERNS = [
@@ -31,6 +37,192 @@ _REVERSAL_CUE_PATTERNS = [
 def _has_reversal_cues(text: str) -> bool:
     """Returns True if the text contains explicit reversal language."""
     return any(p.search(text) for p in _REVERSAL_CUE_PATTERNS)
+
+
+def _normalize_text_tokens(text: Any) -> set[str]:
+    if not isinstance(text, str):
+        return set()
+    return {
+        token
+        for token in re.findall(r"[a-z0-9]+", text.lower())
+        if len(token) >= 3 and token not in _TEXT_STOPWORDS
+    }
+
+
+def _fact_reference_tokens(fact: Dict[str, Any]) -> set[str]:
+    tokens = _normalize_text_tokens(fact.get("summary"))
+    tokens.update(_normalize_text_tokens(str(fact.get("fact_key", "")).replace(":", " ")))
+    return tokens
+
+
+def _materially_references_fact(text: str, fact: Dict[str, Any]) -> bool:
+    candidate_tokens = _normalize_text_tokens(text)
+    fact_tokens = _fact_reference_tokens(fact)
+    if not candidate_tokens or not fact_tokens:
+        return False
+    overlap = candidate_tokens & fact_tokens
+    if len(overlap) >= 3:
+        return True
+    smaller = min(len(candidate_tokens), len(fact_tokens))
+    negation_markers = {"no", "not", "old", "prior", "retire", "retired", "replace", "replaced", "former"}
+    if len(overlap) >= 2 and candidate_tokens & negation_markers:
+        return True
+    if smaller >= 2 and len(overlap) == smaller:
+        return True
+    return False
+
+
+def _find_fact_by_target_id(existing_facts: List[Dict[str, Any]], target_id: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(target_id, str) or not target_id.strip():
+        return None
+    for fact in existing_facts:
+        if fact.get("memory_note_id") == target_id:
+            return fact
+    return None
+
+
+def _collect_superseded_facts(
+    candidates: List[Dict[str, Any]],
+    existing_facts: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    superseded: List[Dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    facts_by_key = {
+        fact.get("fact_key"): fact
+        for fact in existing_facts
+        if isinstance(fact, dict) and isinstance(fact.get("fact_key"), str)
+    }
+
+    def _append_fact(fact: Optional[Dict[str, Any]]) -> None:
+        if not isinstance(fact, dict):
+            return
+        memory_note_id = fact.get("memory_note_id")
+        if isinstance(memory_note_id, str) and memory_note_id in seen_ids:
+            return
+        if isinstance(memory_note_id, str):
+            seen_ids.add(memory_note_id)
+        superseded.append(fact)
+
+    for candidate in candidates:
+        if candidate.get("action") == "retire":
+            _append_fact(_find_fact_by_target_id(existing_facts, candidate.get("target_id")))
+        elif candidate.get("action") == "upsert" and not candidate.get("target_id"):
+            fact_type = candidate.get("fact_type")
+            if fact_type not in {"schedule", "constraint"}:
+                continue
+            for raw_key in candidate.get("supersedes_fact_keys") or []:
+                if not isinstance(raw_key, str) or not raw_key.strip():
+                    continue
+                canonical = normalize_fact_key(fact_type, raw_key.removeprefix(f"{fact_type}:"))
+                _append_fact(facts_by_key.get(canonical))
+
+    return superseded
+
+
+def _continuity_segments(continuity: Optional[Dict[str, Any]]) -> List[str]:
+    if not isinstance(continuity, dict):
+        return []
+    segments: List[str] = []
+    for field in ("summary", "last_recommendation"):
+        value = continuity.get(field)
+        if isinstance(value, str) and value.strip():
+            segments.append(value.strip())
+    for item in continuity.get("open_loops") or []:
+        if isinstance(item, str) and item.strip():
+            segments.append(item.strip())
+    return segments
+
+
+def _stale_continuity_carryover_detected(
+    *,
+    current_continuity: Optional[Dict[str, Any]],
+    interaction_context: Dict[str, Any],
+    validated: Dict[str, Any],
+) -> bool:
+    prior_segments = _continuity_segments(current_continuity)
+    if not prior_segments:
+        return False
+
+    latest_context_tokens = _normalize_text_tokens(interaction_context.get("inbound_email"))
+    latest_context_tokens.update(_normalize_text_tokens(interaction_context.get("coach_reply")))
+
+    for segment in prior_segments:
+        segment_tokens = _normalize_text_tokens(segment)
+        if not segment_tokens:
+            continue
+        if latest_context_tokens & segment_tokens:
+            continue
+
+        for next_segment in _continuity_segments(validated.get("continuity")):
+            overlap = _normalize_text_tokens(next_segment) & segment_tokens
+            if len(overlap) >= 3:
+                return True
+    return False
+
+
+def _drop_segments_referencing_facts(text: str, facts: List[Dict[str, Any]]) -> str:
+    if not isinstance(text, str) or not text.strip() or not facts:
+        return text
+    segments = [segment.strip(" ,;") for segment in re.split(r"[;()]", text) if segment.strip(" ,;")]
+    kept_segments = [
+        segment
+        for segment in segments
+        if not any(_materially_references_fact(segment, fact) for fact in facts)
+    ]
+    if not kept_segments:
+        return ""
+    return "; ".join(kept_segments)
+
+
+def _clean_validated_output(
+    *,
+    validated: Dict[str, Any],
+    existing_facts: List[Dict[str, Any]],
+    current_continuity: Optional[Dict[str, Any]],
+    interaction_context: Dict[str, Any],
+) -> Dict[str, Any]:
+    superseded_facts = _collect_superseded_facts(validated["candidates"], existing_facts)
+    if superseded_facts:
+        for candidate in validated["candidates"]:
+            if candidate.get("action") == "upsert" and not candidate.get("target_id"):
+                summary = candidate.get("summary")
+                if isinstance(summary, str):
+                    cleaned_summary = _drop_segments_referencing_facts(summary, superseded_facts)
+                    if cleaned_summary:
+                        candidate["summary"] = cleaned_summary
+
+        continuity = validated["continuity"]
+        continuity["summary"] = (
+            _drop_segments_referencing_facts(continuity["summary"], superseded_facts)
+            or "Current coaching context updated."
+        )
+        continuity["open_loops"] = [
+            cleaned_loop
+            for loop in continuity["open_loops"]
+            if (cleaned_loop := _drop_segments_referencing_facts(loop, superseded_facts)).strip()
+        ]
+        coach_reply = interaction_context.get("coach_reply")
+        if isinstance(coach_reply, str) and coach_reply.strip():
+            continuity["last_recommendation"] = coach_reply.strip()
+
+    if _stale_continuity_carryover_detected(
+        current_continuity=current_continuity,
+        interaction_context=interaction_context,
+        validated=validated,
+    ):
+        continuity = validated["continuity"]
+        continuity["summary"] = "Current coaching context updated."
+        continuity["last_recommendation"] = "Use the updated current schedule and constraints going forward."
+        continuity["open_loops"] = [
+            loop
+            for loop in continuity["open_loops"]
+            if _normalize_text_tokens(loop) & (
+                _normalize_text_tokens(interaction_context.get("inbound_email"))
+                | _normalize_text_tokens(interaction_context.get("coach_reply"))
+            )
+        ]
+
+    return validated
 
 
 def _candidates_address_reversal(
@@ -204,6 +396,13 @@ def run_candidate_memory_refresh(
                 "schedule or constraint — retrying once"
             )
             validated = _run_single_attempt(user_payload=user_payload)
+
+        validated = _clean_validated_output(
+            validated=validated,
+            existing_facts=current_memory_notes,
+            current_continuity=current_continuity,
+            interaction_context=interaction_context,
+        )
 
         logger.info(
             "Candidate memory refresh completed candidate_count=%s open_loops=%s",

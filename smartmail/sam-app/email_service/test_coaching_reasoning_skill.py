@@ -461,20 +461,6 @@ class TestPromptPackInstructionFidelity(unittest.TestCase):
         prompt = build_system_prompt(_neutral_running_brief())
         self.assertIn("INSTRUCTION FIDELITY", prompt)
 
-    def test_prompt_contains_forbidden_topics_rule(self):
-        prompt = build_system_prompt(_neutral_running_brief())
-        self.assertIn("forbidden_topics", prompt)
-        self.assertIn("add each topic to your avoid list", prompt.lower())
-
-    def test_prompt_contains_reply_suppression_rule(self):
-        prompt = build_system_prompt(_neutral_running_brief())
-        self.assertIn("reply_suppression_hint", prompt)
-
-    def test_prompt_contains_latest_overrides_rule(self):
-        prompt = build_system_prompt(_neutral_running_brief())
-        self.assertIn("latest_overrides", prompt)
-        self.assertIn("supersede", prompt.lower())
-
     def test_prompt_contains_avoid_list_categories(self):
         prompt = build_system_prompt(_neutral_running_brief())
         self.assertIn("Forbidden content", prompt)
@@ -491,60 +477,8 @@ class TestPromptPackInstructionFidelity(unittest.TestCase):
         self.assertIn("athlete's correction", prompt.lower())
 
 
-class TestPromptWithAthleteInstructions(unittest.TestCase):
-    """Verify athlete_instructions are surfaced as hard constraints in the prompt."""
-
-    def test_forbidden_topics_surfaced(self):
-        brief = _neutral_running_brief(
-            delivery_context={
-                "inbound_body": "Stop mentioning the Achilles.",
-                "athlete_instructions": {
-                    "forbidden_topics": ["the Achilles"],
-                },
-            },
-        )
-        prompt = build_system_prompt(brief)
-        self.assertIn("Athlete instructions", prompt)
-        self.assertIn("the Achilles", prompt)
-        self.assertIn("hard constraints", prompt.lower())
-
-    def test_requested_scope_surfaced(self):
-        brief = _neutral_running_brief(
-            delivery_context={
-                "inbound_body": "Just tell me this week.",
-                "athlete_instructions": {
-                    "requested_scope": "just tell me this week",
-                },
-            },
-        )
-        prompt = build_system_prompt(brief)
-        self.assertIn("just tell me this week", prompt)
-        self.assertIn("Limit your content_plan", prompt)
-
-    def test_reply_suppression_surfaced(self):
-        brief = _neutral_running_brief(
-            delivery_context={
-                "inbound_body": "Only reply if there's a concern.",
-                "athlete_instructions": {
-                    "reply_suppression_hint": "only reply if there's a concern",
-                },
-            },
-        )
-        prompt = build_system_prompt(brief)
-        self.assertIn("only reply if there's a concern", prompt)
-        self.assertIn("suppress", prompt.lower())
-
-    def test_format_constraints_surfaced(self):
-        brief = _neutral_running_brief(
-            delivery_context={
-                "inbound_body": "3 lines max.",
-                "athlete_instructions": {
-                    "format_constraints": "3 lines max",
-                },
-            },
-        )
-        prompt = build_system_prompt(brief)
-        self.assertIn("3 lines max", prompt)
+class TestPromptWithContradictedFacts(unittest.TestCase):
+    """Verify contradicted facts are surfaced in the prompt."""
 
     def test_contradicted_facts_surfaced(self):
         brief = _neutral_running_brief(
@@ -559,10 +493,9 @@ class TestPromptWithAthleteInstructions(unittest.TestCase):
         self.assertIn("Contradicted durable facts", prompt)
         self.assertIn("recurring knee issue", prompt)
 
-    def test_no_instructions_no_extra_sections(self):
+    def test_no_contradicted_section_when_absent(self):
         brief = _neutral_running_brief()
         prompt = build_system_prompt(brief)
-        self.assertNotIn("Athlete instructions", prompt)
         self.assertNotIn("Contradicted durable facts", prompt)
 
 

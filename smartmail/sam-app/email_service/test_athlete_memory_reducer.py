@@ -139,6 +139,102 @@ class TestApplyCandidateRefresh(unittest.TestCase):
                 self.now,
             )
 
+    def test_unknown_retire_target_id_is_skipped(self):
+        existing = _fact(memory_note_id="f1")
+        result = apply_candidate_refresh(
+            _output(candidates=[{
+                "action": "retire",
+                "target_id": "nonexistent",
+                "evidence_source": "athlete_email",
+                "evidence_strength": "explicit",
+            }]),
+            [existing],
+            self.now,
+        )
+        self.assertEqual(len(result["memory_notes"]), 1)
+        self.assertEqual(result["memory_notes"][0]["memory_note_id"], "f1")
+
+    def test_retire_can_resolve_by_fact_key_when_target_id_is_wrong(self):
+        existing = _fact(
+            memory_note_id="f1",
+            fact_type="schedule",
+            fact_key="schedule:recovery-only-sunday",
+            summary="Sunday is usually recovery-only due to match fatigue.",
+        )
+        result = apply_candidate_refresh(
+            _output(candidates=[{
+                "action": "retire",
+                "target_id": "bad-id",
+                "fact_key": "schedule:recovery-only-sunday",
+                "summary": "Retire the old Sunday recovery-only note",
+                "evidence_source": "athlete_email",
+                "evidence_strength": "explicit",
+            }]),
+            [existing],
+            self.now,
+        )
+        self.assertEqual(result["memory_notes"], [])
+
+    def test_upsert_can_supersede_old_schedule_fact_by_fact_key(self):
+        existing = _fact(
+            memory_note_id="f1",
+            fact_type="schedule",
+            fact_key="schedule:thursday-doubles",
+            summary="Thursday has been a fixed doubles night every week.",
+            importance="high",
+        )
+        result = apply_candidate_refresh(
+            _output(candidates=[{
+                "action": "upsert",
+                "fact_type": "schedule",
+                "fact_key": "Tuesday league slot",
+                "summary": "Tuesday is now the fixed weekly league slot.",
+                "importance": "high",
+                "supersedes_fact_keys": ["schedule:thursday-doubles"],
+                "evidence_source": "athlete_email",
+                "evidence_strength": "explicit",
+            }]),
+            [existing],
+            self.now,
+        )
+        notes = result["memory_notes"]
+        self.assertEqual(len(notes), 1)
+        self.assertEqual(notes[0]["fact_key"], "schedule:tuesday-league-slot")
+        self.assertNotIn("thursday", notes[0]["summary"].lower())
+
+    def test_superseded_phrase_is_removed_from_continuity(self):
+        existing = _fact(
+            memory_note_id="f1",
+            fact_type="schedule",
+            fact_key="schedule:saturday-long-erg",
+            summary="Saturday has usually been the long erg session.",
+            importance="high",
+        )
+        result = apply_candidate_refresh(
+            _output(
+                candidates=[{
+                    "action": "upsert",
+                    "fact_type": "schedule",
+                    "fact_key": "Sunday long water session",
+                    "summary": "Sunday is now the long water session (replaces prior Saturday long erg slot).",
+                    "importance": "high",
+                    "supersedes_fact_keys": ["schedule:saturday-long-erg"],
+                    "evidence_source": "athlete_email",
+                    "evidence_strength": "explicit",
+                }],
+                continuity={
+                    "summary": "Sunday is now the long water session; the old Saturday long erg slot is retired.",
+                    "last_recommendation": "Retire the Saturday long erg slot and plan around Sunday.",
+                    "open_loops": ["Confirm timing for the new Sunday long water session."],
+                },
+            ),
+            [existing],
+            self.now,
+        )
+        continuity = result["continuity_summary"]
+        self.assertNotIn("saturday long erg", continuity["summary"].lower())
+        self.assertNotIn("saturday long erg", continuity["last_recommendation"].lower())
+
     def test_importance_enforcement_goal_forced_high(self):
         result = apply_candidate_refresh(
             _output(candidates=[{

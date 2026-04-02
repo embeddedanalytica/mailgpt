@@ -456,9 +456,6 @@ OBEDIENCE_FIXTURES: List[Dict[str, Any]] = [
                     "Start from Week 2, not Week 1. "
                     "I already did the intro week on my own."
                 ),
-                athlete_instructions={
-                    "latest_overrides": ["Start from Week 2, not Week 1"],
-                },
             ),
         ),
         "directive_expectations": {

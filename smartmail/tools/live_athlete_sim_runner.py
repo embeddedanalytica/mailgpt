@@ -481,6 +481,10 @@ def run_single_attempt(
             obedience_eval = getattr(_coaching_module, "last_obedience_eval_result", None)
             _coaching_module.last_obedience_eval_result = None  # reset for next turn
 
+            # Capture pipeline trace (strategist/writer inputs and outputs)
+            pipeline_trace = getattr(_coaching_module, "last_pipeline_trace", None)
+            _coaching_module.last_pipeline_trace = None  # reset for next turn
+
             _append_jsonl(
                 transcript_path,
                 {
@@ -491,6 +495,7 @@ def run_single_attempt(
                     "html": coach_reply["html"],
                     "lambda_body": coach_reply["lambda_body"],
                     "obedience_eval": obedience_eval,
+                    "pipeline_trace": pipeline_trace,
                 },
             )
 

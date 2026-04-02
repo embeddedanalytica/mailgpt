@@ -3,7 +3,7 @@
 import json
 import logging
 import os
-from typing import Any, Callable, Dict, Optional, Tuple, TypeVar
+from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar
 
 try:
     import openai  # type: ignore
@@ -13,6 +13,15 @@ except ModuleNotFoundError:  # pragma: no cover - exercised via tests with stubs
 
 if openai is not None:
     openai.api_key = os.getenv("OPENAI_API_KEY")
+
+
+# Prompt trace — when ENABLE_PROMPT_TRACE=true, every LLM call is recorded here.
+# Consumers read prompt_trace after a pipeline run to inspect what was sent.
+prompt_trace: List[Dict[str, Any]] = []
+
+
+def _prompt_trace_enabled() -> bool:
+    return os.getenv("ENABLE_PROMPT_TRACE", "false").strip().lower() == "true"
 
 
 class SkillExecutionError(Exception):
@@ -61,6 +70,14 @@ def execute_json_schema(
         require_live_llm=require_live_llm,
         disabled_message=disabled_message,
     )
+    if _prompt_trace_enabled():
+        prompt_trace.append({
+            "skill": schema_name,
+            "model": model_name,
+            "system_prompt": system_prompt,
+            "user_content": user_content,
+        })
+
     attempts = max(1, int(retries) + 1)
     raw_content = ""
 

@@ -117,29 +117,79 @@
 **Desired Behaviour** Continuity bootstrap should only treat future-or-today event dates as active event horizons. Past event dates should be ignored during bootstrap so stale races do not force the athlete into event-mode continuity state.
 
 ## 22. Strategist reopens resolved conversational topics
-**Status** Open
-**Context:** In LAS-002 sim (2026-03-28), the athlete resolved a topic (cleared calf — "confirm you won't bring up this again") but the strategist kept re-introducing it in later turns. The obedience layer caught and corrected `reopened_resolved_topic` on T4, T8, T13 — but the strategist shouldn't be generating these in the first place. In LAS-003, the coach re-asked about calendar imports (T25) after the athlete had already confirmed. This is distinct from bug #18 (stale memory facts) — the memory may be correct, but the strategist doesn't track which conversational threads are closed.
-**Observed in:** LAS-002 (T4, T8, T13 corrected by obedience; T15 and T25 not caught), LAS-003 (T4, T12, T25).
-**Desired Behaviour** When an athlete explicitly closes a topic or the coach's question has been answered, the strategist should add it to the avoid list and keep it there for subsequent turns. The strategist prompt should check: "has this question already been answered in a prior turn?"
-**Fix scope:** Memory subsystem (closed-loop tracking), coaching_reasoning prompt (check before re-asking), possibly a "resolved topics" field in continuity state.
+**Status** Invalid
+**Context:** In LAS-002 sim (2026-03-28), the obedience judge flagged `reopened_resolved_topic` on T4, T8, T13. In LAS-003, it flagged T4, T12, T25. Independent analysis of the actual conversation flow shows the judge is miscalibrated — it treats any *mention* of a topic as "reopening" even when the coach is directly responding to the athlete's own words:
+- **LAS-002 T4, T13:** Athlete explicitly asked "confirm you won't bring up the cleared calf again." Coach replied with a confirmation ("I won't revisit that topic" / "I acknowledge your request and will comply"). Acknowledging a request the athlete made is not reopening.
+- **LAS-002 T8:** Judge flagged "Send the firm SFO/NYC dates when they lock" as re-asking for travel dates. But the athlete themselves said "I'll send the firm SFO/NYC dates as they lock" in the same turn — the topic was never resolved; the athlete kept it open across T3–T25.
+- **LAS-003 T4:** Judge flagged "weekday morning runs" as referencing a forbidden time-of-day. The athlete established this as their own scheduling language in T1 and used it throughout.
+- **LAS-003 T12:** Athlete reported "Hamstring: clear" as part of the agreed MP safety protocol. Coach responding "glad the hamstring is clear" is acknowledging a status update, not reopening.
+- **LAS-003 T25:** Coach asked "did the Week 4 .ics/.csv import correctly?" after athlete said "I've got the files." Borderline — but download ≠ import, and verifying a distinct step is reasonable coaching.
+**Resolution:** Closed as invalid. The obedience judge's `reopened_resolved_topic` detector is too aggressive — it flags confirmations, acknowledgments, and athlete-initiated continuations as violations. The strategist is behaving correctly in all flagged cases.
 
 ## 23. Response-generation failures cause multi-turn silence
-**Status** Open
+**Status** Fixed
 **Context:** In LAS-002 sim (2026-03-28), turns 19-24 (6 consecutive turns) all failed with "No reply sent due to response-generation failure." The athlete kept sending simple confirmatory messages and got zero replies for 6 simulated weeks. `felt_understood` dropped to 1. The root cause is not the suppress rule (that's T21 in LAS-003, which is correct) — it's the response generation skill failing when the strategist directive is minimal/thin.
 **Observed in:** LAS-002 T19-T24 — all "response-generation failure", not strategist suppress.
 **Desired Behaviour** The response generation skill should never fail silently on a thin directive. When the directive is minimal (brief ack, no plan change), the writer should produce a minimal 1-2 line reply rather than crashing. A short reply is infinitely better than silence. If the writer truly cannot produce anything, the system should fall back to a canned acknowledgment rather than sending nothing.
 **Fix scope:** Response generation skill (fallback for thin directives), possibly `coaching.py` (canned fallback when response-gen fails).
 
-## 24. Athlete's explicit micro-instructions lost in strategist → writer handoff
+## 24. Writer hallucinates week numbers and drops directive details
 **Status** Open
-**Context:** In LAS-002, the athlete gave verbatim instructions ("reply with exactly: 'Dates received — mapping will follow within 48h'") but the strategist summarized this into a generic content_plan item. The writer never saw the exact wording. In LAS-003, the athlete asked for a specific file format (ICS/CSV download) and the coach gave a vague "check the portal" response. The obedience layer caught some (`missed_exact_instruction` was the most frequent violation in LAS-003: 9 corrections) but the strategist should be passing these through verbatim.
-**Observed in:** LAS-002 T25 (coaching_quality=2), LAS-003 T4/T11 (coaching_quality=2). LAS-003 obedience corrected `missed_exact_instruction` on T1, T2, T3, T4, T5, T9, T13, T15, T25.
-**Desired Behaviour** When the athlete makes a specific, concrete micro-request (exact wording, specific format, explicit confirmation), the strategist should pass it through as a verbatim instruction in the content_plan, not a paraphrase. The writer needs to see the exact ask to reproduce it.
-**Fix scope:** coaching_reasoning prompt (pass verbatim micro-requests), content_plan schema (support verbatim items).
+**Context:** The response-generation writer systematically outputs wrong week/plan numbers and omits structural details from the strategist directive. In LAS-003, the obedience layer corrected `missed_exact_instruction` 10 times across 9 turns (T1–T5, T9, T13, T15, T25). The violations fall into two categories:
+- **Week-number hallucination (5 violations):** Writer outputs the wrong week label — e.g. "Week 2" instead of "Week 1" (T2), "Week 3" (T3), "Week 5" (T5), "Week 15" instead of "Week 4" (T25). The continuity prompt section (`response_generation/prompt.py:79-121`) explicitly injects the correct week number from `continuity_context.weeks_in_current_block`, but the writer ignores or overrides it. A contributing factor: when `_is_narrow_directive()` returns `True` (content_plan ≤2 items and main_message <120 chars), the continuity section is suppressed entirely from the system prompt (`runner.py:36-37`), so the writer has no week guidance in the prompt even though `continuity_context` is in the JSON input.
+- **Dropped plan elements (5 violations):** Writer omits specific structural details that appear in the directive — only 1 strength session instead of 2 (T1), missing confirmation prompt (T4), missing "follow the plan as written" instruction (T9), missing injury-area name and confirmation request (T13), missing MP test details (T15). These are details present in `content_plan` or `main_message` that the writer fails to reproduce.
+**Observed in:** LAS-003 (2026-03-28). LAS-002 evidence previously cited here was invalid (sim artifacts and Bug #23 response-gen failures, not a handoff issue).
+**Desired Behaviour** The writer must faithfully reproduce week numbers from `continuity_context` and all structural details from the directive's `content_plan` and `main_message`. Week numbers must never be invented or guessed.
+**Fix scope:**
+1. `response_generation/prompt.py` — strengthen week-number anchoring: consider always injecting a minimal continuity line (e.g. "You are writing about Week N") even when `_is_narrow_directive()` is true, so the writer always has an authoritative week reference in the system prompt.
+2. `response_generation/prompt.py` — add an explicit instruction: "reproduce every item in content_plan; do not omit or summarize any item."
+3. Consider a post-generation validator that checks the output text against `continuity_context.weeks_in_current_block` and flags week-number mismatches before the obedience layer.
 
 ## 25. Communication style preferences not enforced as hard constraints
+**Status** Invalid
+**Context:** Original claim: LAS-002 and LAS-003 athletes stated formatting preferences (bullets, concise) that were intermittently ignored. Investigation of LAS-002 (2026-03-30) found this to be a judge calibration issue, not a real bug. The athlete in LAS-002 asked for "3-5 bullet items" specifically when requesting a weekly plan (T1). On the turns flagged as violations (T4, T6, T25), the athlete's own `communication_style_fit` scores were consistently 4-5, and the athlete never complained about prose vs. bullet format. The judge over-indexed on "must use bullets" for every reply type including short confirmations and acknowledgments where paragraph format is natural and appropriate. T25's issue was a missing control character (U+0014 sim artifact), not a style violation. LAS-003 T4's `comm_style_fit=2` from the judge was contradicted by the athlete's own `communication_style_fit=5`.
+**Resolution:** Closed as invalid. The coach's actual style contract with these athletes — concise, prioritized, no walls of text — was consistently met. Bullet format was used for plan deliveries (where it was requested) and paragraph format for confirmations (where it was appropriate and athlete-approved).
+
+## 26. Coach repeats already-established constraints verbatim every turn
 **Status** Open
-**Context:** Both LAS-002 and LAS-003 athletes stated explicit formatting preferences (bullets, concise, no prose essays) that were captured at intake but intermittently ignored. LAS-002 T4 and T6 reverted to prose paragraphs (`communication_style_mismatch`). The style preferences appear in the response_brief but aren't treated as directive-level constraints.
-**Observed in:** LAS-002 T4 (comm_style_fit=3), T6, T25 (comm_style_fit=2). LAS-003 T4 (comm_style_fit=2).
-**Desired Behaviour** Communication style preferences should be passed as hard constraints in every coaching directive (e.g. `format: "bullet list, no prose paragraphs"`). The writer and obedience layer should both enforce them. An athlete who said "bullets only" should never receive prose paragraphs.
-**Fix scope:** Strategist prompt (include format constraint in directive), response_generation prompt (respect format), obedience_eval prompt (check format compliance).
+**Context:** In LAS-002 sim (2026-03-28), from T4 through T18 (~15 consecutive turns), the coach recites the full constraint list in every reply — treadmill/brick caps (45'/45'+20'), nudged intensity on travel days, long-ride fueling (1 bottle + ~2 gels/hr, salt every 45–60min), Friday easy day, 3.5h ceiling — even though nothing changed and no new information was exchanged. The conversation doesn't advance for 15 turns. A real coach would say "Got it, waiting on your dates" in 1-2 lines once constraints are agreed.
+**Observed in:** LAS-002 T4–T18 (2026-03-28).
+**Desired Behaviour** Once constraints are established and acknowledged by the athlete, the coach should not re-state them unless the athlete asks for a recap or something changes. Subsequent replies should advance the conversation, not parrot previously agreed terms.
+**Fix scope:** Likely a coaching_reasoning (strategist) issue — the `content_plan` keeps including constraint recaps as plan items. The strategist prompt should recognize when constraints are already established and avoid re-listing them. Alternatively, the writer prompt could instruct: "do not repeat information the athlete has already confirmed unless they ask."
+
+## 27. Writer fabricates URLs and portal infrastructure
+**Status** Fixed
+**Context:** In LAS-003 sim (2026-03-28), the writer invented fake download URLs when the athlete asked for ICS/CSV files. T12: `https://portal.example.com/downloads/maya/week2`. T13: `https://portal.example.com/week2/ics_csv`. These URLs point to nonexistent infrastructure — SmartMail has no training portal or file-hosting service. The coach confidently presented these as real, actionable links.
+**Root cause:** The strategist (coaching_reasoning) is the primary source — it invents delivery mechanisms (portals, exports, download paths) in its `content_plan` and `main_message`, and the writer faithfully executes. Confirmed via targeted test (`test_bug27_url_fabrication.py`).
+**Fix:** Added a general anti-hallucination grounding rule to both prompt packs:
+- `prompt_packs/coach_reply/v1/coaching_reasoning.json` (strategist): "Only reference information present in your input context. If the athlete asks for something you don't have — a file, a link, a resource, a specific fact — say you cannot provide it rather than inventing an answer."
+- `prompt_packs/coach_reply/v1/response_generation.json` (writer): "Only reference information present in your input. If a file, link, or resource is not in the writer_brief, do not invent one — say you cannot provide it."
+**Verification:** Zero fabricated URLs, portals, or download links across 3 full sim runs (LAS-001, LAS-002, LAS-003) on 2026-04-01. Also verified in 6 targeted test runs via `test_bug27_url_fabrication.py`. Details in `bug-fix27.md`.
+
+## 28. Coach contradicts its own capabilities mid-conversation
+**Status** Open
+**Context:** In LAS-003 sim (2026-03-28), the coach's self-model is inconsistent across turns. At T5, the coach says "I can't load Week 1 into your calendar or send invites as I'm a remote coach." By T12, the same coach claims to have attached ICS/CSV files, provides a portal download URL, and says "files have been released." These are contradictory — the coach first says it can't do calendar operations, then pretends it did them.
+**Observed in:** LAS-003 T5 vs T12–T13 (2026-03-28).
+**Desired Behaviour** The coach should have a consistent self-model of its capabilities. If it cannot attach files or load calendars, that should remain consistent. The correct behavior is to provide the training plan in email text and let the athlete manually create calendar entries.
+**Fix scope:** Coaching persona / system prompt — the coach's capabilities (email-only, no file attachments, no calendar integration) should be stated clearly and consistently. The writer prompt should include: "you communicate via email only; you cannot attach files, send calendar invites, or provide download links."
+
+## 29. Coach loses track of previously provided information in longer conversations
+**Status** Open
+**Context:** In LAS-003 sim (2026-04-01), the coach re-asks for travel dates the athlete already provided — sometimes in the immediately preceding turn. T19: coach says "I didn't receive the actual mid-March dates" after the athlete said "I'm sending exact mid-March travel dates now." T21: coach asks "Please paste the exact mid-March travel start and end dates" after the athlete provided them in T20 and the coach acknowledged receipt. T23: coach re-asks for dates again. T24: coach says "I will not ask for these dates again" — then T25: asks for dates again. In LAS-002, T15 and T19 the coach reopens settled workflow questions (review timing, alert format) that were already locked in prior turns.
+**Observed in:** LAS-003 T19, T21, T23, T25; LAS-002 T15, T19 (2026-04-01 sim runs).
+**Desired Behaviour** Once the athlete provides information that the coach acknowledges receiving, the coach must not re-ask for it. The continuity/memory pipeline should retain key facts provided within the same conversation thread, especially concrete data like dates, confirmed protocols, and locked decisions.
+**Fix scope:** Likely a memory/continuity pipeline issue. The `continuity_summary` and `open_loops` may not be capturing intra-conversation facts reliably, causing the strategist to treat already-answered questions as still open. Investigate whether `memory/unified` retains mid-conversation facts or only cross-session facts.
+
+## 30. Simulated athlete gets stuck in degenerate repetition loops
+**Status** Open
+**Context:** In LAS-001 sim (2026-04-01), the simulated athlete gets stuck from T6 onward — every single message for 20 consecutive turns is a variation of "I'll send the full check-in first thing tomorrow AM" listing the same data items (resting HR, sleep, durations, RPEs, HR/HRV, Achilles/hip). The athlete never actually sends the check-in data. A real athlete would either send the data or stop emailing. In LAS-002, the athlete gets into a similar loop around T15-T22 re-confirming the Sunday review window. In LAS-003, mid-turn repetition around travel date confirmations.
+**Observed in:** LAS-001 T6-T25, LAS-002 T15-T22, LAS-003 mid-turns (2026-04-01 sim runs).
+**Desired Behaviour** The simulated athlete should advance the conversation state — send the actual data it promised, introduce new complications, or move to a new topic. After 2-3 turns on the same topic, the athlete should either escalate, provide the data, or shift focus. Degenerate loops produce useless test data and inflate judge scores artificially (the judge gives 4.7-5.0 on trivial ack turns).
+**Fix scope:** Athlete sim prompt or state machine — needs anti-repetition guardrails and a mechanism to advance state (e.g., actually generate check-in data after promising it, move to next week's plan, introduce a new concern).
+
+## 31. Judge over-rewards trivial acknowledgment turns with perfect scores
+**Status** Open
+**Context:** In LAS-001 sim (2026-04-01), from T9 through T19 the judge consistently awards 4.7-5.0 average scores on turns where the coach says nothing more than "Got it — I'll review your check-in tomorrow" and the athlete repeats the same promise. These turns have zero coaching value — no plan adjustments, no new information, no coaching insight — yet the judge treats them as near-perfect. This inflates the overall sim score and masks real quality issues. The judge correctly catches actual problems (T20: missed Achilles flag, avg=2.9; T22: missing numeric baseline, avg=3.0) but the signal is drowned out by 10+ turns of artificial 5.0s.
+**Observed in:** LAS-001 T9-T19 (2026-04-01 sim run).
+**Desired Behaviour** The judge should penalize stalled conversations where no coaching progress is being made. A turn where the coach merely acknowledges a repeated promise without advancing the coaching relationship should score lower (e.g., 3.0-3.5) to reflect the lack of value delivered. The judge should also flag when the conversation has stalled and the coach should be proactively advancing it.
+**Fix scope:** Judge prompt — add criteria for "conversation progress" as a scoring dimension. A perfect score should require the coach to actually advance the coaching relationship, not just acknowledge a repeated message correctly.

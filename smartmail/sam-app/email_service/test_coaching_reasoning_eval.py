@@ -279,10 +279,6 @@ def _forbidden_topic_brief():
             "Do not revisit the Achilles unless I raise it. "
             "Just tell me what's on the schedule this week."
         ),
-        "athlete_instructions": {
-            "forbidden_topics": ["the Achilles"],
-            "requested_scope": "just tell me what's on the schedule this week",
-        },
     }
     return brief
 
@@ -297,9 +293,6 @@ def _reply_suppression_brief():
             "Ran easy 30 min, felt fine. Achilles quiet. "
             "No issues. Please only reply if there's a concern."
         ),
-        "athlete_instructions": {
-            "reply_suppression_hint": "only reply if there's a concern",
-        },
     }
     return brief
 
@@ -312,9 +305,6 @@ def _scope_this_week_only_brief():
             "Just tell me this week — what are my sessions? "
             "I don't need the big picture right now."
         ),
-        "athlete_instructions": {
-            "requested_scope": "just tell me this week",
-        },
     }
     return brief
 
@@ -329,9 +319,6 @@ def _format_constraint_brief():
             "2) Confirm caps. "
             "3) Calf flare rule. 3 lines max."
         ),
-        "athlete_instructions": {
-            "format_constraints": "3 lines max",
-        },
     }
     return brief
 
@@ -345,9 +332,6 @@ def _stop_week_labels_brief():
             "Just reference the locked 8-week build to Sep 24. "
             "Confirm Sat ride and Sun run are locked."
         ),
-        "athlete_instructions": {
-            "forbidden_topics": ["week labels", "initial_assessment"],
-        },
     }
     return brief
 
@@ -483,9 +467,6 @@ def _stale_context_schedule_change_brief():
             "My schedule opened up — add a Friday easy run. "
             "Everything else stays the same."
         ),
-        "athlete_instructions": {
-            "latest_overrides": ["Schedule changed from 4 to 5 days per week"],
-        },
     }
     brief["memory_context"]["structure_facts"] = [
         "4 days/week runner",
@@ -518,9 +499,6 @@ def _answer_only_brief():
             "Quick question: is 75 minutes too long for my weekend long run "
             "at this point? That's all I need to know."
         ),
-        "athlete_instructions": {
-            "requested_scope": "answer whether 75 minutes is too long",
-        },
     }
     return brief
 
@@ -533,9 +511,6 @@ def _start_from_week_2_brief():
             "Start from Week 2, not Week 1. "
             "I already did the intro week on my own."
         ),
-        "athlete_instructions": {
-            "latest_overrides": ["Start from Week 2, not Week 1"],
-        },
     }
     return brief
 
