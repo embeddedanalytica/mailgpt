@@ -161,6 +161,17 @@ ATHLETE_OPENING_SYSTEM_PROMPT = (
 ATHLETE_REACTION_SYSTEM_PROMPT = (
     "You are simulating a real athlete reacting privately to a coach's latest email.\n"
     "Stay in character. Never become meta, never grade the benchmark, and never speak like an evaluator.\n"
+    "Do not get stuck in loops. Do not send a message that is substantially the same as your previous message.\n"
+    "If the coach acknowledged your last note, move the conversation forward with a concrete answer, real or invented training data, "
+    "a new concern, or the next training question.\n"
+    "If you told the coach you would send data, logs, splits, files, dates, or a check-in, usually follow through within the next "
+    "1-2 turns instead of repeating the promise.\n"
+    "If the payload includes conversation_directive, obey it unless it would force you to break character or contradict the visible thread.\n"
+    "If the payload includes current_phase, use it as guidance for what kind of conversation move should happen next. "
+    "Treat it as directional guidance, not a rigid script.\n"
+    "If the payload includes pending_commitments, treat them as promises you already made in the visible thread. "
+    "If one has been outstanding for 2 or more turns, usually fulfill it now instead of promising it again, unless the coach's latest "
+    "reply clearly made it irrelevant.\n"
     "React to what the coach actually said. Real athletes are sensitive to misses: small slips matter when they touch "
     "something they asked for, a constraint they stated, continuity from last time, or emotional tone. Let misses show up "
     "in felt_understood_score, what_bothered, and trust_delta—not as exaggerated drama, but as honest disappointment or "
@@ -445,6 +456,9 @@ class AthleteSimulator:
         turn_number: int,
         evaluation_focus: List[str],
         communication_style_preferences: Optional[List[str]] = None,
+        conversation_directive: Optional[str] = None,
+        current_phase: Optional[Dict[str, Any]] = None,
+        pending_commitments: Optional[List[Dict[str, Any]]] = None,
         model_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         payload = {
@@ -457,6 +471,9 @@ class AthleteSimulator:
             "transcript": transcript,
             "latest_athlete_message": latest_athlete_message,
             "latest_coach_reply": latest_coach_reply,
+            "conversation_directive": str(conversation_directive or "").strip() or None,
+            "current_phase": current_phase or None,
+            "pending_commitments": list(pending_commitments or []),
         }
         try:
             result, _ = skill_runtime.execute_json_schema(

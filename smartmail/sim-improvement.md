@@ -1,128 +1,245 @@
 # Athlete Sim Reliability Plan
 
-## Problem
+## Goal
 
-The simulated athlete degenerates into repetitive loops in longer conversations, producing useless test data. LAS-001 repeats "I'll send the check-in tomorrow" for 20 straight turns. LAS-002/003 have milder but similar stalls. Root cause: no state tracking, no narrative structure, no anti-repetition mechanism — the LLM gets the full transcript + brief and freewheels.
+Make the simulated athlete produce useful 20-25 turn conversations instead of stalling in repetitive loops.
 
-## Layers (in implementation order)
+A reliable run should:
 
-### Layer 1: Prompt guardrails
-**Effort:** 15 min | **Impact:** Eliminates worst degenerate loops
+- avoid obvious repetition loops
+- follow through on explicit promises
+- progress through a believable training conversation arc
+- preserve enough variability that the judge is still measuring coach quality, not simulator failure
 
-Add two rules to `ATHLETE_REACTION_SYSTEM_PROMPT` in `athlete_simulation.py`:
+## Current failure
 
-1. **Follow-through rule:** "When you have promised to send data (check-in, logs, files, dates), you MUST follow through within 1-2 turns by generating realistic invented data. Real athletes send the data — they don't email their coach 10 times saying 'I'll send it tomorrow.'"
+The current athlete sim can get stuck repeating near-identical follow-up messages for many turns. The clearest failure is LAS-001 repeatedly saying some version of "I'll send the check-in tomorrow" instead of sending data and moving the conversation forward.
 
-2. **Advance rule:** "Never send a message that is substantially the same as your previous message. If the coach acknowledged your last message, advance: report results, introduce a new concern, ask a new question, or move to the next phase of your training."
+The likely causes are straightforward:
 
-### Layer 2: Deterministic anti-repetition guard
-**Effort:** 30 min | **Impact:** Hard backstop that catches any remaining loops
+- the athlete reaction prompt has no explicit anti-loop or follow-through rules
+- the runner passes only transcript context, with no lightweight steering state
+- the scenario briefs still describe a 100-turn relationship even though the actual runs are 20-25 turns
+- the runner does not compute reliability metrics, so validation is mostly manual
 
-Before calling the athlete LLM, compare the last 3 athlete messages for similarity (simple word-overlap ratio). If >60% similar, inject an override instruction into the payload:
+## Design constraints
 
+This plan should fit the code as it exists today:
+
+- scenario fixtures are schema-validated and reject unknown fields
+- the athlete simulator currently accepts only the existing payload fields unless we extend that contract
+- the runner currently records transcript, judge output, and summary stats, but not repetition or commitment metrics
+
+That means any structural additions must include fixture-loader, simulator-payload, and runner-summary changes together.
+
+## Implementation order
+
+### Layer 1: Prompt guardrails and brief cleanup
+
+**Effort:** small
+
+Add explicit rules to `ATHLETE_REACTION_SYSTEM_PROMPT`:
+
+1. Follow-through rule:
+   "If you told the coach you would send data, logs, splits, dates, or a check-in, you should usually deliver it within the next 1-2 turns instead of repeating the promise."
+
+2. Anti-repeat rule:
+   "Do not send a message that is substantially the same as your previous message. If the coach acknowledged your last note, move the conversation forward with data, a new concern, a concrete answer, or the next training question."
+
+Update the scenario briefs in `test_bench/athlete_agent_bench.md` at the same time:
+
+- remove references to "100 turns"
+- align pacing instructions with 20-25 turn runs
+- tell the athlete to start reporting concrete training results early, not stay in intake too long
+- give simple guidance for invented training data ranges so the model has something concrete to generate
+
+This layer is the cheapest improvement and should be attempted first.
+
+### Layer 2: Deterministic repetition guard
+
+**Effort:** moderate
+
+Add a runner-side repetition detector before each athlete reaction call.
+
+Recommended scope:
+
+- inspect the last 3 athlete messages only
+- normalize text aggressively enough to catch superficial wording changes
+- compute a simple similarity score
+- when all 3 are above threshold, inject a short override instruction into the athlete reaction payload
+
+Example override:
+
+```text
+ANTI-REPETITION OVERRIDE:
+Your recent messages are too similar. Change direction now.
+- If you promised data, send it now
+- If you already confirmed something, stop reconfirming it
+- If the exchange has stalled, introduce a concrete update, complication, or next-step question
 ```
-ANTI-REPETITION OVERRIDE: Your last 3 messages were very similar. You MUST change direction:
-- If you promised data, generate realistic invented numbers NOW
-- If you're confirming something already confirmed, STOP and introduce a new topic
-- If the conversation has stalled, escalate, introduce a complication, or jump to your next goal
-```
 
-Implementation: add a `_check_repetition(transcript)` function in the runner that returns an optional override string. Pass it into the athlete payload as a new field `conversation_directive` that the system prompt instructs the LLM to obey.
+Implementation notes:
 
-### Layer 3: Conversation phase scripts
-**Effort:** 1-2 hrs per scenario | **Impact:** Structured narrative arc, realistic progression
+- add a runner helper such as `_detect_repetition(transcript) -> str | None`
+- extend `AthleteSimulator.react_to_coach_reply(...)` to accept an optional `conversation_directive`
+- update the athlete prompt so the model knows to obey `conversation_directive` when present
 
-Add a `conversation_phases` list to each scenario in `athlete_agent_bench.md`. Each phase defines what the athlete should be doing and when to advance:
+This layer should be treated as a hard backstop, not the primary behavior model.
+
+### Layer 3: Explicit conversation phases, but turn-window based only
+
+**Effort:** moderate to large
+
+Keep this simple. Do not mix turn-based phases with semantic `advance_when` rules in the first version.
+
+Add an optional `conversation_phases` field to each scenario, but make phase selection deterministic by turn window only.
+
+Example shape:
 
 ```json
 {
   "conversation_phases": [
     {
       "label": "intake",
-      "turns": "1-3",
-      "objective": "Share key constraints, get an initial plan from coach",
-      "reveal": ["work schedule", "6:45am cap", "Achilles history", "4 runs/week preference"],
-      "advance_when": "coach delivers a first-week plan"
+      "start_turn": 1,
+      "end_turn": 3,
+      "objective": "Share key constraints and get an initial plan",
+      "suggested_reveals": ["work schedule", "weekday time cap", "injury history"]
     },
     {
-      "label": "week1_execution",
-      "turns": "4-6",
-      "objective": "Report Week 1 results with real data, give feedback on plan fit",
-      "actions": ["Send check-in: invent realistic HR, sleep, RPE, duration numbers"],
-      "reveal": ["sleep variability pattern", "preferred RPE range"],
-      "advance_when": "coach responds to data with adjustments or confirmation"
+      "label": "early_execution",
+      "start_turn": 4,
+      "end_turn": 6,
+      "objective": "Report first training results with concrete data",
+      "suggested_actions": ["send check-in with sleep, duration, effort, and how the plan felt"]
     },
     {
-      "label": "complication",
-      "turns": "7-10",
-      "objective": "Introduce a disruption (travel, niggle, schedule change, life stress)",
-      "reveal": ["upcoming travel", "mild hip tightness or Achilles flare"],
-      "advance_when": "coach adjusts plan for the disruption"
+      "label": "complication_or_adjustment",
+      "start_turn": 7,
+      "end_turn": 10,
+      "objective": "Introduce a realistic snag, constraint, or adjustment need"
     },
     {
       "label": "progression",
-      "turns": "11-15",
-      "objective": "Report improving fitness, push for next phase or race-specific work",
-      "actions": ["Send Week 3-4 data showing positive adaptation"],
-      "reveal": ["race selection reasoning", "fueling preferences"],
-      "advance_when": "coach transitions to next training phase"
+      "start_turn": 11,
+      "end_turn": 16,
+      "objective": "Show adaptation, ask for progression, or clarify next training focus"
     },
     {
       "label": "resolution",
-      "turns": "16-20",
-      "objective": "Taper, race, debrief, set up next goal cycle",
-      "reveal": ["race result", "post-race recovery needs", "next goal hints"],
-      "advance_when": "natural conversation end"
+      "start_turn": 17,
+      "end_turn": 25,
+      "objective": "Close the current arc naturally and set up the next one"
     }
-  ]
-```
-
-The runner determines the current phase by turn number and injects it into the athlete payload as `current_phase`. The system prompt tells the LLM: "Follow the phase objective. When the advance condition is met, move to the next phase's behavior."
-
-This replaces the vague "100-turn" pacing instructions in the briefs with concrete structure that fits the actual 20-25 turn runs.
-
-### Layer 4: Open-commitment tracker
-**Effort:** 1 hr | **Impact:** Prevents the "promise but never deliver" failure mode
-
-The runner maintains a simple list of open commitments extracted from the athlete's messages. Before each athlete turn, scan the last athlete message for commitment patterns ("I'll send", "I'll confirm", "will upload", "by Friday") and add them to a `pending_commitments` list.
-
-Inject into the athlete payload:
-```json
-{
-  "pending_commitments": [
-    {"what": "send check-in data (HR, sleep, RPEs)", "promised_turn": 5, "turns_ago": 3}
   ]
 }
 ```
 
-System prompt instruction: "If pending_commitments shows something you promised 2+ turns ago, fulfill it NOW by generating realistic data. Do not promise again."
+Implementation notes:
 
-Implementation: keyword-based extraction is sufficient — no LLM needed. Look for "I'll", "I will", "will send", "by [day]" patterns in athlete messages and track them until the athlete sends a message that plausibly fulfills the commitment (contains numbers, data, or "here is/are").
+- first extend fixture validation to allow `conversation_phases`
+- validate phase objects strictly
+- in the runner, derive `current_phase` from `turn_number`
+- pass `current_phase` into the athlete reaction payload
+- update the athlete prompt to treat `current_phase` as guidance, not a rigid script
 
-## Fix the scenario briefs
+Do not add semantic phase transitions yet. The runner has no reliable state machine for "advance when coach does X," and adding one would be a separate project.
 
-Independent of the layers above, update the three scenario briefs:
+### Layer 4: Narrow commitment tracker
 
-1. **Remove "100 turns" references** — the runs are 20-25 turns. Pacing instructions should match actual run length.
-2. **Add concrete data generation instructions** — "When reporting training data, invent realistic numbers: HR 55-75 resting, RPE 4-8, session durations matching the plan, sleep 5.5-8 hrs. Make the numbers tell a story (gradual adaptation, occasional bad night, one session cut short)."
-3. **Add phase transition cues** — even without Layer 3, the briefs should say "By turn 5-6 you should be reporting actual training results, not still in intake."
+**Effort:** moderate
+
+Track only explicit promises the athlete makes, and only for a narrow set of commitment verbs.
+
+Recommended detection:
+
+- "I'll send"
+- "I will send"
+- "I'll upload"
+- "I'll share"
+- "I'll confirm"
+- "by Friday" or similar date promises only when tied to sending or confirming something
+
+Recommended fulfillment rule:
+
+- mark fulfilled only when the later athlete message plausibly addresses the promised item
+- do not treat random numbers alone as fulfillment
+- require either lexical overlap with the promised item or a stronger cue such as "here's the check-in", "here are the splits", "attaching", "my week looked like"
+
+Payload addition:
+
+```json
+{
+  "pending_commitments": [
+    {
+      "what": "send weekly check-in",
+      "promised_turn": 5,
+      "turns_outstanding": 2
+    }
+  ]
+}
+```
+
+Prompt rule:
+
+"If `pending_commitments` contains something you promised 2 or more turns ago, fulfill it now unless the coach's latest reply clearly made it irrelevant."
+
+This should stay intentionally narrow. The goal is to stop the most obvious "I’ll send it later" loops, not build a full promise-understanding system.
+
+## Validation and observability
+
+The runner should compute explicit reliability metrics so each step can be judged consistently.
+
+Add summary metrics such as:
+
+- `max_consecutive_similar_athlete_messages`
+- `repetition_alert_count`
+- `open_commitments_created`
+- `open_commitments_fulfilled`
+- `max_commitment_age_turns`
+- `phase_coverage`
+
+These should be produced in the run summary, not inferred manually from raw transcripts.
+
+## Scenario brief changes
+
+Update all three scenarios with the same baseline cleanup:
+
+1. Replace "100 turns" framing with language that matches the real 20-25 turn runs.
+2. Tell the athlete to move from intake to actual reported training within the first quarter of the run.
+3. Add lightweight invented-data guidance:
+   - resting HR in a plausible range
+   - sleep in a plausible range
+   - session duration and effort that match the stated plan
+   - occasional imperfect sessions so the data tells a story
+
+If `conversation_phases` is added, keep the prose brief aligned with those phases instead of duplicating an entirely separate pacing model.
 
 ## Sequencing
 
-| Step | What | Validates |
+| Step | Change | Validation |
 |---|---|---|
-| 1 | Layer 1 (prompt) + brief cleanup | Run LAS-001 — should break the repetition loop |
-| 2 | Layer 2 (anti-repetition guard) | Run all 3 — deterministic backstop catches any remaining loops |
-| 3 | Layer 3 (phase scripts) for LAS-001 | Run LAS-001 — should show realistic 25-turn progression |
-| 4 | Layer 3 for LAS-002 and LAS-003 | Run all 3 — full validation |
-| 5 | Layer 4 (commitment tracker) | Run all 3 — verify commitments are fulfilled |
-
-Each step is independently testable. Layer 1 alone should fix the worst case (LAS-001). Layers 3+4 make the sim structurally reliable.
+| 1 | Layer 1 prompt changes + scenario brief cleanup | Run LAS-001 and confirm the obvious repetition loop is reduced or gone |
+| 2 | Layer 2 repetition guard + repetition metrics | Run all 3 scenarios and inspect repetition metrics in summaries |
+| 3 | Layer 3 turn-window phase support for LAS-001 | Run LAS-001 and confirm the conversation progresses through the intended arc |
+| 4 | Layer 3 rollout for LAS-002 and LAS-003 | Run all 3 scenarios and compare phase coverage across runs |
+| 5 | Layer 4 narrow commitment tracker + commitment metrics | Run all 3 scenarios and verify explicit promises are usually fulfilled within 2 turns |
 
 ## Success criteria
 
-A sim run is "reliable" when:
-- No 3+ consecutive athlete messages are substantially the same topic/content
-- Promised data is delivered within 2 turns of the promise
-- The conversation covers at least 3 distinct coaching phases (intake → execution → complication or progression)
-- Judge scores show variance that tracks real coaching quality, not artificial stalls
+A run is reliable when all of the following are usually true:
+
+- there are no obvious 3-message repetition loops
+- explicit "I'll send/share/upload" promises are usually fulfilled within 2 turns
+- the conversation reaches at least 3 distinct phases in a 20-25 turn run
+- judge score patterns vary with coach behavior instead of collapsing because the athlete stalled
+
+## Non-goals
+
+This plan does not attempt to:
+
+- build a full semantic state machine for conversation progression
+- infer every implied commitment the athlete might make
+- make the athlete maximally realistic at the cost of determinism
+
+The target is simpler: remove the known failure modes with the minimum structure needed to make the benchmark useful.

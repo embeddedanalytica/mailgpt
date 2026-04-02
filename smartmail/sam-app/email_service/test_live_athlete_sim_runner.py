@@ -24,6 +24,32 @@ def _scenario(**overrides):
         "evaluation_focus": ["memory", "tone"],
         "min_turns": 2,
         "max_turns": 3,
+        "conversation_phases": [
+            {
+                "label": "intake",
+                "start_turn": 1,
+                "end_turn": 1,
+                "objective": "Share setup",
+                "suggested_reveals": ["schedule"],
+                "suggested_actions": ["ask for first plan"],
+            },
+            {
+                "label": "execution",
+                "start_turn": 2,
+                "end_turn": 2,
+                "objective": "Report first check-in",
+                "suggested_reveals": ["fatigue"],
+                "suggested_actions": ["send data"],
+            },
+            {
+                "label": "progression",
+                "start_turn": 3,
+                "end_turn": 3,
+                "objective": "Ask for the next step",
+                "suggested_reveals": ["confidence"],
+                "suggested_actions": ["progress training"],
+            },
+        ],
     }
     scenario.update(overrides)
     return scenario
@@ -79,6 +105,7 @@ class _AthleteClientStub:
         self.reactions = list(reactions)
         self.opening_calls = 0
         self.reaction_calls = 0
+        self.reaction_kwargs = []
 
     def generate_opening_message(self, **_kwargs):
         self.opening_calls += 1
@@ -90,6 +117,7 @@ class _AthleteClientStub:
 
     def react_to_coach_reply(self, **_kwargs):
         self.reaction_calls += 1
+        self.reaction_kwargs.append(dict(_kwargs))
         return dict(self.reactions.pop(0))
 
 
@@ -135,6 +163,66 @@ class TestLiveAthleteSimRunner(unittest.TestCase):
         args = live_athlete_sim_runner.build_parser().parse_args([])
         self.assertEqual(args.min_turns, 100)
         self.assertEqual(args.max_turns, 100)
+
+    def test_resolve_current_phase_uses_turn_windows(self):
+        scenario = _scenario()
+        phase_one = live_athlete_sim_runner._resolve_current_phase(scenario, 1)  # type: ignore[attr-defined]
+        phase_two = live_athlete_sim_runner._resolve_current_phase(scenario, 2)  # type: ignore[attr-defined]
+        self.assertEqual(phase_one["label"], "intake")
+        self.assertEqual(phase_two["label"], "execution")
+
+    def test_detect_repetition_returns_override_for_three_similar_messages(self):
+        transcript = [
+            {"role": "athlete", "body": "I'll send the check-in tomorrow after work."},
+            {"role": "coach", "text": "Sounds good."},
+            {"role": "athlete", "body": "I'll send the check-in tomorrow once I finish work."},
+            {"role": "coach", "text": "Okay."},
+            {"role": "athlete", "body": "I will send the check-in tomorrow after I get off work."},
+        ]
+        directive = live_athlete_sim_runner._detect_repetition(transcript)  # type: ignore[attr-defined]
+        self.assertIn("ANTI-REPETITION OVERRIDE", directive)
+
+    def test_extract_commitments_from_message_finds_explicit_promises(self):
+        commitments = live_athlete_sim_runner._extract_commitments_from_message(  # type: ignore[attr-defined]
+            "I'll send the weekly check-in tomorrow and I will upload the file after lunch.",
+            turn_number=5,
+        )
+        self.assertEqual(
+            [item["what"] for item in commitments],
+            ["send the weekly check in tomorrow", "upload the file after lunch"],
+        )
+
+    def test_message_fulfills_commitment_requires_strong_cue_and_overlap(self):
+        commitment = {
+            "what": "send the weekly check-in",
+            "normalized_what": "send the weekly check in",
+            "promised_turn": 2,
+        }
+        self.assertTrue(
+            live_athlete_sim_runner._message_fulfills_commitment(  # type: ignore[attr-defined]
+                "Here is the weekly check-in with sleep and splits.",
+                commitment,
+            )
+        )
+        self.assertFalse(
+            live_athlete_sim_runner._message_fulfills_commitment(  # type: ignore[attr-defined]
+                "I slept 7 hours and felt okay today.",
+                commitment,
+            )
+        )
+
+    def test_max_consecutive_similar_athlete_messages_counts_runs(self):
+        transcript = [
+            {"role": "athlete", "body": "I'll send the check-in tomorrow after work."},
+            {"role": "coach", "text": "Okay."},
+            {"role": "athlete", "body": "I'll send the check-in tomorrow once I finish work."},
+            {"role": "coach", "text": "Okay."},
+            {"role": "athlete", "body": "I will send the check-in tomorrow after I get off work."},
+            {"role": "coach", "text": "Okay."},
+            {"role": "athlete", "body": "Here is the full check-in with sleep and splits."},
+        ]
+        value = live_athlete_sim_runner._max_consecutive_similar_athlete_messages(transcript)  # type: ignore[attr-defined]
+        self.assertEqual(value, 3)
 
     def test_run_single_attempt_enforces_min_turns_before_stop(self):
         athlete_client = _AthleteClientStub(
@@ -250,6 +338,235 @@ class TestLiveAthleteSimRunner(unittest.TestCase):
         self.assertEqual(result["turn_count"], 3)
         self.assertEqual(result["stop_reason"], "max_turns_reached")
 
+    def test_run_single_attempt_injects_repetition_directive_and_metrics(self):
+        athlete_client = _AthleteClientStub(
+            reactions=[
+                {
+                    "reaction_summary": "keep going",
+                    "felt_understood_score": 3,
+                    "communication_style_fit": 3,
+                    "trust_delta": "flat",
+                    "what_helped": ["okay"],
+                    "what_bothered": ["still vague"],
+                    "continue_conversation": True,
+                    "stop_reason": "",
+                    "next_subject": "Tomorrow",
+                    "next_body": "I'll send the check-in tomorrow after work.",
+                },
+                {
+                    "reaction_summary": "keep going",
+                    "felt_understood_score": 3,
+                    "communication_style_fit": 3,
+                    "trust_delta": "flat",
+                    "what_helped": ["okay"],
+                    "what_bothered": ["still vague"],
+                    "continue_conversation": True,
+                    "stop_reason": "",
+                    "next_subject": "Tomorrow again",
+                    "next_body": "I'll send the check-in tomorrow once I finish work.",
+                },
+                {
+                    "reaction_summary": "done",
+                    "felt_understood_score": 3,
+                    "communication_style_fit": 3,
+                    "trust_delta": "flat",
+                    "what_helped": ["okay"],
+                    "what_bothered": ["still vague"],
+                    "continue_conversation": False,
+                    "stop_reason": "done",
+                    "next_subject": "",
+                    "next_body": "",
+                },
+            ]
+        )
+        with tempfile.TemporaryDirectory() as td:
+            result = live_athlete_sim_runner.run_single_attempt(
+                scenario=_scenario(
+                    opening_message="I'll send the check-in tomorrow after work.",
+                    min_turns=1,
+                    max_turns=3,
+                ),
+                attempt=1,
+                athlete_model=None,
+                judge_model=None,
+                output_dir=Path(td),
+                default_min_turns=1,
+                default_max_turns=3,
+                harness_factory=_HarnessStub,
+                athlete_client=athlete_client,
+                judge_client=_JudgeClientStub(),
+            )
+            transcript_path = Path(result["transcript_path"])
+            transcript_lines = [
+                json.loads(line)
+                for line in transcript_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+
+        self.assertEqual(result["status"], live_athlete_sim_runner.OK)
+        self.assertGreaterEqual(result["repetition_alert_count"], 1)
+        self.assertGreaterEqual(result["max_consecutive_similar_athlete_messages"], 3)
+        self.assertIn("ANTI-REPETITION OVERRIDE", athlete_client.reaction_kwargs[-1]["conversation_directive"])
+        reaction_records = [item for item in transcript_lines if item["phase"] == "athlete_reaction"]
+        self.assertTrue(any(item.get("conversation_directive") for item in reaction_records))
+
+    def test_run_single_attempt_tracks_phase_coverage_and_passes_current_phase(self):
+        athlete_client = _AthleteClientStub(
+            reactions=[
+                {
+                    "reaction_summary": "first follow-up",
+                    "felt_understood_score": 3,
+                    "communication_style_fit": 3,
+                    "trust_delta": "flat",
+                    "what_helped": ["okay"],
+                    "what_bothered": ["still vague"],
+                    "continue_conversation": True,
+                    "stop_reason": "",
+                    "next_subject": "Turn 2",
+                    "next_body": "Here is my first check-in.",
+                },
+                {
+                    "reaction_summary": "second follow-up",
+                    "felt_understood_score": 4,
+                    "communication_style_fit": 4,
+                    "trust_delta": "up",
+                    "what_helped": ["specific"],
+                    "what_bothered": ["none"],
+                    "continue_conversation": False,
+                    "stop_reason": "done",
+                    "next_subject": "",
+                    "next_body": "",
+                },
+            ]
+        )
+        with tempfile.TemporaryDirectory() as td:
+            result = live_athlete_sim_runner.run_single_attempt(
+                scenario=_scenario(min_turns=1, max_turns=2),
+                attempt=1,
+                athlete_model=None,
+                judge_model=None,
+                output_dir=Path(td),
+                default_min_turns=1,
+                default_max_turns=2,
+                harness_factory=_HarnessStub,
+                athlete_client=athlete_client,
+                judge_client=_JudgeClientStub(),
+            )
+        self.assertEqual(result["phase_coverage"], ["intake", "execution"])
+        self.assertEqual(athlete_client.reaction_kwargs[0]["current_phase"]["label"], "intake")
+        self.assertEqual(athlete_client.reaction_kwargs[1]["current_phase"]["label"], "execution")
+
+    def test_run_single_attempt_tracks_pending_commitments_and_metrics(self):
+        athlete_client = _AthleteClientStub(
+            reactions=[
+                {
+                    "reaction_summary": "follow-up",
+                    "felt_understood_score": 3,
+                    "communication_style_fit": 3,
+                    "trust_delta": "flat",
+                    "what_helped": ["okay"],
+                    "what_bothered": ["still vague"],
+                    "continue_conversation": True,
+                    "stop_reason": "",
+                    "next_subject": "Still pending",
+                    "next_body": "I'll send the weekly check-in tomorrow.",
+                },
+                {
+                    "reaction_summary": "done",
+                    "felt_understood_score": 4,
+                    "communication_style_fit": 4,
+                    "trust_delta": "up",
+                    "what_helped": ["specific"],
+                    "what_bothered": ["none"],
+                    "continue_conversation": False,
+                    "stop_reason": "done",
+                    "next_subject": "",
+                    "next_body": "",
+                },
+            ]
+        )
+        with tempfile.TemporaryDirectory() as td:
+            result = live_athlete_sim_runner.run_single_attempt(
+                scenario=_scenario(
+                    opening_message="I'll send the weekly check-in tomorrow.",
+                    min_turns=1,
+                    max_turns=2,
+                ),
+                attempt=1,
+                athlete_model=None,
+                judge_model=None,
+                output_dir=Path(td),
+                default_min_turns=1,
+                default_max_turns=2,
+                harness_factory=_HarnessStub,
+                athlete_client=athlete_client,
+                judge_client=_JudgeClientStub(),
+            )
+            transcript_path = Path(result["transcript_path"])
+            transcript_lines = [
+                json.loads(line)
+                for line in transcript_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+
+        self.assertEqual(result["open_commitments_created"], 2)
+        self.assertEqual(result["open_commitments_fulfilled"], 0)
+        self.assertGreaterEqual(result["max_commitment_age_turns"], 1)
+        first_pending = athlete_client.reaction_kwargs[0]["pending_commitments"]
+        self.assertEqual(first_pending[0]["what"], "send the weekly check in tomorrow")
+        athlete_turn_records = [item for item in transcript_lines if item["phase"] == "athlete_turn"]
+        self.assertTrue(any(item.get("pending_commitments") for item in athlete_turn_records))
+
+    def test_run_single_attempt_fulfills_commitment_when_checkin_arrives(self):
+        athlete_client = _AthleteClientStub(
+            reactions=[
+                {
+                    "reaction_summary": "follow-up",
+                    "felt_understood_score": 3,
+                    "communication_style_fit": 3,
+                    "trust_delta": "flat",
+                    "what_helped": ["okay"],
+                    "what_bothered": ["still vague"],
+                    "continue_conversation": True,
+                    "stop_reason": "",
+                    "next_subject": "Delivered",
+                    "next_body": "Here is the weekly check-in with sleep and splits.",
+                },
+                {
+                    "reaction_summary": "done",
+                    "felt_understood_score": 4,
+                    "communication_style_fit": 4,
+                    "trust_delta": "up",
+                    "what_helped": ["specific"],
+                    "what_bothered": ["none"],
+                    "continue_conversation": False,
+                    "stop_reason": "done",
+                    "next_subject": "",
+                    "next_body": "",
+                },
+            ]
+        )
+        with tempfile.TemporaryDirectory() as td:
+            result = live_athlete_sim_runner.run_single_attempt(
+                scenario=_scenario(
+                    opening_message="I'll send the weekly check-in tomorrow.",
+                    min_turns=1,
+                    max_turns=2,
+                ),
+                attempt=1,
+                athlete_model=None,
+                judge_model=None,
+                output_dir=Path(td),
+                default_min_turns=1,
+                default_max_turns=2,
+                harness_factory=_HarnessStub,
+                athlete_client=athlete_client,
+                judge_client=_JudgeClientStub(),
+            )
+        self.assertEqual(result["open_commitments_created"], 1)
+        self.assertEqual(result["open_commitments_fulfilled"], 1)
+        self.assertEqual(result["max_commitment_age_turns"], 1)
+
     def test_run_single_attempt_cleans_up_on_error(self):
         athlete_client = _AthleteClientStub(
             reactions=[
@@ -346,6 +663,52 @@ class TestLiveAthleteSimRunner(unittest.TestCase):
             snapshot_record["snapshot"]["profile"]["time_availability"]["hours_per_week"],
             4.5,
         )
+
+    def test_aggregate_results_includes_repetition_metrics(self):
+        summary = live_athlete_sim_runner.aggregate_results(
+            scenarios=[_scenario()],
+            runs=[
+                {
+                    "scenario_id": "LAS-TEST-001",
+                    "scenario_name": "sample scenario",
+                    "attempt": 1,
+                    "status": live_athlete_sim_runner.OK,
+                    "turn_count": 3,
+                    "average_athlete_felt_understood": 4.0,
+                    "issue_tag_counts": {"missed_fact": 1},
+                    "strength_tag_counts": {"specific_guidance": 1},
+                    "repetition_alert_count": 2,
+                    "max_consecutive_similar_athlete_messages": 3,
+                    "open_commitments_created": 2,
+                    "open_commitments_fulfilled": 1,
+                    "max_commitment_age_turns": 2,
+                    "phase_coverage": ["intake", "execution"],
+                }
+            ],
+            bench_path=Path("/tmp/fixture.md"),
+            output_dir=Path("/tmp/out"),
+            athlete_model=None,
+            judge_model=None,
+            runs_per_scenario=1,
+            default_min_turns=2,
+            default_max_turns=3,
+            max_parallel=1,
+            synthetic_start_datetime=live_athlete_sim_runner._resolve_synthetic_start_datetime(None),  # type: ignore[attr-defined]
+            synthetic_days_per_turn=7,
+        )
+
+        self.assertEqual(summary["avg_repetition_alert_count_ok_runs"], 2.0)
+        self.assertEqual(summary["avg_max_consecutive_similar_athlete_messages_ok_runs"], 3.0)
+        self.assertEqual(summary["avg_phase_coverage_ok_runs"], 2.0)
+        self.assertEqual(summary["avg_open_commitments_created_ok_runs"], 2.0)
+        self.assertEqual(summary["avg_open_commitments_fulfilled_ok_runs"], 1.0)
+        self.assertEqual(summary["avg_max_commitment_age_turns_ok_runs"], 2.0)
+        self.assertEqual(summary["per_scenario"][0]["avg_repetition_alert_count_ok_runs"], 2.0)
+        self.assertEqual(summary["per_scenario"][0]["avg_max_consecutive_similar_athlete_messages_ok_runs"], 3.0)
+        self.assertEqual(summary["per_scenario"][0]["avg_phase_coverage_ok_runs"], 2.0)
+        self.assertEqual(summary["per_scenario"][0]["avg_open_commitments_created_ok_runs"], 2.0)
+        self.assertEqual(summary["per_scenario"][0]["avg_open_commitments_fulfilled_ok_runs"], 1.0)
+        self.assertEqual(summary["per_scenario"][0]["avg_max_commitment_age_turns_ok_runs"], 2.0)
 
 
 if __name__ == "__main__":

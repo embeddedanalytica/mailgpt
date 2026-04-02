@@ -23,6 +23,7 @@ ALLOWED_FIELDS = REQUIRED_FIELDS | {
     "communication_style_preferences",
     "min_turns",
     "max_turns",
+    "conversation_phases",
 }
 
 
@@ -64,6 +65,71 @@ def _normalize_turn_bound(value: Any, *, field_name: str) -> int | None:
     if value < 1:
         raise ValueError(f"{field_name} must be >= 1.")
     return value
+
+
+def _normalize_phase(raw: Any, *, field_name: str) -> Dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise ValueError(f"{field_name} must be an object.")
+    allowed_fields = {
+        "label",
+        "start_turn",
+        "end_turn",
+        "objective",
+        "suggested_reveals",
+        "suggested_actions",
+    }
+    unknown_fields = sorted(set(raw.keys()) - allowed_fields)
+    if unknown_fields:
+        raise ValueError(f"{field_name} has unknown fields: {', '.join(unknown_fields)}")
+    required_fields = {"label", "start_turn", "end_turn", "objective"}
+    missing = sorted(required_fields - set(raw.keys()))
+    if missing:
+        raise ValueError(f"{field_name} is missing fields: {', '.join(missing)}")
+    start_turn = _normalize_turn_bound(raw.get("start_turn"), field_name=f"{field_name}.start_turn")
+    end_turn = _normalize_turn_bound(raw.get("end_turn"), field_name=f"{field_name}.end_turn")
+    if start_turn is None or end_turn is None:
+        raise ValueError(f"{field_name} must include integer start_turn and end_turn.")
+    if start_turn > end_turn:
+        raise ValueError(f"{field_name} start_turn cannot be greater than end_turn.")
+    return {
+        "label": _require_non_empty_string(raw.get("label"), field_name=f"{field_name}.label"),
+        "start_turn": start_turn,
+        "end_turn": end_turn,
+        "objective": _require_non_empty_string(raw.get("objective"), field_name=f"{field_name}.objective"),
+        "suggested_reveals": _normalize_string_list(
+            raw.get("suggested_reveals"),
+            field_name=f"{field_name}.suggested_reveals",
+        ),
+        "suggested_actions": _normalize_string_list(
+            raw.get("suggested_actions"),
+            field_name=f"{field_name}.suggested_actions",
+        ),
+    }
+
+
+def _normalize_conversation_phases(value: Any, *, field_name: str, max_turns: int | None) -> List[Dict[str, Any]]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or not value:
+        raise ValueError(f"{field_name} must be a non-empty list when provided.")
+    phases = [
+        _normalize_phase(item, field_name=f"{field_name}[{index}]")
+        for index, item in enumerate(value, start=1)
+    ]
+    last_end = 0
+    labels: set[str] = set()
+    for index, phase in enumerate(phases, start=1):
+        label = phase["label"]
+        normalized_label = label.lower()
+        if normalized_label in labels:
+            raise ValueError(f"{field_name}[{index}] label must be unique: {label}")
+        labels.add(normalized_label)
+        if phase["start_turn"] <= last_end:
+            raise ValueError(f"{field_name}[{index}] start_turn must be greater than the previous end_turn.")
+        last_end = phase["end_turn"]
+    if max_turns is not None and phases[-1]["end_turn"] > max_turns:
+        raise ValueError(f"{field_name} cannot extend beyond max_turns={max_turns}.")
+    return phases
 
 
 def normalize_scenario(raw: Any, *, seen_ids: set[str], index: int) -> Dict[str, Any]:
@@ -113,6 +179,11 @@ def normalize_scenario(raw: Any, *, seen_ids: set[str], index: int) -> Dict[str,
         ),
         "min_turns": min_turns,
         "max_turns": max_turns,
+        "conversation_phases": _normalize_conversation_phases(
+            raw.get("conversation_phases"),
+            field_name=f"{scenario_id}.conversation_phases",
+            max_turns=max_turns,
+        ),
     }
 
 

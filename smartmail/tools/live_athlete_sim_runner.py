@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import secrets
 import sys
 import time
@@ -46,6 +47,33 @@ DEFAULT_OUTPUT_ROOT = REPO_ROOT / "sam-app" / ".cache" / "live-athlete-sim"
 OK = "ok"
 ERROR = "error"
 DEFAULT_SYNTHETIC_DAYS_PER_TURN = 7
+REPETITION_SIMILARITY_THRESHOLD = 0.6
+ANTI_REPETITION_OVERRIDE = (
+    "ANTI-REPETITION OVERRIDE:\n"
+    "Your recent messages are too similar. Change direction now.\n"
+    "- If you promised data, send it now\n"
+    "- If you already confirmed something, stop reconfirming it\n"
+    "- If the exchange has stalled, introduce a concrete update, complication, or next-step question"
+)
+_COMMITMENT_PATTERNS = [
+    re.compile(r"\bi(?:\s+will|'ll)\s+(send|share|upload|confirm)\s+([^.!?\n]+)", flags=re.IGNORECASE),
+]
+_COMMITMENT_FULFILLMENT_CUES = (
+    "here is",
+    "here's",
+    "here are",
+    "attaching",
+    "attached",
+    "my week looked like",
+    "my check in",
+    "my check-in",
+    "the check in",
+    "the check-in",
+    "the splits",
+    "the data",
+    "the file",
+    "the log",
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -242,6 +270,181 @@ def _top_counter_entries(counter: Counter[str], *, limit: int = 3) -> List[str]:
     return [f"{key}:{value}" for key, value in counter.most_common(limit)]
 
 
+def _normalize_similarity_text(text: str) -> str:
+    lowered = str(text or "").lower()
+    lowered = re.sub(r"[^a-z0-9\s]", " ", lowered)
+    return " ".join(lowered.split())
+
+
+def _word_overlap_similarity(left: str, right: str) -> float:
+    left_tokens = set(_normalize_similarity_text(left).split())
+    right_tokens = set(_normalize_similarity_text(right).split())
+    if not left_tokens or not right_tokens:
+        return 0.0
+    baseline = min(len(left_tokens), len(right_tokens))
+    if baseline == 0:
+        return 0.0
+    return len(left_tokens & right_tokens) / baseline
+
+
+def _athlete_message_bodies(transcript: List[Dict[str, Any]]) -> List[str]:
+    return [
+        str(item.get("body", "")).strip()
+        for item in transcript
+        if item.get("role") == "athlete" and str(item.get("body", "")).strip()
+    ]
+
+
+def _max_consecutive_similar_athlete_messages(transcript: List[Dict[str, Any]]) -> int:
+    athlete_bodies = _athlete_message_bodies(transcript)
+    if not athlete_bodies:
+        return 0
+    max_run = 1
+    current_run = 1
+    for previous, current in zip(athlete_bodies, athlete_bodies[1:]):
+        if _word_overlap_similarity(previous, current) >= REPETITION_SIMILARITY_THRESHOLD:
+            current_run += 1
+            max_run = max(max_run, current_run)
+        else:
+            current_run = 1
+    return max_run
+
+
+def _detect_repetition(transcript: List[Dict[str, Any]]) -> Optional[str]:
+    athlete_bodies = _athlete_message_bodies(transcript)
+    if len(athlete_bodies) < 3:
+        return None
+    last_three = athlete_bodies[-3:]
+    similarities = [
+        _word_overlap_similarity(last_three[0], last_three[1]),
+        _word_overlap_similarity(last_three[1], last_three[2]),
+        _word_overlap_similarity(last_three[0], last_three[2]),
+    ]
+    if min(similarities) >= REPETITION_SIMILARITY_THRESHOLD:
+        return ANTI_REPETITION_OVERRIDE
+    return None
+
+
+def _resolve_current_phase(scenario: Dict[str, Any], turn_number: int) -> Optional[Dict[str, Any]]:
+    for phase in scenario.get("conversation_phases", []) or []:
+        if phase["start_turn"] <= turn_number <= phase["end_turn"]:
+            return {
+                "label": phase["label"],
+                "objective": phase["objective"],
+                "suggested_reveals": list(phase.get("suggested_reveals", [])),
+                "suggested_actions": list(phase.get("suggested_actions", [])),
+                "start_turn": phase["start_turn"],
+                "end_turn": phase["end_turn"],
+            }
+    return None
+
+
+def _phase_coverage(transcript: List[Dict[str, Any]]) -> List[str]:
+    labels: List[str] = []
+    seen: set[str] = set()
+    for item in transcript:
+        phase = item.get("current_phase")
+        if not isinstance(phase, dict):
+            continue
+        label = str(phase.get("label", "")).strip()
+        if not label:
+            continue
+        normalized = label.lower()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        labels.append(label)
+    return labels
+
+
+def _normalize_commitment_text(text: str) -> str:
+    return _normalize_similarity_text(text)
+
+
+def _extract_commitments_from_message(body: str, *, turn_number: int) -> List[Dict[str, Any]]:
+    message = str(body or "").strip()
+    if not message:
+        return []
+    commitments: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    clauses = [part.strip() for part in re.split(r"[.!?\n]+|\band\b", message, flags=re.IGNORECASE) if part.strip()]
+    for clause in clauses:
+        for pattern in _COMMITMENT_PATTERNS:
+            for match in pattern.finditer(clause):
+                verb = str(match.group(1) or "").strip().lower()
+                target = str(match.group(2) or "").strip(" .,:;")
+                if not target:
+                    continue
+                normalized = _normalize_commitment_text(f"{verb} {target}".strip())
+                if not normalized or normalized in seen:
+                    continue
+                seen.add(normalized)
+                commitments.append(
+                    {
+                        "what": normalized,
+                        "normalized_what": normalized,
+                        "promised_turn": turn_number,
+                    }
+                )
+    return commitments
+
+
+def _message_fulfills_commitment(body: str, commitment: Dict[str, Any]) -> bool:
+    normalized_body = _normalize_commitment_text(body)
+    if not normalized_body:
+        return False
+    if not any(cue in normalized_body for cue in _COMMITMENT_FULFILLMENT_CUES):
+        return False
+    commitment_text = str(commitment.get("normalized_what", "")).strip()
+    if not commitment_text:
+        return False
+    commitment_tokens = set(commitment_text.split())
+    body_tokens = set(normalized_body.split())
+    if not commitment_tokens or not body_tokens:
+        return False
+    return len(commitment_tokens & body_tokens) >= max(1, min(2, len(commitment_tokens)))
+
+
+def _update_pending_commitments(
+    pending_commitments: List[Dict[str, Any]],
+    *,
+    athlete_message_body: str,
+    turn_number: int,
+) -> tuple[List[Dict[str, Any]], int, int, int]:
+    fulfilled = 0
+    max_age_observed = max(
+        (max(0, turn_number - int(commitment.get("promised_turn", turn_number))) for commitment in pending_commitments),
+        default=0,
+    )
+    remaining: List[Dict[str, Any]] = []
+    for commitment in pending_commitments:
+        if _message_fulfills_commitment(athlete_message_body, commitment):
+            fulfilled += 1
+            continue
+        remaining.append(dict(commitment))
+    new_commitments = _extract_commitments_from_message(athlete_message_body, turn_number=turn_number)
+    created = len(new_commitments)
+    remaining.extend(new_commitments)
+    return remaining, created, fulfilled, max_age_observed
+
+
+def _render_pending_commitments(
+    pending_commitments: List[Dict[str, Any]],
+    *,
+    turn_number: int,
+) -> List[Dict[str, Any]]:
+    rendered: List[Dict[str, Any]] = []
+    for commitment in pending_commitments:
+        rendered.append(
+            {
+                "what": commitment["what"],
+                "promised_turn": commitment["promised_turn"],
+                "turns_outstanding": max(0, turn_number - int(commitment["promised_turn"])),
+            }
+        )
+    return rendered
+
+
 def _build_run_narrative(
     *,
     turn_count: int,
@@ -251,6 +454,11 @@ def _build_run_narrative(
     avg_scores: Dict[str, float],
     issue_counts: Counter[str],
     strength_counts: Counter[str],
+    repetition_alert_count: int,
+    max_consecutive_similar_athlete_messages: int,
+    open_commitments_created: int,
+    open_commitments_fulfilled: int,
+    max_commitment_age_turns: int,
 ) -> str:
     score_bits = ", ".join(f"{key}={value:.2f}" for key, value in avg_scores.items())
     issues = ", ".join(_top_counter_entries(issue_counts)) or "none"
@@ -259,7 +467,11 @@ def _build_run_narrative(
         f"Conversation ended after {turn_count} turns via {stop_reason}. "
         f"Athlete felt-understood average was {avg_felt_understood:.2f}; "
         f"athlete-reported communication-style fit average was {avg_athlete_communication_style_fit:.2f}. "
-        f"Judge averages: {score_bits}. Top issues: {issues}. Top strengths: {strengths}."
+        f"Judge averages: {score_bits}. Top issues: {issues}. Top strengths: {strengths}. "
+        f"Repetition alerts: {repetition_alert_count}; max consecutive similar athlete messages: "
+        f"{max_consecutive_similar_athlete_messages}. "
+        f"Commitments created: {open_commitments_created}; fulfilled: {open_commitments_fulfilled}; "
+        f"max age: {max_commitment_age_turns} turns."
     )
 
 
@@ -313,6 +525,11 @@ def run_single_attempt(
     athlete_reactions: List[Dict[str, Any]] = []
     issue_counts: Counter[str] = Counter()
     strength_counts: Counter[str] = Counter()
+    repetition_alert_count = 0
+    pending_commitments: List[Dict[str, Any]] = []
+    open_commitments_created = 0
+    open_commitments_fulfilled = 0
+    max_commitment_age_turns = 0
     stop_reason = "max_turns_reached"
 
     base = {
@@ -366,8 +583,25 @@ def run_single_attempt(
                 "subject": str(next_message["subject"]).strip(),
                 "body": str(next_message["body"]).strip(),
                 "date_received": synthetic_date_received,
+                "current_phase": _resolve_current_phase(scenario, turn_number),
             }
             transcript.append(athlete_turn)
+            pending_commitments, created_now, fulfilled_now, max_age_now = _update_pending_commitments(
+                pending_commitments,
+                athlete_message_body=athlete_turn["body"],
+                turn_number=turn_number,
+            )
+            open_commitments_created += created_now
+            open_commitments_fulfilled += fulfilled_now
+            max_commitment_age_turns = max(max_commitment_age_turns, max_age_now)
+            rendered_pending_commitments = _render_pending_commitments(
+                pending_commitments,
+                turn_number=turn_number,
+            )
+            max_commitment_age_turns = max(
+                max_commitment_age_turns,
+                max((item["turns_outstanding"] for item in rendered_pending_commitments), default=0),
+            )
             _append_jsonl(
                 transcript_path,
                 {
@@ -376,6 +610,8 @@ def run_single_attempt(
                     "subject": athlete_turn["subject"],
                     "body": athlete_turn["body"],
                     "date_received": synthetic_date_received,
+                    "current_phase": athlete_turn["current_phase"],
+                    "pending_commitments": rendered_pending_commitments,
                 },
             )
 
@@ -418,6 +654,9 @@ def run_single_attempt(
                 transcript.append(coach_reply)
 
                 # Let the athlete react to the silence
+                conversation_directive = _detect_repetition(transcript)
+                if conversation_directive:
+                    repetition_alert_count += 1
                 reaction = athlete_client.react_to_coach_reply(
                     scenario_name=scenario["name"],
                     athlete_brief=scenario["athlete_brief"],
@@ -429,6 +668,9 @@ def run_single_attempt(
                     turn_number=turn_number,
                     evaluation_focus=list(scenario.get("evaluation_focus", [])),
                     communication_style_preferences=communication_style_preferences,
+                    conversation_directive=conversation_directive,
+                    current_phase=athlete_turn["current_phase"],
+                    pending_commitments=rendered_pending_commitments,
                     model_name=athlete_model,
                 )
                 if turn_number < min_turns and not reaction["continue_conversation"]:
@@ -446,6 +688,9 @@ def run_single_attempt(
                     {
                         "phase": "athlete_reaction",
                         "turn": turn_number,
+                        "conversation_directive": conversation_directive,
+                        "current_phase": athlete_turn["current_phase"],
+                        "pending_commitments": rendered_pending_commitments,
                         "reaction": reaction,
                     },
                 )
@@ -540,6 +785,9 @@ def run_single_attempt(
                 },
             )
 
+            conversation_directive = _detect_repetition(transcript)
+            if conversation_directive:
+                repetition_alert_count += 1
             reaction = athlete_client.react_to_coach_reply(
                 scenario_name=scenario["name"],
                 athlete_brief=scenario["athlete_brief"],
@@ -551,6 +799,9 @@ def run_single_attempt(
                 turn_number=turn_number,
                 evaluation_focus=list(scenario.get("evaluation_focus", [])),
                 communication_style_preferences=communication_style_preferences,
+                conversation_directive=conversation_directive,
+                current_phase=athlete_turn["current_phase"],
+                pending_commitments=rendered_pending_commitments,
                 model_name=athlete_model,
             )
             if turn_number < min_turns and not reaction["continue_conversation"]:
@@ -565,12 +816,15 @@ def run_single_attempt(
             athlete_reactions.append(reaction)
             _append_jsonl(
                 transcript_path,
-                {
-                    "phase": "athlete_reaction",
-                    "turn": turn_number,
-                    "reaction": reaction,
-                },
-            )
+                    {
+                        "phase": "athlete_reaction",
+                        "turn": turn_number,
+                        "conversation_directive": conversation_directive,
+                        "current_phase": athlete_turn["current_phase"],
+                        "pending_commitments": rendered_pending_commitments,
+                        "reaction": reaction,
+                    },
+                )
 
             if not reaction["continue_conversation"] and turn_number >= min_turns:
                 stop_reason = reaction["stop_reason"] or "athlete_stopped"
@@ -604,6 +858,8 @@ def run_single_attempt(
         avg_athlete_communication_style_fit = _average(
             reaction["communication_style_fit"] for reaction in athlete_reactions
         )
+        max_consecutive_similar_athlete_messages = _max_consecutive_similar_athlete_messages(transcript)
+        phase_coverage = _phase_coverage(transcript)
         ended_at = _utc_now_iso()
         summary = {
             **base,
@@ -620,6 +876,12 @@ def run_single_attempt(
             "average_athlete_communication_style_fit": avg_athlete_communication_style_fit,
             "issue_tag_counts": _sorted_counter(issue_counts),
             "strength_tag_counts": _sorted_counter(strength_counts),
+            "repetition_alert_count": repetition_alert_count,
+            "max_consecutive_similar_athlete_messages": max_consecutive_similar_athlete_messages,
+            "open_commitments_created": open_commitments_created,
+            "open_commitments_fulfilled": open_commitments_fulfilled,
+            "max_commitment_age_turns": max_commitment_age_turns,
+            "phase_coverage": phase_coverage,
             "final_narrative_summary": _build_run_narrative(
                 turn_count=turn_count,
                 stop_reason=stop_reason,
@@ -628,6 +890,11 @@ def run_single_attempt(
                 avg_scores=avg_scores,
                 issue_counts=issue_counts,
                 strength_counts=strength_counts,
+                repetition_alert_count=repetition_alert_count,
+                max_consecutive_similar_athlete_messages=max_consecutive_similar_athlete_messages,
+                open_commitments_created=open_commitments_created,
+                open_commitments_fulfilled=open_commitments_fulfilled,
+                max_commitment_age_turns=max_commitment_age_turns,
             ),
         }
         _write_json(summary_path, summary)
@@ -649,6 +916,12 @@ def run_single_attempt(
             "average_athlete_communication_style_fit": 0.0,
             "issue_tag_counts": _sorted_counter(issue_counts),
             "strength_tag_counts": _sorted_counter(strength_counts),
+            "repetition_alert_count": repetition_alert_count,
+            "max_consecutive_similar_athlete_messages": _max_consecutive_similar_athlete_messages(transcript),
+            "open_commitments_created": open_commitments_created,
+            "open_commitments_fulfilled": open_commitments_fulfilled,
+            "max_commitment_age_turns": max_commitment_age_turns,
+            "phase_coverage": _phase_coverage(transcript),
             "final_narrative_summary": f"Run failed after {len(athlete_reactions)} completed turns: {exc}",
         }
         _write_json(summary_path, error_summary)
@@ -712,6 +985,12 @@ def aggregate_results(
         error_runs = [run for run in scenario_runs if run["status"] == ERROR]
         avg_turns = _average(run["turn_count"] for run in ok_runs)
         avg_understood = _average(run["average_athlete_felt_understood"] for run in ok_runs)
+        avg_repetition_alerts = _average(run.get("repetition_alert_count", 0) for run in ok_runs)
+        avg_max_similar = _average(run.get("max_consecutive_similar_athlete_messages", 0) for run in ok_runs)
+        avg_phase_coverage = _average(len(run.get("phase_coverage", [])) for run in ok_runs)
+        avg_commitments_created = _average(run.get("open_commitments_created", 0) for run in ok_runs)
+        avg_commitments_fulfilled = _average(run.get("open_commitments_fulfilled", 0) for run in ok_runs)
+        avg_max_commitment_age = _average(run.get("max_commitment_age_turns", 0) for run in ok_runs)
         issue_counter: Counter[str] = Counter()
         strength_counter: Counter[str] = Counter()
         for run in scenario_runs:
@@ -725,6 +1004,12 @@ def aggregate_results(
                 "error_runs": len(error_runs),
                 "avg_turn_count_ok_runs": avg_turns,
                 "avg_athlete_felt_understood_ok_runs": avg_understood,
+                "avg_repetition_alert_count_ok_runs": avg_repetition_alerts,
+                "avg_max_consecutive_similar_athlete_messages_ok_runs": avg_max_similar,
+                "avg_phase_coverage_ok_runs": avg_phase_coverage,
+                "avg_open_commitments_created_ok_runs": avg_commitments_created,
+                "avg_open_commitments_fulfilled_ok_runs": avg_commitments_fulfilled,
+                "avg_max_commitment_age_turns_ok_runs": avg_max_commitment_age,
                 "top_issue_tags": _top_counter_entries(issue_counter),
                 "top_strength_tags": _top_counter_entries(strength_counter),
             }
@@ -756,6 +1041,24 @@ def aggregate_results(
         "runs": runs_sorted,
         "top_issue_tags": _top_counter_entries(total_issue_counter, limit=5),
         "top_strength_tags": _top_counter_entries(total_strength_counter, limit=5),
+        "avg_repetition_alert_count_ok_runs": _average(
+            run.get("repetition_alert_count", 0) for run in runs_sorted if run["status"] == OK
+        ),
+        "avg_max_consecutive_similar_athlete_messages_ok_runs": _average(
+            run.get("max_consecutive_similar_athlete_messages", 0) for run in runs_sorted if run["status"] == OK
+        ),
+        "avg_phase_coverage_ok_runs": _average(
+            len(run.get("phase_coverage", [])) for run in runs_sorted if run["status"] == OK
+        ),
+        "avg_open_commitments_created_ok_runs": _average(
+            run.get("open_commitments_created", 0) for run in runs_sorted if run["status"] == OK
+        ),
+        "avg_open_commitments_fulfilled_ok_runs": _average(
+            run.get("open_commitments_fulfilled", 0) for run in runs_sorted if run["status"] == OK
+        ),
+        "avg_max_commitment_age_turns_ok_runs": _average(
+            run.get("max_commitment_age_turns", 0) for run in runs_sorted if run["status"] == OK
+        ),
     }
 
 
@@ -772,6 +1075,10 @@ def _print_run_line(run: Dict[str, Any]) -> None:
         f"turns={run.get('turn_count', 0)} stop={run.get('stop_reason', 'unknown')} "
         f"felt={run.get('average_athlete_felt_understood', 0.0):.2f} "
         f"ath_style={run.get('average_athlete_communication_style_fit', 0.0):.2f} "
+        f"repetition_alerts={run.get('repetition_alert_count', 0)} "
+        f"max_similar={run.get('max_consecutive_similar_athlete_messages', 0)} "
+        f"commitments={run.get('open_commitments_fulfilled', 0)}/{run.get('open_commitments_created', 0)} "
+        f"phases={len(run.get('phase_coverage', []))} "
         f"scores={score_bits} issues={top_issues}",
         flush=True,
     )

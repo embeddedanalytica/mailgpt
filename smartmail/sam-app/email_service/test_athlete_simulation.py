@@ -77,6 +77,14 @@ class TestAthleteSimulationValidation(unittest.TestCase):
 
 
 class TestAthleteSimulationRunnerCalls(unittest.TestCase):
+    def test_athlete_reaction_prompt_includes_loop_and_follow_through_guardrails(self):
+        prompt = athlete_simulation.ATHLETE_REACTION_SYSTEM_PROMPT
+        self.assertIn("Do not get stuck in loops", prompt)
+        self.assertIn("substantially the same as your previous message", prompt)
+        self.assertIn("follow through within the next 1-2 turns", prompt)
+        self.assertIn("If the payload includes current_phase", prompt)
+        self.assertIn("If the payload includes pending_commitments", prompt)
+
     def test_schemas_bound_scores_to_one_through_five(self):
         athlete_score_schema = athlete_simulation.ATHLETE_REACTION_SCHEMA["properties"]["felt_understood_score"]
         judge_score_schema = athlete_simulation.JUDGE_SCHEMA["properties"]["scores"]["properties"]["understanding"]

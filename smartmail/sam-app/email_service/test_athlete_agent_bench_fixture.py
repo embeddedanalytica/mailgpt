@@ -17,6 +17,16 @@ def _valid_scenario(scenario_id: str = "LAS-001") -> dict:
         "evaluation_focus": ["focus one", "focus two"],
         "min_turns": 10,
         "max_turns": 12,
+        "conversation_phases": [
+            {
+                "label": "intake",
+                "start_turn": 1,
+                "end_turn": 3,
+                "objective": "Share constraints",
+                "suggested_reveals": ["schedule"],
+                "suggested_actions": ["ask for a first plan"],
+            }
+        ],
     }
 
 
@@ -42,6 +52,11 @@ class TestAthleteAgentBenchFixture(unittest.TestCase):
         self.assertIn("half marathon in the autumn", first["athlete_brief"])
         self.assertIn("spring full marathon", first["athlete_brief"])
         self.assertIn("long-horizon", first["judge_brief"])
+        self.assertIn("20-25 turns", first["athlete_brief"])
+        self.assertIn("turns 5-6", first["athlete_brief"])
+        self.assertIn("resting HR roughly 55-75", first["athlete_brief"])
+        self.assertGreaterEqual(len(first["conversation_phases"]), 3)
+        self.assertEqual(first["conversation_phases"][0]["label"], "intake")
         self.assertGreaterEqual(len(first["communication_style_preferences"]), 1)
 
     def test_duplicate_ids_fail(self):
@@ -55,6 +70,26 @@ class TestAthleteAgentBenchFixture(unittest.TestCase):
         scenario["max_turns"] = 12
         fixture = self._write_fixture([scenario])
         with self.assertRaisesRegex(ValueError, "min_turns cannot be greater than max_turns"):
+            athlete_agent_bench_fixture.load_athlete_agent_bench_scenarios(fixture)
+
+    def test_conversation_phases_must_be_ordered_and_within_bounds(self):
+        scenario = _valid_scenario()
+        scenario["conversation_phases"] = [
+            {
+                "label": "late",
+                "start_turn": 4,
+                "end_turn": 6,
+                "objective": "Later",
+            },
+            {
+                "label": "early",
+                "start_turn": 3,
+                "end_turn": 4,
+                "objective": "Earlier",
+            },
+        ]
+        fixture = self._write_fixture([scenario])
+        with self.assertRaisesRegex(ValueError, "start_turn must be greater than the previous end_turn"):
             athlete_agent_bench_fixture.load_athlete_agent_bench_scenarios(fixture)
 
     def test_missing_json_block_fails(self):

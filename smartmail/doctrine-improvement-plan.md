@@ -1,8 +1,31 @@
 # Doctrine Improvement Plan
 
+This document is the **content roadmap** for doctrine quality improvement.
+
+It is no longer the top-level architecture plan for how doctrine should be injected into prompts.
+That role now belongs to [doctrine-redesign.md](./doctrine-redesign.md), which defines the redesigned delivery model:
+
+- compact policy compilation instead of large prose injection
+- explicit boundaries around what can be deterministic
+- preservation of LLM ownership over nuanced coaching judgment
+
+Use this document to decide **what doctrine knowledge the system should contain**.
+Use `doctrine-redesign.md` to decide **how that doctrine should be represented, compiled, and delivered**.
+
 This document outlines the highest-impact improvements to the coaching doctrine system, ordered by expected effect on coaching quality.
 
 The main goal is not to add more text indiscriminately. The goal is to make doctrine more operational so the coaching system makes better decisions under ambiguity, disruption, injury risk, and changing athlete context.
+
+## How To Use This Document
+
+This document answers:
+
+- which doctrine domains should be expanded first
+- which coaching situations deserve the most attention
+- what kinds of doctrine content are likely to improve coaching quality most
+
+For runtime architecture, retrieval strategy, doctrine artifact types, policy compilation, and implementation boundaries, use [doctrine-redesign.md](./doctrine-redesign.md).
+For the practical near-term implementation order, also use the `Immediate Implementation Track` section in [doctrine-redesign.md](./doctrine-redesign.md).
 
 ## Priority 1. Add situation doctrine for common failure modes
 
@@ -26,6 +49,7 @@ Why this matters:
 - Many of the observed failures are situational, not sport-methodology failures.
 - Situational doctrine helps the system handle the exact moments where athletes are most vulnerable to bad coaching decisions.
 - These modules will generalize across many sports.
+- These modules become high-value sources for policy rules, retrieval chunks, and counterexamples.
 
 Expected impact:
 
@@ -50,6 +74,7 @@ Why this matters:
 - Models are better at following explicit operational rules than vague principles.
 - This directly improves behavior in ambiguous coaching situations.
 - These rules can later inform deterministic validation and safety guards.
+- Explicit rules are also the best raw material for atomic policy records.
 
 Expected impact:
 
@@ -78,6 +103,7 @@ Why this matters:
 
 - Counterexamples are often more memorable and actionable for the model than principle statements alone.
 - This directly targets the failure patterns already seen in benches and live sims.
+- Counterexamples are especially valuable as selectively retrieved strategist support.
 
 Expected impact:
 
@@ -112,6 +138,7 @@ Why this matters:
 
 - Universal doctrine alone is not enough for sports with different session meanings and different progression norms.
 - Sport-specific doctrine makes recommendations more precise and believable.
+- Sport doctrine should be represented as both policy rules and retrieval-ready chunks.
 
 Expected impact:
 
@@ -135,6 +162,7 @@ Why this matters:
 - Staged ladders are easier for models to apply consistently than free-form judgment.
 - They help prevent premature progression.
 - They support more coherent next-step coaching.
+- Ladders are especially good candidates for compact active policy snippets.
 
 Expected impact:
 
@@ -168,6 +196,7 @@ Why this matters:
 
 - Athlete differences are not just sport differences.
 - Communication and progression logic should depend on who the athlete is.
+- Archetypes should be treated carefully: use them as soft doctrine context, not rigid deterministic classification.
 
 Expected impact:
 
@@ -190,6 +219,7 @@ Why this matters:
 
 - Many contradictions happen because the system treats sessions as labels instead of physiological tools.
 - Session meaning doctrine improves consistency between risk posture and prescription.
+- Session meaning doctrine should feed both rule compilation and sport-specific retrieval.
 
 Expected impact:
 
@@ -212,6 +242,7 @@ Why this matters:
 
 - Several observed failures are really authority-ordering failures.
 - Without explicit precedence rules, the system can make locally coherent but globally wrong decisions.
+- Authority rules belong in the always-on coaching policy layer, not repeated as long prose.
 
 Expected impact:
 
@@ -237,6 +268,7 @@ Why this structure:
 - It is more usable than long free-form essays.
 - It pushes doctrine toward decision support rather than reference prose.
 - It makes future prompt retrieval and modular composition easier.
+- It is also easier to convert into atomic policy records, retrieval chunks, and counterexample sets.
 
 ## Recommended first implementation batch
 
@@ -258,6 +290,9 @@ Why this batch first:
 
 - Prefer adding doctrine only for sports and situations that appear in real evals or production traffic.
 - Keep doctrine concrete and operational.
+- When adding doctrine, decide up front which parts belong in canonical docs, atomic rules, retrieval chunks, and counterexamples.
+- Do not assume every doctrine addition should become prompt text.
+- Prefer doctrine that improves strategist judgment in real ambiguous cases rather than doctrine that merely sounds comprehensive.
 - Avoid broad educational writing that does not change decisions.
 - When possible, align doctrine modules with future deterministic validators and safety checks.
 
