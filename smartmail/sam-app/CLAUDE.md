@@ -1,6 +1,6 @@
 # sam-app — Build, Deploy, Data Reference
 
-Docs: `README.md` (runtime state), `DECISIONS.md` (arch decisions), `../spec.md` (rule behavior), `../bug-backlog.md` (open bugs)
+Docs: `README.md` (runtime state), `DECISIONS.md` (arch decisions), `../bug-backlog.md` (open bugs)
 
 ## Build & Deploy
 

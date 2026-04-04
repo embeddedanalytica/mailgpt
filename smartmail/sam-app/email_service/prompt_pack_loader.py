@@ -49,6 +49,53 @@ def _require_string_list(payload: Dict[str, Any], *, key: str, path: Path) -> li
     return value
 
 
+def _join_lines(payload: Dict[str, Any], *, key: str, path: Path) -> str:
+    return "\n".join(_require_string_list(payload, key=key, path=path))
+
+
+def _load_split_coaching_reasoning(base: Path) -> Dict[str, Any]:
+    """Load the three-tier split prompt files for coaching reasoning.
+
+    Returns empty strings/dicts when split files are absent (backward compat).
+    """
+    result: Dict[str, Any] = {
+        "constitution": "",
+        "operational_rules": "",
+        "reply_mode_rules": {},
+    }
+
+    constitution_path = base / "constitution.json"
+    operational_path = base / "operational_rules.json"
+    reply_mode_path = base / "reply_mode_rules.json"
+
+    if not constitution_path.exists():
+        return result
+
+    constitution = _load_json(constitution_path)
+    result["constitution"] = _join_lines(constitution, key="lines", path=constitution_path)
+
+    if operational_path.exists():
+        operational = _load_json(operational_path)
+        result["operational_rules"] = "\n".join([
+            _join_lines(operational, key="decision_rules_lines", path=operational_path),
+            "",
+            _join_lines(operational, key="avoid_list_lines", path=operational_path),
+            "",
+            _join_lines(operational, key="week_block_lines", path=operational_path),
+        ])
+
+    if reply_mode_path.exists():
+        reply_modes = _load_json(reply_mode_path)
+        result["reply_mode_rules"] = {
+            "normal_coaching": _join_lines(reply_modes, key="normal_coaching_lines", path=reply_mode_path),
+            "intake": _join_lines(reply_modes, key="intake_lines", path=reply_mode_path),
+            "clarification": _join_lines(reply_modes, key="clarification_lines", path=reply_mode_path),
+            "lightweight_non_planning": _join_lines(reply_modes, key="lightweight_non_planning_lines", path=reply_mode_path),
+        }
+
+    return result
+
+
 @lru_cache(maxsize=None)
 def load_coach_reply_prompt_pack(*, version: str | None = None) -> Dict[str, Any]:
     resolved_version = version or get_active_coach_reply_prompt_pack_version()
@@ -57,25 +104,24 @@ def load_coach_reply_prompt_pack(*, version: str | None = None) -> Dict[str, Any
     response_generation = _load_json(base / "response_generation.json")
     coaching_reasoning = _load_json(base / "coaching_reasoning.json")
 
+    split = _load_split_coaching_reasoning(base)
+
     return {
         "version": resolved_version,
         "manifest": manifest,
         "response_generation": {
-            "directive_system_prompt": "\n".join(
-                _require_string_list(
-                    response_generation,
-                    key="directive_system_prompt_lines",
-                    path=base / "response_generation.json",
-                )
+            "directive_system_prompt": _join_lines(
+                response_generation,
+                key="directive_system_prompt_lines",
+                path=base / "response_generation.json",
             ),
         },
         "coaching_reasoning": {
-            "base_prompt": "\n".join(
-                _require_string_list(
-                    coaching_reasoning,
-                    key="base_prompt_lines",
-                    path=base / "coaching_reasoning.json",
-                )
+            "base_prompt": _join_lines(
+                coaching_reasoning,
+                key="base_prompt_lines",
+                path=base / "coaching_reasoning.json",
             ),
+            **split,
         },
     }

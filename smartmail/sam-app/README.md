@@ -9,12 +9,10 @@ Email-first coaching service built on AWS SAM. Inbound email is the primary UI. 
 Use the repository docs with these roles (paths are repo-relative from the SmartMail project root):
 
 - This README is the current implementation and runtime overview.
-- [`spec.md`](../spec.md) is the source of truth for rule behavior (see also **Authority** note at top of that file: code validators win on conflict).
+- Rule behavior is defined by the implementation in `email_service` and its tests.
 - [`sam-app/DECISIONS.md`](DECISIONS.md) records durable architectural decisions only.
-- [`rule-engine-epic.md`](../rule-engine-epic.md) is the completed implementation record for the rule engine.
-- [`athlete-memory-epic.md`](../athlete-memory-epic.md) is the implemented design record for athlete memory and conversation continuity.
 - [`response-generation-epic.md`](../response-generation-epic.md) is the planned replacement for the current MVP response-composition path.
-- [`BACKLOG.md`](../BACKLOG.md) is **archived** early/foundational backlog—do not use it for current prioritization (see banner in that file).
+- [`BACKLOG.md`](../archive/BACKLOG.md) is **archived** early/foundational backlog—do not use it for current prioritization (see banner in that file).
 
 The current codebase goes beyond the original verification MVP. It now includes:
 
@@ -23,7 +21,7 @@ The current codebase goes beyond the original verification MVP. It now includes:
 - Athlete identity, profile, current-plan, plan-history, and progress-snapshot persistence
 - Athlete memory and continuity persistence on `coach_profiles`
 - LLM-driven conversation-intelligence classification and model routing
-- Deterministic + bounded AI-assisted rule-engine behavior from `spec.md` / `rule-engine-epic.md` (RE1 through RE4)
+- Deterministic + bounded AI-assisted rule-engine behavior from implementation and tests (RE1 through RE4)
 - Strava connect flow and OAuth token storage
 
 ## Current Status
@@ -167,7 +165,7 @@ ready-for-coaching reply
 
 ## Rule Engine Scope
 
-The deterministic rule engine in `sam-app/email_service` currently covers RE1-RE4 described in [`rule-engine-epic.md`](../rule-engine-epic.md) and [`spec.md`](../spec.md):
+The deterministic rule engine in `sam-app/email_service` currently covers RE1-RE4 in the implementation and tests:
 
 - canonical contracts and validation
 - event-date guards

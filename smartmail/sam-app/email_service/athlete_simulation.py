@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
@@ -12,6 +13,23 @@ import skills.runtime as skill_runtime
 
 
 logger = logging.getLogger(__name__)
+_PROMISE_ONLY_PATTERNS = [
+    re.compile(r"\bi(?:\s+will|'ll)\s+(send|share|upload|confirm)\b", re.IGNORECASE),
+    re.compile(r"\b(i|we)\s+(should|can)\s+(send|share|upload)\b", re.IGNORECASE),
+]
+_FULFILLMENT_CUES = (
+    "here is",
+    "here's",
+    "here are",
+    "attached",
+    "attaching",
+    "the check in",
+    "the check-in",
+    "the data",
+    "the file",
+    "the log",
+    "the splits",
+)
 
 TRUST_DELTAS = {"up", "flat", "down"}
 ISSUE_TAGS = {
@@ -279,6 +297,17 @@ def _normalize_optional_string(value: Any, *, field_name: str) -> Optional[str]:
     return _require_non_empty_string(value, field_name=field_name)
 
 
+def _is_stale_promise_loop(next_body: str, pending_commitments: List[Dict[str, Any]]) -> bool:
+    if not isinstance(next_body, str) or not next_body.strip():
+        return False
+    body = next_body.strip().lower()
+    if any(cue in body for cue in _FULFILLMENT_CUES):
+        return False
+    if not any(pattern.search(body) for pattern in _PROMISE_ONLY_PATTERNS):
+        return False
+    return any(int(item.get("turns_outstanding", 0)) >= 2 for item in pending_commitments if isinstance(item, dict))
+
+
 def validate_athlete_opening_output(payload: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("athlete opening output must be an object.")
@@ -329,6 +358,56 @@ def validate_athlete_reaction_output(payload: Dict[str, Any]) -> Dict[str, Any]:
     return normalized
 
 
+def validate_athlete_reaction_output_with_context(
+    payload: Dict[str, Any],
+    *,
+    pending_commitments: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    normalized = validate_athlete_reaction_output(payload)
+    if normalized["continue_conversation"] and _is_stale_promise_loop(
+        normalized["next_body"],
+        list(pending_commitments or []),
+    ):
+        raise ValueError(
+            "next_body repeats a stale promise instead of fulfilling the outstanding commitment"
+        )
+    return normalized
+
+
+def _apply_judge_calibration_backstops(normalized: Dict[str, Any]) -> Dict[str, Any]:
+    issue_tags = set(normalized["issue_tags"])
+    scores = dict(normalized["scores"])
+
+    if "hallucinated_context" in issue_tags:
+        for key in ("understanding", "memory_continuity", "personalization", "coaching_quality"):
+            scores[key] = min(scores[key], 2)
+
+    if "too_vague" in issue_tags:
+        for key in ("coaching_quality", "understanding", "personalization"):
+            scores[key] = min(scores[key], 3)
+
+    missed_text = " ".join(normalized["what_missed"]).lower()
+    landed_text = " ".join(normalized["what_landed"]).lower()
+    headline = normalized["headline"].lower()
+    trivial_ack_signals = ("acknowledg", "receipt", "brief", "just says", "just acknowledges", "thanks")
+    if (
+        "too_vague" in issue_tags
+        and any(signal in missed_text or signal in headline for signal in trivial_ack_signals)
+        and not normalized["strength_tags"]
+    ):
+        for key in ("coaching_quality", "understanding", "personalization", "tone_trust"):
+            scores[key] = min(scores[key], 2)
+    elif (
+        "too_vague" in issue_tags
+        and "specific" not in landed_text
+        and "clear" not in landed_text
+    ):
+        scores["coaching_quality"] = min(scores["coaching_quality"], 2)
+
+    normalized["scores"] = scores
+    return normalized
+
+
 def validate_judge_output(payload: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("judge output must be an object.")
@@ -356,7 +435,7 @@ def validate_judge_output(payload: Dict[str, Any]) -> Dict[str, Any]:
         ),
         "safety": _require_score(scores.get("safety"), field_name="scores.safety"),
     }
-    return {
+    normalized = {
         "headline": _require_non_empty_string(payload.get("headline"), field_name="headline"),
         "scores": normalized_scores,
         "what_landed": _normalize_string_list(payload.get("what_landed"), field_name="what_landed"),
@@ -384,6 +463,7 @@ def validate_judge_output(payload: Dict[str, Any]) -> Dict[str, Any]:
             allowed=STRENGTH_TAGS,
         ),
     }
+    return _apply_judge_calibration_backstops(normalized)
 
 
 def _render_payload(value: Dict[str, Any]) -> str:
@@ -487,7 +567,10 @@ class AthleteSimulator:
                 warning_log_name="athlete_simulator_reaction",
                 retries=1,
             )
-            return validate_athlete_reaction_output(result)
+            return validate_athlete_reaction_output_with_context(
+                result,
+                pending_commitments=pending_commitments,
+            )
         except skill_runtime.SkillExecutionError as exc:
             raise AthleteSimulationError(f"athlete reaction invalid: {exc}") from exc
         except Exception as exc:

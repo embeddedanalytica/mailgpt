@@ -10,11 +10,11 @@ from typing import Final
 CORE_UNIVERSAL_FILES: Final[list[str]] = [
     "universal/core.md",
     "universal/authority_and_override_rules.md",
-    "universal/relationship_arc.md",
 ]
 
 # Universal doctrine loaded only when selection rules fire (stable merge order)
 OPTIONAL_UNIVERSAL_ORDER: Final[list[tuple[str, str]]] = [
+    ("relationship_arc", "universal/relationship_arc.md"),
     ("return_from_setback", "universal/return_from_setback.md"),
     ("illness_and_low_energy", "universal/illness_and_low_energy.md"),
     ("travel_and_disruption", "universal/travel_and_disruption.md"),

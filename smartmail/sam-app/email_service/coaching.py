@@ -519,6 +519,7 @@ def _generate_llm_reply(
         last_pipeline_trace = {
             "strategist_input": response_brief.to_dict(),
             "strategist_output": coaching_result["directive"] if coaching_result else None,
+            "strategist_trace": coaching_result.get("doctrine_trace") if coaching_result else None,
             "writer_input": rg_input,
             "writer_output": generated_response,
         }

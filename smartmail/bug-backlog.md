@@ -112,9 +112,10 @@
 **Verification:** Fixed — `profile.py` `_normalize_time_availability()` now accepts `sessions_per_week` (string), `daily_windows` (list of strings), and `availability_notes` (string). Confirmed in LAS-002 sim run (2026-03-28 evening) — `time_availability` populated on all turns with structured daily windows and notes.
 
 ## 20. Continuity bootstrap treats past event dates as active event horizons
-**Status** Open
+**Status** Fixed
 **Context:** In [`sam-app/email_service/continuity_bootstrap.py`](/Users/levonsh/Projects/smartmail/sam-app/email_service/continuity_bootstrap.py), `_parse_event_date()` currently accepts any syntactically valid ISO date from profile state, including stale past races. That means an athlete with an old `event_date` can bootstrap into `goal_horizon_type='event'` and carry `weeks_until_event=0`, which skews continuity context and prompt framing until some later transition corrects it.
 **Desired Behaviour** Continuity bootstrap should only treat future-or-today event dates as active event horizons. Past event dates should be ignored during bootstrap so stale races do not force the athlete into event-mode continuity state.
+**Verification:** Fixed on 2026-04-03 by ignoring past `goal_event_date` values during continuity bootstrap. Covered by `test_past_event_date_ignored` in `sam-app/email_service/test_continuity_state_contract.py`.
 
 ## 22. Strategist reopens resolved conversational topics
 **Status** Invalid
@@ -134,7 +135,7 @@
 **Fix scope:** Response generation skill (fallback for thin directives), possibly `coaching.py` (canned fallback when response-gen fails).
 
 ## 24. Writer hallucinates week numbers and drops directive details
-**Status** Open
+**Status** Fixed
 **Context:** The response-generation writer systematically outputs wrong week/plan numbers and omits structural details from the strategist directive. In LAS-003, the obedience layer corrected `missed_exact_instruction` 10 times across 9 turns (T1–T5, T9, T13, T15, T25). The violations fall into two categories:
 - **Week-number hallucination (5 violations):** Writer outputs the wrong week label — e.g. "Week 2" instead of "Week 1" (T2), "Week 3" (T3), "Week 5" (T5), "Week 15" instead of "Week 4" (T25). The continuity prompt section (`response_generation/prompt.py:79-121`) explicitly injects the correct week number from `continuity_context.weeks_in_current_block`, but the writer ignores or overrides it. A contributing factor: when `_is_narrow_directive()` returns `True` (content_plan ≤2 items and main_message <120 chars), the continuity section is suppressed entirely from the system prompt (`runner.py:36-37`), so the writer has no week guidance in the prompt even though `continuity_context` is in the JSON input.
 - **Dropped plan elements (5 violations):** Writer omits specific structural details that appear in the directive — only 1 strength session instead of 2 (T1), missing confirmation prompt (T4), missing "follow the plan as written" instruction (T9), missing injury-area name and confirmation request (T13), missing MP test details (T15). These are details present in `content_plan` or `main_message` that the writer fails to reproduce.
@@ -144,6 +145,7 @@
 1. `response_generation/prompt.py` — strengthen week-number anchoring: consider always injecting a minimal continuity line (e.g. "You are writing about Week N") even when `_is_narrow_directive()` is true, so the writer always has an authoritative week reference in the system prompt.
 2. `response_generation/prompt.py` — add an explicit instruction: "reproduce every item in content_plan; do not omit or summarize any item."
 3. Consider a post-generation validator that checks the output text against `continuity_context.weeks_in_current_block` and flags week-number mismatches before the obedience layer.
+**Verification:** Fixed on 2026-04-03 by preserving continuity context for narrow directives that mention week or block position in `skills/response_generation/prompt.py` and `skills/response_generation/runner.py`. Covered by `test_narrow_week_anchored_directive_keeps_continuity` in `sam-app/email_service/test_response_generation_skill.py`.
 
 ## 25. Communication style preferences not enforced as hard constraints
 **Status** Invalid
@@ -156,6 +158,7 @@
 **Observed in:** LAS-002 T4–T18 (2026-03-28).
 **Desired Behaviour** Once constraints are established and acknowledged by the athlete, the coach should not re-state them unless the athlete asks for a recap or something changes. Subsequent replies should advance the conversation, not parrot previously agreed terms.
 **Fix scope:** Likely a coaching_reasoning (strategist) issue — the `content_plan` keeps including constraint recaps as plan items. The strategist prompt should recognize when constraints are already established and avoid re-listing them. Alternatively, the writer prompt could instruct: "do not repeat information the athlete has already confirmed unless they ask."
+**Progress (2026-04-03):** Added a structural strategist backstop for existing `answer_first_then_stop` turns in `skills/coaching_reasoning/validator.py` and `skills/coaching_reasoning/runner.py`: when the doctrine trace already classifies a turn as narrow-answer, directives with `content_plan > 2` are rejected and retried once with structural feedback only. This closed the live `TestAnswerOnlyDirective` regression in `sam-app/email_service/test_coaching_reasoning_eval.py`, but `TestOneChangeNoRecap` still fails because that brief is currently classified by existing doctrine as `plan_mutation` / `structure_then_detail`, so bug 26 remains open.
 
 ## 27. Writer fabricates URLs and portal infrastructure
 **Status** Fixed
@@ -174,22 +177,74 @@
 **Fix scope:** Coaching persona / system prompt — the coach's capabilities (email-only, no file attachments, no calendar integration) should be stated clearly and consistently. The writer prompt should include: "you communicate via email only; you cannot attach files, send calendar invites, or provide download links."
 
 ## 29. Coach loses track of previously provided information in longer conversations
-**Status** Open
+**Status** Fixed
 **Context:** In LAS-003 sim (2026-04-01), the coach re-asks for travel dates the athlete already provided — sometimes in the immediately preceding turn. T19: coach says "I didn't receive the actual mid-March dates" after the athlete said "I'm sending exact mid-March travel dates now." T21: coach asks "Please paste the exact mid-March travel start and end dates" after the athlete provided them in T20 and the coach acknowledged receipt. T23: coach re-asks for dates again. T24: coach says "I will not ask for these dates again" — then T25: asks for dates again. In LAS-002, T15 and T19 the coach reopens settled workflow questions (review timing, alert format) that were already locked in prior turns.
 **Observed in:** LAS-003 T19, T21, T23, T25; LAS-002 T15, T19 (2026-04-01 sim runs).
 **Desired Behaviour** Once the athlete provides information that the coach acknowledges receiving, the coach must not re-ask for it. The continuity/memory pipeline should retain key facts provided within the same conversation thread, especially concrete data like dates, confirmed protocols, and locked decisions.
 **Fix scope:** Likely a memory/continuity pipeline issue. The `continuity_summary` and `open_loops` may not be capturing intra-conversation facts reliably, causing the strategist to treat already-answered questions as still open. Investigate whether `memory/unified` retains mid-conversation facts or only cross-session facts.
+**Verification:** Fixed on 2026-04-03 by pruning resolved `open_loops` when the athlete answers them and the coach does not explicitly re-ask. Covered by `test_answered_open_loop_is_pruned_when_coach_moves_on` and `test_open_loop_stays_when_coach_explicitly_reasks_for_same_topic` in `sam-app/email_service/test_memory_refresh_runner.py`.
 
 ## 30. Simulated athlete gets stuck in degenerate repetition loops
-**Status** Open
+**Status** Fixed
 **Context:** In LAS-001 sim (2026-04-01), the simulated athlete gets stuck from T6 onward — every single message for 20 consecutive turns is a variation of "I'll send the full check-in first thing tomorrow AM" listing the same data items (resting HR, sleep, durations, RPEs, HR/HRV, Achilles/hip). The athlete never actually sends the check-in data. A real athlete would either send the data or stop emailing. In LAS-002, the athlete gets into a similar loop around T15-T22 re-confirming the Sunday review window. In LAS-003, mid-turn repetition around travel date confirmations.
 **Observed in:** LAS-001 T6-T25, LAS-002 T15-T22, LAS-003 mid-turns (2026-04-01 sim runs).
 **Desired Behaviour** The simulated athlete should advance the conversation state — send the actual data it promised, introduce new complications, or move to a new topic. After 2-3 turns on the same topic, the athlete should either escalate, provide the data, or shift focus. Degenerate loops produce useless test data and inflate judge scores artificially (the judge gives 4.7-5.0 on trivial ack turns).
 **Fix scope:** Athlete sim prompt or state machine — needs anti-repetition guardrails and a mechanism to advance state (e.g., actually generate check-in data after promising it, move to next week's plan, introduce a new concern).
+**Verification:** Fixed on 2026-04-03 by rejecting stale promise-only athlete replies once a pending commitment has been outstanding across multiple turns. Covered by `test_validate_reaction_rejects_repeated_stale_promise_loop`, `test_validate_reaction_allows_fulfilling_stale_commitment`, and `test_react_to_coach_reply_rejects_stale_promise_loop` in `sam-app/email_service/test_athlete_simulation.py`.
 
 ## 31. Judge over-rewards trivial acknowledgment turns with perfect scores
-**Status** Open
+**Status** Fixed
 **Context:** In LAS-001 sim (2026-04-01), from T9 through T19 the judge consistently awards 4.7-5.0 average scores on turns where the coach says nothing more than "Got it — I'll review your check-in tomorrow" and the athlete repeats the same promise. These turns have zero coaching value — no plan adjustments, no new information, no coaching insight — yet the judge treats them as near-perfect. This inflates the overall sim score and masks real quality issues. The judge correctly catches actual problems (T20: missed Achilles flag, avg=2.9; T22: missing numeric baseline, avg=3.0) but the signal is drowned out by 10+ turns of artificial 5.0s.
 **Observed in:** LAS-001 T9-T19 (2026-04-01 sim run).
 **Desired Behaviour** The judge should penalize stalled conversations where no coaching progress is being made. A turn where the coach merely acknowledges a repeated promise without advancing the coaching relationship should score lower (e.g., 3.0-3.5) to reflect the lack of value delivered. The judge should also flag when the conversation has stalled and the coach should be proactively advancing it.
 **Fix scope:** Judge prompt — add criteria for "conversation progress" as a scoring dimension. A perfect score should require the coach to actually advance the coaching relationship, not just acknowledge a repeated message correctly.
+**Verification:** Fixed on 2026-04-03 by capping judge scores for trivial acknowledgment turns tagged `too_vague`. Covered by `test_validate_judge_output_caps_vague_trivial_ack_turn` in `sam-app/email_service/test_athlete_simulation.py`.
+
+# 32. Coach produces vague or non-decisive guidance when athlete asks for clear direction
+**Status** Open
+**Context:** Across LAS-001, LAS-002, and LAS-003 simulation runs (2026-04-01 / 2026-04-03), the coach frequently defaults to safe, generic, or hedged responses instead of making a clear recommendation when the athlete asks for direction. This is reflected in repeated `too_vague` issue tags across all three runs and lower athlete-perceived understanding (~4.0–4.2) despite high judge scores (~4.4–4.5 coaching_quality). Typical pattern: athlete asks for a concrete choice or next step (e.g., device selection, weekly structure, progression decision), and the coach responds with multiple options, defers the decision back to the athlete, or asks for additional clarification that is not strictly required to act.
+
+Concrete failure modes observed:
+- Responding with 2–4 equivalent options without a clear default recommendation
+- Asking follow-up questions instead of making a reasonable assumption and acting
+- Providing general principles (“keep it conservative”, “listen to your body”) without translating them into an actionable session or decision
+- Avoiding commitment on progression (e.g., whether to introduce intensity, how to adjust volume)
+
+**Desired Behaviour** When the athlete asks for direction, the coach should default to decisive, actionable guidance:
+- Provide one clear recommended option (default) and at most one alternative if necessary
+- Translate guidance into concrete actions (sessions, durations, intensities, schedule changes)
+- Only ask follow-up questions if the answer materially changes the recommendation; otherwise make a reasonable assumption and state it
+- Avoid generic coaching phrases unless paired with a specific action
+
+**Elite Coach Reference:** A high-quality human coach will make a call under uncertainty: “Use Polar H10. It’s the most reliable for your use case. Only consider X if you specifically need Y.” or “Keep this week fully easy: 4 runs, 30–45 minutes, no strides. We’ll reassess after you report back.”
+
+**Fix scope:** Primarily strategist (coaching_reasoning) prompt — enforce a “decisive default” rule and limit option branching. Secondarily writer prompt — ensure recommendations are expressed as concrete actions, not abstract guidance.
+
+# 33. Judge scoring is inflated relative to athlete signal and fails to penalize coaching defects
+**Status** Fixed
+**Context:** Across LAS-001, LAS-002, and LAS-003 runs, judge scores remain consistently high (coaching_quality ~4.3–4.5, tone_trust ~4.8–5.0) even when objective defects are present: vagueness (`too_vague` in all runs), hallucinated context (LAS-002), missed continuity, and unfulfilled commitments. At the same time, athlete-reported “felt understood” is materially lower (~4.0–4.2), indicating a gap between perceived and actual coaching quality.
+
+The judge currently:
+- Correctly identifies some issues via tags (e.g., `too_vague`, `hallucinated_context`) but does not reflect them proportionally in numeric scores
+- Overweights tone and stylistic correctness relative to decision quality and coaching effectiveness
+- Does not sufficiently penalize lack of progress, weak guidance, or failure to close loops
+
+**Observed in:**
+- LAS-002: `hallucinated_context` present while coaching_quality still ~4.48
+- All runs: repeated `too_vague` tags without meaningful score degradation
+- Persistent gap between judge scores (~4.5+) and athlete felt-understood (~4.0)
+
+**Desired Behaviour** Judge scoring should reflect coaching effectiveness, not just correctness of tone:
+- Penalize vague or non-decisive guidance (e.g., reduce coaching_quality when `too_vague` is present)
+- Apply strong penalties for hallucinated context or incorrect references to prior facts
+- Incorporate athlete signal (felt_understood, communication_style_fit) as a moderating factor
+- Introduce a “decision quality / usefulness” dimension: high scores require the coach to move the plan forward, not just respond correctly
+- Ensure that repeated minor defects (e.g., vagueness across multiple turns) compound into lower overall scores
+
+**What judge should catch (examples):**
+- If the coach provides multiple options without a recommendation → score reduction for decision quality
+- If the coach asks unnecessary clarifying questions instead of acting → score reduction for usefulness
+- If hallucinated context is detected → hard cap on coaching_quality for that turn
+
+**Fix scope:** Judge prompt and scoring rubric — rebalance weights toward decision quality and coaching impact, and explicitly tie issue tags (e.g., `too_vague`, `hallucinated_context`) to score penalties. Optionally incorporate athlete feedback as a calibration signal during scoring.
+**Verification:** Fixed on 2026-04-03 by applying deterministic score caps when `hallucinated_context` or severe `too_vague` patterns are present. Covered by `test_validate_judge_output_caps_hallucinated_context_scores` in `sam-app/email_service/test_athlete_simulation.py` and confirmed compatible with `sam-app/email_service/test_prompt_feedback_aggregate.py`.

@@ -25,12 +25,32 @@ _TEXT_STOPWORDS = {
 _REVERSAL_CUE_PATTERNS = [
     re.compile(r"\bno longer\b", re.IGNORECASE),
     re.compile(r"\bused to\b", re.IGNORECASE),
+    re.compile(r"\bswitched\s+from\b.{0,60}\bto\b", re.IGNORECASE),
+    re.compile(r"\bmoved\s+from\b.{0,60}\bto\b", re.IGNORECASE),
+    re.compile(r"\bchanged\s+from\b.{0,60}\bto\b", re.IGNORECASE),
+    re.compile(r"\breplaced\b.{0,60}\bwith\b", re.IGNORECASE),
     re.compile(r"\bnow\b.{0,30}\binstead\b", re.IGNORECASE),
     re.compile(r"\bopened up\b", re.IGNORECASE),
     re.compile(r"\bnot anymore\b", re.IGNORECASE),
     re.compile(r"\bswitched\b.{0,20}\bto\b", re.IGNORECASE),
     re.compile(r"\bchanged\b.{0,20}\bto\b", re.IGNORECASE),
     re.compile(r"\bmoved\b.{0,20}\bto\b", re.IGNORECASE),
+]
+_REQUEST_CUE_PATTERNS = [
+    re.compile(r"\?", re.IGNORECASE),
+    re.compile(r"\bcan you\b", re.IGNORECASE),
+    re.compile(r"\bcould you\b", re.IGNORECASE),
+    re.compile(r"\bplease\b", re.IGNORECASE),
+    re.compile(r"\bwhat\b", re.IGNORECASE),
+    re.compile(r"\bwhich\b", re.IGNORECASE),
+    re.compile(r"\bwhen\b", re.IGNORECASE),
+    re.compile(r"\bwhere\b", re.IGNORECASE),
+    re.compile(r"\bconfirm\b", re.IGNORECASE),
+    re.compile(r"\bsend\b", re.IGNORECASE),
+    re.compile(r"\bshare\b", re.IGNORECASE),
+    re.compile(r"\btell me\b", re.IGNORECASE),
+    re.compile(r"\blet me know\b", re.IGNORECASE),
+    re.compile(r"\breply with\b", re.IGNORECASE),
 ]
 
 
@@ -133,6 +153,64 @@ def _continuity_segments(continuity: Optional[Dict[str, Any]]) -> List[str]:
     return segments
 
 
+def _contains_request_cues(text: str) -> bool:
+    return any(pattern.search(text) for pattern in _REQUEST_CUE_PATTERNS)
+
+
+def _loop_answered_by_athlete(loop: str, inbound_email: str) -> bool:
+    loop_tokens = _normalize_text_tokens(loop)
+    inbound_tokens = _normalize_text_tokens(inbound_email)
+    overlap = loop_tokens & inbound_tokens
+    if len(overlap) >= 3:
+        return True
+    if len(overlap) >= 2 and any(token in loop_tokens for token in {"date", "dates", "day", "days", "time", "times", "travel"}):
+        return True
+    return False
+
+
+def _prune_resolved_open_loops(
+    *,
+    current_continuity: Optional[Dict[str, Any]],
+    interaction_context: Dict[str, Any],
+    next_open_loops: List[str],
+) -> List[str]:
+    if not isinstance(current_continuity, dict):
+        return next_open_loops
+
+    inbound_email = interaction_context.get("inbound_email")
+    coach_reply = interaction_context.get("coach_reply")
+    if not isinstance(inbound_email, str) or not inbound_email.strip():
+        return next_open_loops
+
+    coach_reasked = False
+    resolved_prior_loops: List[str] = []
+    for prior_loop in current_continuity.get("open_loops") or []:
+        if not isinstance(prior_loop, str) or not prior_loop.strip():
+            continue
+        if not _loop_answered_by_athlete(prior_loop, inbound_email):
+            continue
+
+        coach_reasked = (
+            isinstance(coach_reply, str)
+            and _materially_references_fact(coach_reply, {"summary": prior_loop, "fact_key": ""})
+            and _contains_request_cues(coach_reply)
+        )
+        if not coach_reasked:
+            resolved_prior_loops.append(prior_loop)
+
+    if not resolved_prior_loops:
+        return next_open_loops
+
+    return [
+        loop
+        for loop in next_open_loops
+        if not any(
+            _materially_references_fact(loop, {"summary": prior_loop, "fact_key": ""})
+            for prior_loop in resolved_prior_loops
+        )
+    ]
+
+
 def _stale_continuity_carryover_detected(
     *,
     current_continuity: Optional[Dict[str, Any]],
@@ -204,6 +282,13 @@ def _clean_validated_output(
         coach_reply = interaction_context.get("coach_reply")
         if isinstance(coach_reply, str) and coach_reply.strip():
             continuity["last_recommendation"] = coach_reply.strip()
+
+    continuity = validated["continuity"]
+    continuity["open_loops"] = _prune_resolved_open_loops(
+        current_continuity=current_continuity,
+        interaction_context=interaction_context,
+        next_open_loops=list(continuity["open_loops"]),
+    )
 
     if _stale_continuity_carryover_detected(
         current_continuity=current_continuity,

@@ -76,6 +76,19 @@ def _is_narrow_directive(brief: Dict[str, Any]) -> bool:
     return True
 
 
+def _directive_mentions_training_position(brief: Dict[str, Any]) -> bool:
+    """Return True when the directive references week/block positioning."""
+    directive = brief.get("coaching_directive", {})
+    parts = [
+        directive.get("opening") or "",
+        directive.get("main_message") or "",
+        *list(directive.get("content_plan") or []),
+        *list(directive.get("avoid") or []),
+    ]
+    text = " ".join(str(part) for part in parts).lower()
+    return "week" in text or "block" in text
+
+
 def build_continuity_prompt_section(continuity_context: Optional[Dict[str, Any]]) -> str:
     """Render a continuity context section to append to the system prompt.
 
@@ -104,14 +117,8 @@ def build_continuity_prompt_section(continuity_context: Optional[Dict[str, Any]]
         "",
         "Week and block reference rules:",
         "- When referring to the athlete's position in training, use the week number and block focus above "
-        "as the default source.",
-        "- NEVER calculate, guess, or invent week numbers. If continuity_context says week 1, it is week 1 — "
-        "even if the conversation has spanned multiple turns.",
-        "- Do not say 'Week 3' when continuity_context says week 1. Do not say 'five weeks into the block' "
-        "when continuity_context says week 2. The number here is the only correct number.",
+        "as the default source. Never calculate, guess, or invent week numbers.",
         "- Do not invent continuity, block history, or phase durations beyond what is provided here.",
-        "",
-        "IMPORTANT — athlete override rule:",
         "- If the athlete explicitly corrects a week number, block label, or phase name in their current "
         "message, follow the athlete's correction. The athlete's latest explicit instruction overrides "
         "continuity_context values.",

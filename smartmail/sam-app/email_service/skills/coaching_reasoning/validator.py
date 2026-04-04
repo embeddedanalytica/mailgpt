@@ -48,7 +48,12 @@ def _validate_continuity_recommendation(
         ) from exc
 
 
-def validate_coaching_directive(payload: Dict[str, Any]) -> Dict[str, Any]:
+def validate_coaching_directive(
+    payload: Dict[str, Any],
+    *,
+    response_shape: Optional[str] = None,
+    turn_purpose: Optional[str] = None,
+) -> Dict[str, Any]:
     """Validate and normalize an LLM-produced coaching directive.
 
     Returns a clean dict with only the expected fields.
@@ -109,4 +114,12 @@ def validate_coaching_directive(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
     if continuity_rec is not None:
         result["continuity_recommendation"] = continuity_rec
+    if (
+        response_shape == "answer_first_then_stop"
+        and turn_purpose == "lightweight_answer"
+        and len(result["content_plan"]) > 2
+    ):
+        raise CoachingReasoningError(
+            "directive too broad for answer-first turn"
+        )
     return result

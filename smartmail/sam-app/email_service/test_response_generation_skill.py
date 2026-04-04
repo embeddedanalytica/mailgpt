@@ -12,6 +12,7 @@ from skills.response_generation.errors import (
 )
 from skills.response_generation.prompt import (
     DIRECTIVE_SYSTEM_PROMPT,
+    _directive_mentions_training_position,
     build_directive_constraints_section,
     _content_plan_has_decision,
     _is_narrow_directive,
@@ -298,6 +299,11 @@ class TestPromptPackWriterInstructionFidelity(unittest.TestCase):
         self.assertIn("cannot meet", DIRECTIVE_SYSTEM_PROMPT.lower())
         self.assertIn("physically present", DIRECTIVE_SYSTEM_PROMPT.lower())
 
+    def test_capability_upgrade_rule_present(self):
+        self.assertIn("Never upgrade the coach's capabilities", DIRECTIVE_SYSTEM_PROMPT)
+        self.assertIn("claim files were attached", DIRECTIVE_SYSTEM_PROMPT)
+        self.assertIn("events were released", DIRECTIVE_SYSTEM_PROMPT)
+
 
 class TestDirectiveConstraintsSection(unittest.TestCase):
     """Verify build_directive_constraints_section surfaces avoid and scope locks."""
@@ -418,6 +424,26 @@ class TestContentPlanDecisionDetection(unittest.TestCase):
         self.assertFalse(_content_plan_has_decision([]))
 
 
+class TestContinuityAnchoringDetection(unittest.TestCase):
+    def test_week_reference_requires_continuity_anchor(self):
+        brief = _valid_brief()
+        brief["coaching_directive"]["main_message"] = "Week 4 stays controlled."
+        brief["coaching_directive"]["content_plan"] = ["confirm the week 4 focus"]
+        self.assertTrue(_directive_mentions_training_position(brief))
+
+    def test_block_reference_requires_continuity_anchor(self):
+        brief = _valid_brief()
+        brief["coaching_directive"]["main_message"] = "Stay in this block."
+        brief["coaching_directive"]["content_plan"] = ["hold the current block focus"]
+        self.assertTrue(_directive_mentions_training_position(brief))
+
+    def test_plain_ack_does_not_require_continuity_anchor(self):
+        brief = _valid_brief()
+        brief["coaching_directive"]["main_message"] = "Got it."
+        brief["coaching_directive"]["content_plan"] = ["acknowledge"]
+        self.assertFalse(_directive_mentions_training_position(brief))
+
+
 class TestWriterPromptAssembly(unittest.TestCase):
     """Verify the runner assembles constraints and conditionally trims continuity."""
 
@@ -449,6 +475,20 @@ class TestWriterPromptAssembly(unittest.TestCase):
         }
         prompt = ResponseGenerationLLM._select_prompt(brief)
         self.assertIn("Training continuity context", prompt)
+
+    def test_narrow_week_anchored_directive_keeps_continuity(self):
+        brief = _valid_brief()
+        brief["coaching_directive"]["main_message"] = "Week 2 stays controlled."
+        brief["coaching_directive"]["content_plan"] = ["confirm week 2 focus"]
+        brief["continuity_context"] = {
+            "goal_horizon_type": "event",
+            "current_phase": "base",
+            "current_block_focus": "rebuild_consistency",
+            "weeks_in_current_block": 2,
+        }
+        prompt = ResponseGenerationLLM._select_prompt(brief)
+        self.assertIn("Training continuity context", prompt)
+        self.assertIn("week 2", prompt.lower())
 
     def test_avoid_items_appear_in_assembled_prompt(self):
         brief = _valid_brief()

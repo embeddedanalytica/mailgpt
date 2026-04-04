@@ -75,6 +75,79 @@ class TestAthleteSimulationValidation(unittest.TestCase):
             "Protect Friday as the light day and keep the harder session earlier in the week.",
         )
 
+    def test_validate_judge_output_caps_vague_trivial_ack_turn(self):
+        payload = _valid_judge_payload()
+        payload["headline"] = "Brief acknowledgment with little substance."
+        payload["what_landed"] = []
+        payload["what_missed"] = ["Reply just acknowledges the message and stays generic."]
+        payload["issue_tags"] = ["too_vague"]
+        payload["strength_tags"] = []
+        payload["scores"] = {
+            "understanding": 4,
+            "memory_continuity": 4,
+            "personalization": 4,
+            "coaching_quality": 5,
+            "tone_trust": 4,
+            "communication_style_fit": 4,
+            "safety": 5,
+        }
+
+        validated = athlete_simulation.validate_judge_output(payload)
+
+        self.assertLessEqual(validated["scores"]["coaching_quality"], 2)
+        self.assertLessEqual(validated["scores"]["understanding"], 2)
+        self.assertLessEqual(validated["scores"]["personalization"], 2)
+
+    def test_validate_judge_output_caps_hallucinated_context_scores(self):
+        payload = _valid_judge_payload()
+        payload["issue_tags"] = ["hallucinated_context"]
+        payload["scores"] = {
+            "understanding": 5,
+            "memory_continuity": 5,
+            "personalization": 5,
+            "coaching_quality": 5,
+            "tone_trust": 4,
+            "communication_style_fit": 4,
+            "safety": 5,
+        }
+
+        validated = athlete_simulation.validate_judge_output(payload)
+
+        self.assertLessEqual(validated["scores"]["understanding"], 2)
+        self.assertLessEqual(validated["scores"]["memory_continuity"], 2)
+        self.assertLessEqual(validated["scores"]["personalization"], 2)
+        self.assertLessEqual(validated["scores"]["coaching_quality"], 2)
+
+    def test_validate_reaction_rejects_repeated_stale_promise_loop(self):
+        payload = _valid_reaction_payload()
+        payload["next_body"] = "I'll send the weekly check-in tomorrow."
+        with self.assertRaisesRegex(ValueError, "stale promise"):
+            athlete_simulation.validate_athlete_reaction_output_with_context(
+                payload,
+                pending_commitments=[
+                    {
+                        "what": "send the weekly check in tomorrow",
+                        "promised_turn": 1,
+                        "turns_outstanding": 2,
+                    }
+                ],
+            )
+
+    def test_validate_reaction_allows_fulfilling_stale_commitment(self):
+        payload = _valid_reaction_payload()
+        payload["next_body"] = "Here is the weekly check-in with sleep and splits."
+        validated = athlete_simulation.validate_athlete_reaction_output_with_context(
+            payload,
+            pending_commitments=[
+                {
+                    "what": "send the weekly check in tomorrow",
+                    "promised_turn": 1,
+                    "turns_outstanding": 2,
+                }
+            ],
+        )
+        self.assertIn("Here is the weekly check-in", validated["next_body"])
+
 
 class TestAthleteSimulationRunnerCalls(unittest.TestCase):
     def test_athlete_reaction_prompt_includes_loop_and_follow_through_guardrails(self):
@@ -155,6 +228,30 @@ class TestAthleteSimulationRunnerCalls(unittest.TestCase):
                     max_turns=12,
                     turn_number=1,
                     evaluation_focus=[],
+                )
+
+    def test_react_to_coach_reply_rejects_stale_promise_loop(self):
+        invalid_payload = _valid_reaction_payload()
+        invalid_payload["next_body"] = "I'll send the weekly check-in tomorrow."
+        with mock.patch.object(skill_runtime, "execute_json_schema", return_value=(invalid_payload, "{}")):
+            with self.assertRaisesRegex(athlete_simulation.AthleteSimulationError, "stale promise"):
+                athlete_simulation.AthleteSimulator.react_to_coach_reply(
+                    scenario_name="sample",
+                    athlete_brief="brief",
+                    transcript=[],
+                    latest_athlete_message={"subject": "s", "body": "b"},
+                    latest_coach_reply={"subject": "Re: s", "text": "reply"},
+                    min_turns=10,
+                    max_turns=12,
+                    turn_number=3,
+                    evaluation_focus=[],
+                    pending_commitments=[
+                        {
+                            "what": "send the weekly check in tomorrow",
+                            "promised_turn": 1,
+                            "turns_outstanding": 2,
+                        }
+                    ],
                 )
 
     def test_evaluate_reply_validates_payload(self):

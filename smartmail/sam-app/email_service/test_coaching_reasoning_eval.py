@@ -82,6 +82,20 @@ def _turn_18_post_recovery_brief():
     return brief
 
 
+def _turn_19_fully_aerobic_brief():
+    """Turn 19: Athlete asks whether strides are compatible with a fully aerobic week."""
+    brief = _turn_18_post_recovery_brief()
+    brief["decision_context"]["weeks_in_coaching"] = 19
+    brief["delivery_context"]["inbound_body"] = (
+        "Question for you: since things are stable again, should I add strides after one "
+        "easy run, or keep everything fully aerobic for now?"
+    )
+    brief["memory_context"]["continuity_summary"]["last_recommendation"] = (
+        "Keep everything fully aerobic for now while the Achilles stays quiet."
+    )
+    return brief
+
+
 def _turn_27_race_completion_brief():
     """Turn 27: Athlete just finished their goal half marathon in 1:55."""
     brief = _base_brief()
@@ -161,6 +175,42 @@ class TestTurn18PostRecoveryEscalation(unittest.TestCase):
         self.assertTrue(
             any(s in rationale for s in fragility_signals),
             f"Rationale should reference recovery fragility: {self.directive['rationale']}",
+        )
+
+
+@unittest.skipUnless(_LIVE, "ENABLE_LIVE_LLM_CALLS not set")
+class TestTurn19FullyAerobicGuardrail(unittest.TestCase):
+    """A 'fully aerobic' answer must not sneak in strides or other quality."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.result = run_coaching_reasoning_workflow(_turn_19_fully_aerobic_brief())
+        cls.directive = cls.result["directive"]
+
+    def test_avoid_contains_quality_elements(self):
+        avoid_text = " ".join(self.directive["avoid"]).lower()
+        quality_signals = ["strides", "tempo", "interval", "hills", "fast finish", "quality"]
+        self.assertTrue(
+            any(signal in avoid_text for signal in quality_signals),
+            f"Avoid should block quality if staying fully aerobic: {self.directive['avoid']}",
+        )
+
+    def test_main_message_holds_fully_aerobic_line(self):
+        main = self.directive["main_message"].lower()
+        aerobic_signals = ["fully aerobic", "stay aerobic", "keep it aerobic", "all aerobic"]
+        self.assertTrue(
+            any(signal in main for signal in aerobic_signals),
+            f"main_message should answer the question with an aerobic hold: {self.directive['main_message']}",
+        )
+
+    def test_main_message_does_not_smuggle_in_quality(self):
+        main = self.directive["main_message"].lower()
+        forbidden = ["strides", "tempo", "interval", "hill", "fast finish", "pickups"]
+        found = [token for token in forbidden if token in main]
+        self.assertEqual(
+            found,
+            [],
+            f"main_message should not contradict a fully aerobic answer: {self.directive['main_message']}",
         )
 
 
@@ -515,6 +565,37 @@ def _start_from_week_2_brief():
     return brief
 
 
+def _one_change_no_recap_brief():
+    """Athlete wants only the one new change, not a recap of standing constraints."""
+    brief = _base_brief()
+    brief["decision_context"]["risk_flag"] = "green"
+    brief["decision_context"]["risk_recent_history"] = ["green", "green", "green", "green"]
+    brief["decision_context"]["weeks_in_coaching"] = 21
+    brief["delivery_context"] = {
+        "inbound_body": (
+            "Everything still looks the same on my end: four days still works, weekday runs "
+            "still need to finish before 7am, and the Achilles is quiet. I do not need a recap "
+            "of all that. Just tell me the one change for this week."
+        ),
+    }
+    return brief
+
+
+def _pick_one_option_brief():
+    """Athlete asks for a direct choice between two options."""
+    brief = _base_brief()
+    brief["decision_context"]["risk_flag"] = "green"
+    brief["decision_context"]["risk_recent_history"] = ["green", "green", "green", "green"]
+    brief["decision_context"]["weeks_in_coaching"] = 16
+    brief["delivery_context"] = {
+        "inbound_body": (
+            "I want you to make the call: should I add a short Friday easy run this week, "
+            "or keep it at four days? Please pick one rather than giving me both sides."
+        ),
+    }
+    return brief
+
+
 @unittest.skipUnless(_LIVE, "ENABLE_LIVE_LLM_CALLS not set")
 class TestStaleContextScheduleChange(unittest.TestCase):
     """Athlete updates from 4 to 5 days. Directive must reflect the new schedule."""
@@ -621,6 +702,54 @@ class TestStartFromWeek2(unittest.TestCase):
         self.assertNotIn(
             "week 1", main,
             f"main_message should not say 'week 1': {self.directive['main_message']}",
+        )
+
+
+@unittest.skipUnless(_LIVE, "ENABLE_LIVE_LLM_CALLS not set")
+class TestOneChangeNoRecap(unittest.TestCase):
+    """Directive should not restate established constraints when athlete asks for one change."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.result = run_coaching_reasoning_workflow(_one_change_no_recap_brief())
+        cls.directive = cls.result["directive"]
+
+    def test_avoid_blocks_recap_of_standing_constraints(self):
+        avoid_text = " ".join(self.directive["avoid"]).lower()
+        self.assertTrue(
+            any(s in avoid_text for s in ["recap", "unchanged constraints", "four days", "before 7am"]),
+            f"Avoid should block recap of standing constraints: {self.directive['avoid']}",
+        )
+
+    def test_content_plan_stays_tight(self):
+        self.assertLessEqual(
+            len(self.directive["content_plan"]), 2,
+            f"content_plan should stay tight when athlete asked for one change: {self.directive['content_plan']}",
+        )
+
+
+@unittest.skipUnless(_LIVE, "ENABLE_LIVE_LLM_CALLS not set")
+class TestPickOneOption(unittest.TestCase):
+    """Directive should make a clear call when athlete asks for one."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.result = run_coaching_reasoning_workflow(_pick_one_option_brief())
+        cls.directive = cls.result["directive"]
+
+    def test_main_message_makes_a_choice(self):
+        main = self.directive["main_message"].lower()
+        choice_signals = ["keep it at four days", "keep it at 4 days", "add a short friday easy run", "do friday"]
+        self.assertTrue(
+            any(s in main for s in choice_signals),
+            f"main_message should make a concrete choice: {self.directive['main_message']}",
+        )
+
+    def test_avoid_blocks_both_sides_vagueness(self):
+        avoid_text = " ".join(self.directive["avoid"]).lower()
+        self.assertTrue(
+            any(s in avoid_text for s in ["both sides", "multiple options", "pros and cons", "it depends"]),
+            f"Avoid should block vague fence-sitting: {self.directive['avoid']}",
         )
 
 

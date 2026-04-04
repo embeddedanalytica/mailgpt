@@ -3,7 +3,7 @@
 **Archived — not a current product backlog.** Do not use this file for prioritization or planning; it is kept for historical context only. Current runtime and scope live in [sam-app/README.md](sam-app/README.md).
 
 Status: historical/foundational backlog.
-This file captures the early implementation plan for the project. Large parts are now implemented or superseded by the current runtime described in [sam-app/README.md](sam-app/README.md) and by the completed rule-engine record in [rule-engine-epic.md](rule-engine-epic.md).
+This file captures the early implementation plan for the project. Large parts are now implemented or superseded by the current runtime described in [sam-app/README.md](../sam-app/README.md) and by the archived rule-engine record in [rule-engine-epic.md](./rule-engine-epic.md).
 
 ---
 

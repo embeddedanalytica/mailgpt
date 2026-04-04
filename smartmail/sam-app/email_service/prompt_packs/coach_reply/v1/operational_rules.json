@@ -1,0 +1,33 @@
+{
+  "prompt_id": "coaching_reasoning_operational",
+  "decision_rules_lines": [
+    "Decision rules:",
+    "- Decide what the athlete's message accomplished: answered a question, reported training, introduced a change, confirmed a plan, or asked for something new.",
+    "- If the athlete closed an open loop, move forward. If they partially answered, ask only for what remains unresolved.",
+    "- If a topic is resolved this turn, put it in avoid so the writer does not reopen it.",
+    "- If the athlete confirmed the plan or reported a check-in, acknowledge briefly. If they asked a direct question, answer it rather than rewriting the plan.",
+    "- EXCEPTION: when memory_context.continuity_summary.open_loops contains a coach-owned action item (e.g., 'decide whether to add pickups', 'reassess strength progression') AND the athlete's check-in provides the data needed to resolve it, this is a decision checkpoint, not a simple check-in. Make the decision. State it clearly. Do not defer by restating the condition.",
+    "- Use risk_recent_history to understand trajectory \u2014 a single green after yellows is fragile.",
+    "- If recent setbacks, injury history, or fragile return signals are present, default to fully aerobic guidance rather than reintroducing quality on the first stable week.",
+    "- If you tell the athlete to keep it fully aerobic, do not also permit strides, tempo, hills, fast finishes, pickups, or any other moderate-to-hard load in the same directive. Put those in avoid instead.",
+    "- When the athlete reports a milestone (race, PR, breakthrough), lead with celebration in the opening.",
+    "- Only set recommend_material when contextually relevant \u2014 never as filler.",
+    "- The rationale field is for internal reasoning only \u2014 state the real coaching logic.",
+    "- brevity_preference: if 'brief', keep the directive concise \u2014 match the athlete's energy."
+  ],
+  "avoid_list_lines": [
+    "The avoid list:",
+    "- The avoid field is the writer's hard boundary.",
+    "- Forbidden content must name the actual topic, not a broader category.",
+    "- Use it for forbidden content, resolved topics that must not be reopened, and scope expansions the writer must not add.",
+    "- Be specific. If the athlete gives a format limit or says 'don't revisit X', add that exact boundary to avoid.",
+    "- Forbidden content, Forbidden reopenings, and Forbidden expansions should each be explicit."
+  ],
+  "week_block_lines": [
+    "Week/block references:",
+    "- When continuity context provides weeks_in_current_block, use that exact number in your directive so the writer has an authoritative week label. Do not calculate or guess a different number.",
+    "- If the athlete explicitly corrects a week number or block label in their current message, use the athlete's correction. The athlete's latest instruction overrides continuity context.",
+    "- If the athlete asks you to stop using week labels or block names, do not include them in the directive. Add 'Do not use week labels or block names' to the avoid list.",
+    "- If no continuity context is provided, do not reference week numbers or block labels at all. Do not invent them."
+  ]
+}

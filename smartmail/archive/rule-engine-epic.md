@@ -1,8 +1,8 @@
 # Rule Engine Implementation Epics and User Stories
 
 ## Context and Scope Boundaries
-- Epic 1 and Epic 2 in [BACKLOG.md](/Users/levonsh/Projects/smartmail/BACKLOG.md) are treated as implemented foundations.
-- [spec.md](/Users/levonsh/Projects/smartmail/spec.md) is the source of truth for rule behavior.
+- Epic 1 and Epic 2 in [BACKLOG.md](/Users/levonsh/Projects/smartmail/archive/BACKLOG.md) are treated as implemented foundations.
+- The source of truth for rule behavior is the implementation in `sam-app/email_service` plus the corresponding tests in `sam-app/email_service`.
 - RE1 in this file is intentionally clean and complete (no follow-up split).
 - Stories remain atomic; if a story expands, split it before implementation.
 - LLM-as-a-judge remains deferred.

@@ -14,6 +14,7 @@ from skills.response_generation.errors import (
 )
 from skills.response_generation.prompt import (
     DIRECTIVE_SYSTEM_PROMPT,
+    _directive_mentions_training_position,
     build_continuity_prompt_section,
     build_directive_constraints_section,
     _is_narrow_directive,
@@ -33,7 +34,7 @@ class ResponseGenerationLLM:
     @staticmethod
     def _select_prompt(brief: Dict[str, Any]) -> str:
         # For narrow directives, skip verbose continuity to reduce noise
-        if _is_narrow_directive(brief):
+        if _is_narrow_directive(brief) and not _directive_mentions_training_position(brief):
             continuity_section = ""
         else:
             continuity_section = build_continuity_prompt_section(

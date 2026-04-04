@@ -96,6 +96,16 @@ def _neutral_running_brief(**overrides):
     return base
 
 
+def _planning_running_brief(**overrides):
+    base = _neutral_running_brief(
+        delivery_context={
+            "inbound_body": "Can you map next week and tell me what the week should look like?"
+        },
+    )
+    base.update(overrides)
+    return base
+
+
 class TestValidateCoachingDirective(unittest.TestCase):
 
     def test_valid_directive_passes(self):
@@ -185,7 +195,7 @@ class TestBuildSystemPrompt(unittest.TestCase):
         self.assertIn("coaching_directive", prompt)
 
     def test_includes_running_doctrine(self):
-        prompt = build_system_prompt(_neutral_running_brief())
+        prompt = build_system_prompt(_planning_running_brief())
         self.assertIn("Daniels", prompt)
         self.assertIn("easy run paradox", prompt.lower())
 
@@ -200,16 +210,29 @@ class TestBuildSystemPrompt(unittest.TestCase):
         prompt = build_system_prompt(_neutral_running_brief())
         self.assertIn("Coaching methodology:", prompt)
 
+    def test_includes_selector_hints_section(self):
+        prompt = build_system_prompt(_neutral_running_brief())
+        self.assertIn("## Selector hints", prompt)
+        self.assertIn("Turn purpose: simple_acknowledgment", prompt)
+        self.assertIn("Response shape: answer_first_then_stop", prompt)
+
     def test_neutral_brief_omits_situational_doctrine(self):
         prompt = build_system_prompt(_neutral_running_brief())
         self.assertNotIn("Return From Setback", prompt)
         self.assertNotIn("Common Running Prescription Errors", prompt)
+        self.assertNotIn("Daniels", prompt)
 
     def test_setback_brief_includes_return_doctrine(self):
         brief = _neutral_running_brief(
             delivery_context={"inbound_body": "Pain flared again after Tuesday's workout."},
         )
         self.assertIn("Return From Setback", build_system_prompt(brief))
+
+    def test_milestone_brief_includes_relationship_arc(self):
+        brief = _neutral_running_brief(
+            delivery_context={"inbound_body": "I finished the race today and it feels like a real milestone."},
+        )
+        self.assertIn("Coaching Relationship Arc", build_system_prompt(brief))
 
 
 class TestRunnerWithMockedLLM(unittest.TestCase):
@@ -221,13 +244,17 @@ class TestRunnerWithMockedLLM(unittest.TestCase):
 
         from skills.coaching_reasoning.runner import run_coaching_reasoning_workflow
 
-        result = run_coaching_reasoning_workflow(_minimal_brief(), model_name="gpt-4o")
+        result = run_coaching_reasoning_workflow(_planning_running_brief(), model_name="gpt-4o")
 
         self.assertIn("directive", result)
         self.assertIn("doctrine_files_loaded", result)
+        self.assertIn("doctrine_trace", result)
         self.assertEqual(result["directive"]["opening"], "Great to hear the shin is feeling better.")
         self.assertIn("running/methodology.md", result["doctrine_files_loaded"])
         self.assertIn("universal/core.md", result["doctrine_files_loaded"])
+        self.assertEqual(result["doctrine_trace"]["loaded_files"], result["doctrine_files_loaded"])
+        self.assertIn("turn_purpose", result["doctrine_trace"])
+        self.assertIn("situation_tags", result["doctrine_trace"])
 
     @patch("skills.coaching_reasoning.runner.skill_runtime")
     def test_runner_uses_sport_from_brief(self, mock_runtime):
@@ -236,7 +263,7 @@ class TestRunnerWithMockedLLM(unittest.TestCase):
 
         from skills.coaching_reasoning.runner import run_coaching_reasoning_workflow
 
-        result = run_coaching_reasoning_workflow(_minimal_brief(), model_name="gpt-4o")
+        result = run_coaching_reasoning_workflow(_planning_running_brief(), model_name="gpt-4o")
 
         # Should have loaded running files since brief has primary_sport="running"
         self.assertIn("running/methodology.md", result["doctrine_files_loaded"])
@@ -253,7 +280,7 @@ class TestRunnerWithMockedLLM(unittest.TestCase):
 
         from skills.coaching_reasoning.runner import run_coaching_reasoning_workflow
 
-        brief = _minimal_brief()
+        brief = _planning_running_brief()
         del brief["athlete_context"]["primary_sport"]
         result = run_coaching_reasoning_workflow(brief, model_name="gpt-4o")
 
@@ -511,6 +538,63 @@ class TestPromptPackOpenLoopResolution(unittest.TestCase):
         prompt = build_system_prompt(_neutral_running_brief())
         self.assertIn("Make the decision", prompt)
         self.assertIn("Do not defer", prompt)
+
+
+class TestConstitutionSplit(unittest.TestCase):
+    """Verify the three-tier prompt split behaves correctly per reply_mode."""
+
+    def test_constitution_present_for_all_modes(self):
+        for mode in ("normal_coaching", "intake", "clarification", "lightweight_non_planning"):
+            brief = _neutral_running_brief(reply_mode=mode)
+            prompt = build_system_prompt(brief)
+            self.assertIn("COACH IDENTITY", prompt, f"Missing constitution for {mode}")
+            self.assertIn("INSTRUCTION FIDELITY", prompt, f"Missing constitution for {mode}")
+            self.assertIn("expert coaching strategist", prompt, f"Missing constitution for {mode}")
+
+    def test_operational_rules_present_for_all_modes(self):
+        for mode in ("normal_coaching", "intake", "clarification", "lightweight_non_planning"):
+            brief = _neutral_running_brief(reply_mode=mode)
+            prompt = build_system_prompt(brief)
+            self.assertIn("Forbidden content", prompt, f"Missing operational rules for {mode}")
+            self.assertIn("Week/block references", prompt, f"Missing operational rules for {mode}")
+
+    def test_suppress_rules_absent_for_intake(self):
+        brief = _neutral_running_brief(reply_mode="intake")
+        prompt = build_system_prompt(brief)
+        self.assertNotIn("reply_action to 'suppress'", prompt)
+
+    def test_suppress_rules_absent_for_clarification(self):
+        brief = _neutral_running_brief(reply_mode="clarification")
+        prompt = build_system_prompt(brief)
+        self.assertNotIn("reply_action to 'suppress'", prompt)
+
+    def test_suppress_rules_present_for_normal_coaching(self):
+        brief = _neutral_running_brief(reply_mode="normal_coaching")
+        prompt = build_system_prompt(brief)
+        self.assertIn("reply_action to 'suppress'", prompt)
+
+    def test_suppress_rules_present_for_lightweight(self):
+        brief = _neutral_running_brief(reply_mode="lightweight_non_planning")
+        prompt = build_system_prompt(brief)
+        self.assertIn("reply_action to 'suppress'", prompt)
+
+    def test_intake_mode_rules_present_only_for_intake(self):
+        intake_brief = _neutral_running_brief(reply_mode="intake")
+        intake_prompt = build_system_prompt(intake_brief)
+        self.assertIn("Reply-mode rules (intake)", intake_prompt)
+
+        normal_brief = _neutral_running_brief(reply_mode="normal_coaching")
+        normal_prompt = build_system_prompt(normal_brief)
+        self.assertNotIn("Reply-mode rules (intake)", normal_prompt)
+
+    def test_unknown_mode_gets_no_mode_specific_rules(self):
+        brief = _neutral_running_brief(reply_mode="unknown_mode")
+        prompt = build_system_prompt(brief)
+        # Constitution and operational rules still present
+        self.assertIn("COACH IDENTITY", prompt)
+        self.assertIn("Decision rules:", prompt)
+        # No mode-specific section
+        self.assertNotIn("Reply-mode rules", prompt)
 
 
 if __name__ == "__main__":

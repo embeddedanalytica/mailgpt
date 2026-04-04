@@ -1,6 +1,12 @@
-# Doctrine Improvement Plan
+# Doctrine Improvement Plan — RETIRED
 
-This document is the **content roadmap** for doctrine quality improvement.
+> **This document is retired.** The active implementation plan is [doctrine-refactoring.md](./doctrine-refactoring.md).
+>
+> This document remains as historical reference for content improvement ideas. Do not implement from this document. All actionable work, phasing, and implementation context lives in doctrine-refactoring.md.
+
+---
+
+This document was the **content roadmap** for doctrine quality improvement.
 
 It is no longer the top-level architecture plan for how doctrine should be injected into prompts.
 That role now belongs to [doctrine-redesign.md](./doctrine-redesign.md), which defines the redesigned delivery model:

@@ -172,6 +172,12 @@ def validate_candidate_memory_response(data: Any) -> Dict[str, Any]:
             summary = _require_str(f"{prefix}.summary", item.get("summary"))
             candidate["summary"] = summary
 
+            # rule_engine_state cannot mutate existing facts
+            if evidence_source == "rule_engine_state":
+                raise MemoryRefreshError(
+                    f"{prefix}: evidence_source 'rule_engine_state' cannot rewrite existing facts"
+                )
+
             # importance is optional on update
             raw_importance = item.get("importance")
             if raw_importance is not None:

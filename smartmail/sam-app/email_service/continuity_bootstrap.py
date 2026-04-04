@@ -18,7 +18,7 @@ from continuity_state_contract import (
 )
 
 
-def _parse_event_date(profile: Dict[str, Any]) -> Optional[str]:
+def _parse_event_date(profile: Dict[str, Any], today_date: date) -> Optional[str]:
     """Extract a valid future-or-today ISO date string from the profile."""
     raw = profile.get("event_date")
     if raw is None:
@@ -27,7 +27,9 @@ def _parse_event_date(profile: Dict[str, Any]) -> Optional[str]:
     if not raw_str:
         return None
     try:
-        datetime.strptime(raw_str, "%Y-%m-%d")
+        parsed = datetime.strptime(raw_str, "%Y-%m-%d").date()
+        if parsed < today_date:
+            return None
         return raw_str
     except ValueError:
         return None
@@ -67,7 +69,7 @@ def bootstrap_continuity_state(
     Returns:
         A validated ContinuityState with safe defaults.
     """
-    event_date = _parse_event_date(profile)
+    event_date = _parse_event_date(profile, today_date)
 
     if event_date is not None:
         goal_horizon = GoalHorizonType.EVENT.value

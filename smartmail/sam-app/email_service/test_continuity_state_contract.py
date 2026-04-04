@@ -261,6 +261,12 @@ class TestBootstrapContinuityState(unittest.TestCase):
         self.assertEqual(state.goal_horizon_type, "general_fitness")
         self.assertIsNone(state.goal_event_date)
 
+    def test_past_event_date_ignored(self):
+        profile = {"event_date": "2026-03-24"}
+        state = bootstrap_continuity_state(profile, "base", date(2026, 3, 25))
+        self.assertEqual(state.goal_horizon_type, "general_fitness")
+        self.assertIsNone(state.goal_event_date)
+
     def test_result_is_valid_continuity_state(self):
         """Bootstrap output must pass from_dict validation."""
         profile = {"event_date": "2026-06-15"}

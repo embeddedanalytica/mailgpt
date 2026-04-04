@@ -1,4 +1,10 @@
-# Doctrine Redesign Plan
+# Doctrine Redesign Plan — RETIRED
+
+> **This document is retired.** The active implementation plan is [doctrine-refactoring.md](./doctrine-refactoring.md).
+>
+> This document remains as historical reference for the north-star architecture vision. Do not implement from this document. All actionable work, phasing, and implementation context lives in doctrine-refactoring.md.
+
+---
 
 ## Goal
 

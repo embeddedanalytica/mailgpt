@@ -30,6 +30,44 @@ _TEXT_STOPWORDS = {
 }
 
 
+def _is_goal_alias_conflict(existing_fact: Dict[str, Any], *, fact_key: str, summary: str) -> bool:
+    """Return True when a new goal upsert is a close alias of an existing active goal.
+
+    Keep this narrow. The purpose is to avoid duplicate durable goals for simple
+    season-goal paraphrases such as "summer rec league" vs
+    "summer recreational basketball league".
+    """
+    if existing_fact.get("fact_type") != "goal":
+        return False
+
+    existing_key = str(existing_fact.get("fact_key", ""))
+    existing_summary = str(existing_fact.get("summary", ""))
+    if not existing_key or not existing_summary:
+        return False
+
+    combined_existing = f"{existing_key} {existing_summary}".lower()
+    combined_new = f"{fact_key} {summary}".lower()
+
+    rec_markers = ("rec league", "recreational")
+    summer_markers = ("summer",)
+    basketball_markers = ("basketball",)
+
+    existing_has_rec = any(marker in combined_existing for marker in rec_markers)
+    new_has_rec = any(marker in combined_new for marker in rec_markers)
+    if not (existing_has_rec and new_has_rec):
+        return False
+
+    existing_has_summer = any(marker in combined_existing for marker in summer_markers)
+    new_has_summer = any(marker in combined_new for marker in summer_markers)
+    if not (existing_has_summer and new_has_summer):
+        return False
+
+    # If either side names basketball explicitly, treat the rec-league goal as the same goal.
+    existing_has_basketball = any(marker in combined_existing for marker in basketball_markers)
+    new_has_basketball = any(marker in combined_new for marker in basketball_markers)
+    return existing_has_basketball or new_has_basketball
+
+
 class CandidateReducerError(ValueError):
     """Raised when candidate application fails validation."""
 
@@ -161,6 +199,24 @@ def apply_candidate_refresh(
             fact_type = candidate["fact_type"]
             fact_key = normalize_fact_key(fact_type, candidate["fact_key"])
             importance = candidate["importance"]
+            summary = candidate["summary"]
+
+            for existing in facts_by_id.values():
+                if existing.get("fact_key") == fact_key:
+                    raise CandidateReducerError(
+                        "new-create upsert conflicts with existing canonical fact_key "
+                        f"{fact_key!r}; use target_id update path instead"
+                    )
+                if fact_type == "goal" and _is_goal_alias_conflict(
+                    existing,
+                    fact_key=fact_key,
+                    summary=summary,
+                ):
+                    raise CandidateReducerError(
+                        "new-create upsert conflicts with existing goal alias "
+                        f"{existing.get('fact_key')!r}; use target_id update path instead"
+                    )
+
             # Enforce importance floor for high-importance types
             if fact_type in HIGH_IMPORTANCE_TYPES:
                 importance = "high"
@@ -182,7 +238,7 @@ def apply_candidate_refresh(
                 "memory_note_id": new_id,
                 "fact_type": fact_type,
                 "fact_key": fact_key,
-                "summary": candidate["summary"],
+                "summary": summary,
                 "importance": importance,
                 "created_at": now_epoch,
                 "updated_at": now_epoch,
