@@ -39,6 +39,12 @@ REQUIRED_CHECKPOINT_FIELDS = {
     "coach_should_adjust_for",
     "coach_should_not_do",
 }
+OPTIONAL_CHECKPOINT_FIELDS = {
+    "expected_active_storage",
+    "expected_retired_storage",
+    "expected_compiled_prompt",
+    "expected_rejections",
+}
 ALLOWED_FACT_FIELDS = {
     "label",
     "signals",
@@ -56,6 +62,25 @@ ALLOWED_FINAL_ASSERTION_FIELDS = {
     "final_durable_truths",
     "final_retrieval_support",
     "final_retired_truths",
+    "final_active_storage",
+    "final_retired_storage",
+    "final_compiled_prompt",
+    "final_rejections",
+}
+ALLOWED_STORAGE_ASSERTION_FIELDS = {
+    "must_include",
+    "must_exclude",
+    "max_active_counts",
+    "max_retired_counts",
+}
+ALLOWED_COMPILED_ASSERTION_FIELDS = {
+    "must_include",
+    "must_exclude",
+}
+ALLOWED_REJECTION_FIELDS = {
+    "label",
+    "signals",
+    "reason",
 }
 
 
@@ -120,12 +145,88 @@ def _normalize_fact_list(raw: Any, *, field_name: str) -> List[Dict[str, Any]]:
     ]
 
 
+def _normalize_count_map(
+    raw: Any,
+    *,
+    field_name: str,
+) -> Dict[str, int]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"{field_name} must be an object.")
+    normalized: Dict[str, int] = {}
+    for key, value in raw.items():
+        name = _require_string(key, field_name=f"{field_name}.key")
+        if not isinstance(value, int) or value < 0:
+            raise ValueError(f"{field_name}.{name} must be a non-negative integer.")
+        normalized[name] = value
+    return normalized
+
+
+def _normalize_storage_assertion(raw: Any, *, field_name: str) -> Dict[str, Any]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"{field_name} must be an object.")
+    unknown = sorted(set(raw.keys()) - ALLOWED_STORAGE_ASSERTION_FIELDS)
+    if unknown:
+        raise ValueError(f"{field_name} contains unknown fields: {', '.join(unknown)}")
+    return {
+        "must_include": _normalize_fact_list(raw.get("must_include", []), field_name=f"{field_name}.must_include"),
+        "must_exclude": _normalize_fact_list(raw.get("must_exclude", []), field_name=f"{field_name}.must_exclude"),
+        "max_active_counts": _normalize_count_map(raw.get("max_active_counts"), field_name=f"{field_name}.max_active_counts"),
+        "max_retired_counts": _normalize_count_map(raw.get("max_retired_counts"), field_name=f"{field_name}.max_retired_counts"),
+    }
+
+
+def _normalize_compiled_prompt_assertion(raw: Any, *, field_name: str) -> Dict[str, Any]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"{field_name} must be an object.")
+    unknown = sorted(set(raw.keys()) - ALLOWED_COMPILED_ASSERTION_FIELDS)
+    if unknown:
+        raise ValueError(f"{field_name} contains unknown fields: {', '.join(unknown)}")
+    return {
+        "must_include": _normalize_fact_list(raw.get("must_include", []), field_name=f"{field_name}.must_include"),
+        "must_exclude": _normalize_fact_list(raw.get("must_exclude", []), field_name=f"{field_name}.must_exclude"),
+    }
+
+
+def _normalize_rejections(raw: Any, *, field_name: str) -> List[Dict[str, Any]]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError(f"{field_name} must be a list.")
+    normalized: List[Dict[str, Any]] = []
+    for index, item in enumerate(raw, start=1):
+        if not isinstance(item, dict):
+            raise ValueError(f"{field_name}[{index}] must be an object.")
+        unknown = sorted(set(item.keys()) - ALLOWED_REJECTION_FIELDS)
+        if unknown:
+            raise ValueError(f"{field_name}[{index}] contains unknown fields: {', '.join(unknown)}")
+        normalized.append(
+            {
+                "label": _require_string(item.get("label"), field_name=f"{field_name}[{index}].label"),
+                "signals": [
+                    _normalize_signal(signal, field_name=f"{field_name}[{index}].signals[{signal_index}]")
+                    for signal_index, signal in enumerate(item.get("signals", []), start=1)
+                ],
+                "reason": _require_string(item.get("reason"), field_name=f"{field_name}[{index}].reason"),
+            }
+        )
+    return normalized
+
+
 def _normalize_checkpoint(raw: Any, *, field_name: str) -> Dict[str, Any]:
     if not isinstance(raw, dict):
         raise ValueError(f"{field_name} must be an object.")
     missing = sorted(REQUIRED_CHECKPOINT_FIELDS - set(raw.keys()))
     if missing:
         raise ValueError(f"{field_name} is missing fields: {', '.join(missing)}")
+    unknown = sorted(set(raw.keys()) - REQUIRED_CHECKPOINT_FIELDS - OPTIONAL_CHECKPOINT_FIELDS)
+    if unknown:
+        raise ValueError(f"{field_name} contains unknown fields: {', '.join(unknown)}")
     return {
         "label": _require_string(raw.get("label"), field_name=f"{field_name}.label"),
         "durable_truths": _normalize_fact_list(
@@ -151,6 +252,22 @@ def _normalize_checkpoint(raw: Any, *, field_name: str) -> Dict[str, Any]:
         "coach_should_not_do": _normalize_fact_list(
             raw.get("coach_should_not_do"),
             field_name=f"{field_name}.coach_should_not_do",
+        ),
+        "expected_active_storage": _normalize_storage_assertion(
+            raw.get("expected_active_storage"),
+            field_name=f"{field_name}.expected_active_storage",
+        ),
+        "expected_retired_storage": _normalize_storage_assertion(
+            raw.get("expected_retired_storage"),
+            field_name=f"{field_name}.expected_retired_storage",
+        ),
+        "expected_compiled_prompt": _normalize_compiled_prompt_assertion(
+            raw.get("expected_compiled_prompt"),
+            field_name=f"{field_name}.expected_compiled_prompt",
+        ),
+        "expected_rejections": _normalize_rejections(
+            raw.get("expected_rejections"),
+            field_name=f"{field_name}.expected_rejections",
         ),
     }
 
@@ -235,6 +352,22 @@ def _normalize_final_assertions(raw: Any, *, field_name: str) -> Dict[str, Any]:
         "final_retired_truths": _normalize_fact_list(
             raw.get("final_retired_truths", []),
             field_name=f"{field_name}.final_retired_truths",
+        ),
+        "final_active_storage": _normalize_storage_assertion(
+            raw.get("final_active_storage"),
+            field_name=f"{field_name}.final_active_storage",
+        ),
+        "final_retired_storage": _normalize_storage_assertion(
+            raw.get("final_retired_storage"),
+            field_name=f"{field_name}.final_retired_storage",
+        ),
+        "final_compiled_prompt": _normalize_compiled_prompt_assertion(
+            raw.get("final_compiled_prompt"),
+            field_name=f"{field_name}.final_compiled_prompt",
+        ),
+        "final_rejections": _normalize_rejections(
+            raw.get("final_rejections"),
+            field_name=f"{field_name}.final_rejections",
         ),
     }
 

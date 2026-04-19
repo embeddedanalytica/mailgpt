@@ -134,7 +134,7 @@ def lambda_handler(event, context):
                 message_id=email_data.get("message_id"),
             )
             return {"statusCode": 200, "body": "No reply sent due to response-generation failure."}
-        message_id = EmailReplySender.send_reply(email_data, reply_body)
+        message_id = EmailReplySender.send_reply(email_data, reply_body, include_thread_context=True)
         return {"statusCode": 200, "body": f"Reply sent! Message ID: {message_id}"}
 
     except Exception as e:

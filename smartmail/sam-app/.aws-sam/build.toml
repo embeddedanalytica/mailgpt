@@ -5,7 +5,7 @@ codeuri = "/Users/levonsh/Projects/smartmail/sam-app/email_service"
 runtime = "python3.13"
 architecture = "x86_64"
 handler = "app.lambda_handler"
-manifest_hash = "2c6ee24b09816a6f14f95d1698b24ead"
+manifest_hash = "7c797036f584c94ce9d73485bd94e882"
 packagetype = "Zip"
 functions = ["EmailServiceFunction"]
 

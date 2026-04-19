@@ -1,23 +1,23 @@
-# SmartMail — Claude Working Guide
+# SmartMail — agent
 
-Email-first AI coaching service on AWS SAM. Inbound email is the primary UI.
-Pipeline: `SES → SNS → app.py (auth + quota) → business.py → coaching.py → skills/* → reply`
+`SES→SNS→app→business→coaching→skills→reply` (SAM). Lambdas: `email_service` (Python), `action_link_handler` (Python), `email_registration` (Node).
 
-**Lambdas:** `EmailServiceFunction` (email_service/, Python), `mailgptregistration` (email_registration/, Node.js), `ActionLinkHandlerFunction` (action_link_handler/, Python)
+## Invariants
 
-## True Invariants (Never Break)
-
-1. **Security gates** — in order: unregistered → registration reply; unverified → verification email; verified → quota claim. All before any LLM call. Owned by `auth.py` + `rate_limits.py`.
-2. **Rule engine authority** — `rule_engine.py` is sole authority on training state, plan validation, track/deload/archetype selection. No LLM output may override it.
-3. **DynamoDB schema** — table structure is fixed by `template.yaml`. Access patterns must work within existing schema.
-4. **Prompt ownership** — LLM prompts live in skill packages only. `email_copy.py` is transactional copy only.
-
-## Sub-Guides
-
-| Area | Guide |
+| | |
 |---|---|
-| Build, deploy, DynamoDB reference | `sam-app/CLAUDE.md` |
-| Email service pipeline + module map | `sam-app/email_service/CLAUDE.md` |
-| Skill unit model + package index | `sam-app/email_service/skills/CLAUDE.md` |
-| Memory subsystem | `sam-app/email_service/skills/memory/CLAUDE.md` |
-| Response generation skill | `sam-app/email_service/skills/response_generation/CLAUDE.md` |
+| **Gates** | Before any LLM: unregistered→reg; unverified→verify; verified→quota (`auth.py`, `rate_limits.py`). |
+| **Rule engine** | `rule_engine.py` owns plan/state/tracks/deload. LLM output must not override. |
+| **Data** | DynamoDB shape/access = `template.yaml` only. |
+| **Prompts** | `email_service/skills/**` only. `email_copy.py` = transactional copy, not prompts. |
+
+## Principles
+
+- **Coaching quality:** fix in the **LLM layer** (prompt, schema, memory, routing). **Do not** default to regex, heuristics, or other deterministic logic—use that only after LLM-path options are exhausted.
+- **Prompt size:** coaching + doctrine prompts are already **large**; treat size as a **hard constraint**. New/expanded sections need justification; **deleting or tightening** copy is as valid as adding.
+- **Layer boundaries:** `coaching_reasoning`→directive/facts · `response_generation`→surface text · `obedience_eval`→compliance. Fix the owning layer.
+- **Tests:** passing ≠ shipped; behavior must improve.
+
+**Merge bar / inner loop / discipline:** [`AGENTS.md`](AGENTS.md#merge-bar)
+
+**On demand:** [`sam-app/CLAUDE.md`](sam-app/CLAUDE.md) · [`sam-app/email_service/CLAUDE.md`](sam-app/email_service/CLAUDE.md) · [`skills/CLAUDE.md`](sam-app/email_service/skills/CLAUDE.md) · [`skills/memory/CLAUDE.md`](sam-app/email_service/skills/memory/CLAUDE.md) · [`skills/response_generation/CLAUDE.md`](sam-app/email_service/skills/response_generation/CLAUDE.md)

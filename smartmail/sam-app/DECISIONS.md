@@ -101,7 +101,7 @@ Current runtime status belongs in [README.md](/Users/levonsh/Projects/smartmail/
 
 **Persisted shape (AM2 list + continuity):** `memory_notes` and `continuity_summary` are read/written via `dynamodb_models.get_memory_notes`, `replace_memory`, and related helpers.
 
-**Refresh path:** Post-reply refresh is orchestrated in `coaching_memory.py`: the LLM workflow lives under `skills/memory/unified/` (`run_candidate_memory_refresh`), outputs are reduced in `athlete_memory_reducer.py`, and successful writes go through `replace_memory` (same DynamoDB fields as above).
+**Refresh path:** Post-reply refresh is orchestrated in `coaching_memory.py`: the LLM workflow lives under `skills/memory/sectioned/` (`run_sectioned_memory_refresh`), outputs are reduced in `sectioned_memory_reducer.py` (`apply_sectioned_refresh`), and successful writes go through `replace_memory` (same DynamoDB fields as above).
 
 **Response-generation view:** `get_memory_context_for_response_generation` and `response_generation_assembly.build_response_brief` shape memory into the bounded structures the response LLM sees (e.g. salience / backbone-style summaries in the `ResponseBrief` contract). Those structures are contract-level, not a second persistence system.
 

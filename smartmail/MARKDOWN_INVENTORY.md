@@ -15,7 +15,7 @@ These are the highest-value files to keep available when asking an agent to chan
 
 | File | Why it is useful |
 |---|---|
-| `AGENTS.md` | Merge bar and implementation discipline for this repo. |
+| `AGENTS.md` | Merge-bar commands, inner loop, implementation discipline; points to [`CLAUDE.md`](CLAUDE.md) for invariants. |
 | `CLAUDE.md` | Root working guide and invariants. |
 | `sam-app/README.md` | Best current runtime overview and document map. |
 | `sam-app/DECISIONS.md` | Durable architectural decisions. |
@@ -24,7 +24,7 @@ These are the highest-value files to keep available when asking an agent to chan
 | `sam-app/email_service/CLAUDE.md` | Pipeline and module map for the main service. |
 | `sam-app/email_service/TEST_COVERAGE.md` | Test surface map and gaps. |
 | `sam-app/email_service/OBEDIENCE_LAYER_OWNERSHIP.md` | Ownership model for last-mile obedience failures. |
-| `sam-app/e2e/README.md` | Live E2E setup and constraints. |
+| `sam-app/tests/e2e/README.md` | Live E2E setup and constraints. |
 | `test_bench/plan_test_bench.md` | Planner fixture contract and scenarios. |
 | `test_bench/intent_classification_test_bench.md` | Intent-classification fixture contract. |
 | `test_bench/athlete_memory_test_bench.md` | Short-horizon memory fixture contract. |
@@ -51,16 +51,6 @@ These should not be treated as implemented truth, but they still matter for road
 | File | Why it is TBD / active |
 |---|---|
 | `bug-backlog.md` | Active bug list with current desired behavior and verification notes. |
-| `doctrine-refactoring.md` | Current active doctrine implementation plan. |
-| `intent_clasification_refactroing.md` | Refactoring plan for routing vs downstream behavior. |
-| `prompt-feedback-loop-epic.md` | Explicitly `Status: in progress.` |
-| `prompt-feedback-loop-delivery-plan.md` | Delivery sequencing for in-progress prompt feedback loop work. |
-| `prompt-feedback-loop-task-cards.md` | In-progress task breakdown. |
-| `response-generation-epic.md` | Planned design; not current production behavior. |
-| `run-prompt-feedback-loop-implementation-task.md` | Explicitly planned implementation task. |
-| `run-prompt-feedback-loop-spec.md` | Explicitly planned spec. |
-| `archive/advanced-rule-engine.md` | Archived speculative design input; not source of truth. |
-| `archive/coach-spec.md` | Archived parallel design doc; use only for historical reference. |
 
 ## Stale / historical
 
@@ -71,15 +61,30 @@ These should not be used as the main instruction source for new implementation.
 | `archive/BACKLOG.md` | Explicitly marked `historical/foundational backlog`; README says not for current prioritization. |
 | `archive/athlete-memory-epic.md` | Historical implementation record for athlete memory and continuity. |
 | `archive/athlete-memory-epic-m2.md` | Historical planned follow-up epic; no longer treated as active planning authority. |
+| `archive/bug19-memory-design-proposal.md` | Historical memory redesign design proposal. |
+| `archive/doctrine-improvement-plan.md` | Explicitly retired; superseded by archived `archive/doctrine-refactoring.md`. |
+| `archive/doctrine-redesign.md` | Explicitly retired; superseded by archived `archive/doctrine-refactoring.md`. |
+| `archive/doctrine-refactoring.md` | Doctrine implementation plan; moved to archive as historical reference. |
+| `archive/group1-memory-handoff.md` | Historical handoff notes. |
+| `archive/handover19.md` | Historical handoff notes. |
+| `archive/intent_clasification_refactroing.md` | Historical routing/refactor plan. |
 | `archive/major-refactoring.md` | Historical refactoring brief; no longer treated as active planning authority. |
-| `archive/sim-improvement.md` | Historical reliability plan for the athlete simulator. |
+| `archive/memory-redesign-implementation-plan.md` | Historical memory redesign implementation plan. |
+| `archive/prompt-feedback-loop-delivery-plan.md` | Historical prompt-feedback-loop delivery sequencing. |
+| `archive/prompt-feedback-loop-epic.md` | Historical epic; was in-progress planning, now archived. |
+| `archive/prompt-feedback-loop-task-cards.md` | Historical task breakdown. |
+| `archive/remaining-groups-handoff.md` | Historical handoff notes. |
+| `archive/response-generation-epic.md` | Historical response-generation design; not current production behavior. |
 | `archive/rule-engine-epic.md` | Historical implementation record for rule-engine work; no longer treated as active guidance. |
+| `archive/run-prompt-feedback-loop-implementation-task.md` | Historical implementation task spec. |
+| `archive/run-prompt-feedback-loop-spec.md` | Historical closed-loop spec. |
+| `archive/sim-improvement.md` | Historical reliability plan for the athlete simulator. |
 | `archive/spec.md` | Former rule-engine spec; archived because it is no longer accurate enough to be authoritative. |
-| `archive/doctrine-improvement-plan.md` | Explicitly retired in favor of `doctrine-refactoring.md`. |
-| `archive/doctrine-redesign.md` | Explicitly retired in favor of `doctrine-refactoring.md`. |
 | `archive/continuity-state-implementation-plan.md` | Marked `DONE`; historical implementation record. |
 | `archive/last-mile-obedience-implementation-plan.md` | Marked `DONE`; historical implementation record. |
 | `archive/sam-app/email_service/current-context.md` | Date-bound session snapshot (`Last updated: 2026-03-19`); useful only as temporary local context, not durable repo guidance. |
+| `archive/advanced-rule-engine.md` | Archived speculative design input; not source of truth. |
+| `archive/coach-spec.md` | Archived parallel design doc; use only for historical reference. |
 
 ## Generated / third-party
 

@@ -54,9 +54,10 @@
 **Verification:** Confirmed fixed in fresh short-horizon reruns on March 22, 2026 from `/private/tmp/am-short-validate`: `AM-009` passed with `pass_rate=1.0`, `final_score_avg=1.0`, and no stale assumption risks.
 
 ## 10. Basketball season-goal memory is not normalized robustly enough
-**Status** Open
+**Status** Fixed
 **Context:** In `AM-012 run 1` and `AM-012 run 2`, the athlete's goal of training for `summer rec league` was paraphrased in memory, but the durable goal did not remain stable enough to satisfy final durable memory and retrieval checks.
 **Desired Behaviour** Season-goal facts should be canonicalized into a stable durable object so common paraphrases like `summer recreational basketball league` still preserve the athlete's core competitive goal at final retrieval.
+**Verification:** Confirmed fixed on April 18, 2026 via `PYTHONPATH=sam-app/email_service python3 -m unittest -v sam-app/tests/email_service/test_memory_group1_regressions.py`; `test_bug10_basketball_season_goal_paraphrase_is_rejected_as_duplicate_goal_alias` passed, so the paraphrased create path no longer reproduces.
 
 ## 11. New recurring ski-erg session can fail to become durable memory
 **Status** Fixed
@@ -71,24 +72,28 @@
 **Verification:** Confirmed fixed in targeted reruns on March 22, 2026: `AM-014` passed 3/3 and did not keep the old Monday blocker active.
 
 ## 13. Achilles rebuild flow can prescribe tempo work before stability or clinical clearance is established
-**Status** Open
+**Status** Fixed
 **Context:** In [`sam-app/e2e/artifacts/live_coaching_turns_1774158829-678a6ff2.jsonl`](/Users/levonsh/Projects/smartmail/sam-app/e2e/artifacts/live_coaching_turns_1774158829-678a6ff2.jsonl), turn 2 gives an athlete with a recent layoff and mild Achilles tightness a first-week plan that includes `Session C — Short tempo`, even though the coach had just asked whether the athlete was pain-free and whether a clinician had cleared them to resume training. The same flow keeps reintroducing tempo on turns 4, 5, and 6 while the athlete is still in a cautious rebuild and clearance remains unconfirmed later in the run.
 **Desired Behaviour** Early comeback plans for athletes reporting Achilles sensitivity or incomplete return-to-run clearance should default to easy aerobic and low-risk strength/mobility work until the athlete has demonstrated stable symptom response and any necessary clearance is known. The coach should not add tempo or other moderate-hard quality work merely because the athlete is intermediate or available four days per week.
+**Verification:** Confirmed fixed on April 18, 2026 via `ENABLE_LIVE_LLM_CALLS=true PYTHONPATH=sam-app/email_service python3 -m unittest -v sam-app/tests/email_service/test_coaching_reasoning_eval.py`; all `TestTurn18PostRecoveryEscalation` assertions passed, so the live strategist no longer reproduced premature post-rebuild intensity escalation.
 
 ## 14. Coaching reply can contradict its own “fully aerobic” guidance with harder prescribed work
 **Status** Open
 **Context:** In [`sam-app/e2e/artifacts/live_coaching_turns_1774158829-678a6ff2.jsonl`](/Users/levonsh/Projects/smartmail/sam-app/e2e/artifacts/live_coaching_turns_1774158829-678a6ff2.jsonl), turn 19 answers the athlete’s question about whether to keep the week fully aerobic by saying `keep this week fully aerobic`, but the same reply then prescribes a `Wednesday: Tempo session 20–30 minutes at a controlled effort (RPE 6–7)` and also allows optional strides after Monday’s easy run. That makes the guidance internally inconsistent and operationally confusing.
 **Desired Behaviour** When the coach says a week should remain fully aerobic, the prescribed sessions should stay fully aerobic as well. If the system wants to introduce strides or tempo, it should say that explicitly and explain why, rather than mixing incompatible instructions in the same reply.
+**Verification:** Reproduced on April 18, 2026 via `ENABLE_LIVE_LLM_CALLS=true PYTHONPATH=sam-app/email_service python3 -m unittest -v sam-app/tests/email_service/test_coaching_reasoning_eval.py`; `TestTurn19FullyAerobicGuardrail.test_main_message_does_not_smuggle_in_quality` failed because the live directive still mentioned reintroducing `strides` inside the main message.
 
 ## 15. rule_engine_state can mutate durable memory instead of confirm-only
-**Status** Open
+**Status** Fixed
 **Context:** The AM2 durable-memory contract intends `rule_engine_state` to be confirm-only support evidence, but the current candidate validator/reducer path may still allow a targeted `upsert` sourced from `rule_engine_state` to rewrite an existing durable fact.
 **Desired Behaviour** `rule_engine_state` should be allowed to confirm existing durable facts only. It should not create new durable facts, rewrite existing fact summaries, or retire facts.
+**Verification:** Confirmed fixed on April 18, 2026 via `PYTHONPATH=sam-app/email_service python3 -m unittest -v sam-app/tests/email_service/test_memory_group1_regressions.py`; both `test_bug15_rule_engine_state_targeted_upsert_is_rejected` and `test_bug15_rule_engine_state_confirm_is_allowed` passed.
 
 ## 16. New-create upsert can bypass target_id and replace an existing fact by canonical key
-**Status** Open
+**Status** Fixed
 **Context:** The AM2 design is intended to make existing-fact mutation ID-based. But if the model emits a new-create `upsert` with the same canonical key as an existing active fact, the reducer's canonical-key backstop can effectively replace the old fact with the new one, losing stable identity semantics and bypassing the `target_id` requirement.
 **Desired Behaviour** If an active fact with the same canonical key already exists, the system should require an explicit ID-targeted update path rather than allowing a create-and-dedupe fallback to mutate the fact implicitly.
+**Verification:** Confirmed fixed on April 18, 2026 via `PYTHONPATH=sam-app/email_service python3 -m unittest -v sam-app/tests/email_service/test_memory_group1_regressions.py`; `test_bug16_new_create_upsert_with_existing_canonical_key_is_rejected` passed.
 
 ## 17. Reversal backstop can be satisfied by an unrelated targeted update
 **Status** Fixed
@@ -97,14 +102,16 @@
 **Verification:** Fixed on 2026-03-24. Replaced `_candidates_target_schedule_or_constraint` with `_candidates_address_reversal` in `skills/memory/unified/runner.py`. The new function takes existing facts into account: when reversal cues are present and the LLM creates a new schedule/constraint fact without retiring the conflicting existing fact of the same type, the backstop now correctly triggers a retry.
 
 ## 18. Stale schedule/constraint facts survive explicit replacement by athlete
-**Status** Open
+**Status** Fixed
 **Context:** In short-horizon memory bench scenarios (AM-002, AM-006, AM-007, AM-009, AM-011), when an athlete explicitly replaces a recurring schedule or constraint (e.g., "I switched from Tuesday masters to Wednesday nights"), the LLM sometimes creates the new schedule fact without emitting a `retire` candidate for the old one. Because "silence preserves" in AM2, the old stale fact remains active in memory and can influence downstream coaching decisions. A prompt-level "REPLACEMENT IS RETIREMENT" clause and improved reversal backstop were added on 2026-03-24, moving these from 0/3 pass rate toward 2/3, but the LLM still occasionally omits the retire — particularly when the replacement language is indirect or the old fact's phrasing differs from what the athlete references.
 **Desired Behaviour** When an athlete describes switching, replacing, or moving from one schedule/constraint to another, the old fact must be reliably retired in the same candidate batch as the new upsert. The system should not leave stale scheduling assumptions active after an explicit replacement.
+**Verification:** Confirmed fixed on April 18, 2026 via `PYTHONPATH=sam-app/email_service python3 -m unittest -v sam-app/tests/email_service/test_memory_group1_regressions.py`; `test_bug18_reversal_backstop_retries_when_replacement_omits_retire` passed, demonstrating the explicit replacement path now retries and emits the required retire+upsert pair.
 
 ## 19. Durable facts evicted under budget pressure despite high coaching value
-**Status** Open
+**Status** Fixed
 **Context:** In short-horizon memory bench scenarios (AM-005, AM-007, AM-012), important durable facts like primary event goals ("1500 free", "summer rec league") or key schedule anchors ("erg before sunrise", "soccer club") are evicted when the 7-fact budget fills up. The current eviction logic sorts by importance then fact_type then oldest `last_confirmed_at`, but goal and constraint facts forced to "high" importance are never evicted — the losses occur when facts are stored as `schedule` or `other` type at "medium" importance, even though they carry high coaching value. For example, AM-005 loses the athlete's primary competition goal ("1500 free") because it was stored as a medium-importance goal variant, and AM-012 loses "summer rec league" for the same reason.
 **Desired Behaviour** Facts with high coaching value — particularly primary competition goals and core schedule anchors — should survive budget pressure ahead of secondary details. The eviction strategy should better account for coaching relevance, not just the mechanical importance label assigned at creation time.
+**Verification:** Confirmed fixed on April 18, 2026 via `PYTHONPATH=sam-app/email_service python3 -m unittest -v sam-app/tests/email_service/test_memory_group1_regressions.py`; all Bug 19 regressions passed, including `test_bug19_am005_primary_goal_and_compiler_priority_under_sectioned_caps`, `test_bug19_am012_primary_season_goal_retained_compiler_covers_goals`, and `test_bug19_misfiled_goal_as_schedule_survives_schedule_anchor_pressure`.
 
 ## 21. Profile time_availability schema too narrow — daily time windows silently dropped
 **Status** Fixed
@@ -118,14 +125,14 @@
 **Verification:** Fixed on 2026-04-03 by ignoring past `goal_event_date` values during continuity bootstrap. Covered by `test_past_event_date_ignored` in `sam-app/email_service/test_continuity_state_contract.py`.
 
 ## 22. Strategist reopens resolved conversational topics
-**Status** Invalid
+**Status** Open
 **Context:** In LAS-002 sim (2026-03-28), the obedience judge flagged `reopened_resolved_topic` on T4, T8, T13. In LAS-003, it flagged T4, T12, T25. Independent analysis of the actual conversation flow shows the judge is miscalibrated — it treats any *mention* of a topic as "reopening" even when the coach is directly responding to the athlete's own words:
 - **LAS-002 T4, T13:** Athlete explicitly asked "confirm you won't bring up the cleared calf again." Coach replied with a confirmation ("I won't revisit that topic" / "I acknowledge your request and will comply"). Acknowledging a request the athlete made is not reopening.
 - **LAS-002 T8:** Judge flagged "Send the firm SFO/NYC dates when they lock" as re-asking for travel dates. But the athlete themselves said "I'll send the firm SFO/NYC dates as they lock" in the same turn — the topic was never resolved; the athlete kept it open across T3–T25.
 - **LAS-003 T4:** Judge flagged "weekday morning runs" as referencing a forbidden time-of-day. The athlete established this as their own scheduling language in T1 and used it throughout.
 - **LAS-003 T12:** Athlete reported "Hamstring: clear" as part of the agreed MP safety protocol. Coach responding "glad the hamstring is clear" is acknowledging a status update, not reopening.
 - **LAS-003 T25:** Coach asked "did the Week 4 .ics/.csv import correctly?" after athlete said "I've got the files." Borderline — but download ≠ import, and verifying a distinct step is reasonable coaching.
-**Resolution:** Closed as invalid. The obedience judge's `reopened_resolved_topic` detector is too aggressive — it flags confirmations, acknowledgments, and athlete-initiated continuations as violations. The strategist is behaving correctly in all flagged cases.
+**Verification:** Reproduced on April 18, 2026 via `ENABLE_LIVE_LLM_CALLS=true PYTHONPATH=sam-app/email_service python3 -m unittest -v sam-app/tests/email_service/test_coaching_reasoning_eval.py`; `TestConfirmedDetailNotReopened.test_avoid_blocks_scheduling_re_ask` failed because the live directive's `avoid` list did not encode any guard against re-asking a confirmed scheduling detail.
 
 ## 23. Response-generation failures cause multi-turn silence
 **Status** Fixed
@@ -148,9 +155,9 @@
 **Verification:** Fixed on 2026-04-03 by preserving continuity context for narrow directives that mention week or block position in `skills/response_generation/prompt.py` and `skills/response_generation/runner.py`. Covered by `test_narrow_week_anchored_directive_keeps_continuity` in `sam-app/email_service/test_response_generation_skill.py`.
 
 ## 25. Communication style preferences not enforced as hard constraints
-**Status** Invalid
+**Status** Open
 **Context:** Original claim: LAS-002 and LAS-003 athletes stated formatting preferences (bullets, concise) that were intermittently ignored. Investigation of LAS-002 (2026-03-30) found this to be a judge calibration issue, not a real bug. The athlete in LAS-002 asked for "3-5 bullet items" specifically when requesting a weekly plan (T1). On the turns flagged as violations (T4, T6, T25), the athlete's own `communication_style_fit` scores were consistently 4-5, and the athlete never complained about prose vs. bullet format. The judge over-indexed on "must use bullets" for every reply type including short confirmations and acknowledgments where paragraph format is natural and appropriate. T25's issue was a missing control character (U+0014 sim artifact), not a style violation. LAS-003 T4's `comm_style_fit=2` from the judge was contradicted by the athlete's own `communication_style_fit=5`.
-**Resolution:** Closed as invalid. The coach's actual style contract with these athletes — concise, prioritized, no walls of text — was consistently met. Bullet format was used for plan deliveries (where it was requested) and paragraph format for confirmations (where it was appropriate and athlete-approved).
+**Verification:** Reproduced on April 18, 2026 via `ENABLE_LIVE_LLM_CALLS=true PYTHONPATH=sam-app/email_service python3 -m unittest -v sam-app/tests/email_service/test_coaching_reasoning_eval.py`; `TestFormatConstraint.test_avoid_mentions_length_constraint` failed, so the live strategist still does not reliably treat an explicit output-format constraint (`3 lines max`) as a hard instruction.
 
 ## 26. Coach repeats already-established constraints verbatim every turn
 **Status** Open
@@ -159,6 +166,7 @@
 **Desired Behaviour** Once constraints are established and acknowledged by the athlete, the coach should not re-state them unless the athlete asks for a recap or something changes. Subsequent replies should advance the conversation, not parrot previously agreed terms.
 **Fix scope:** Likely a coaching_reasoning (strategist) issue — the `content_plan` keeps including constraint recaps as plan items. The strategist prompt should recognize when constraints are already established and avoid re-listing them. Alternatively, the writer prompt could instruct: "do not repeat information the athlete has already confirmed unless they ask."
 **Progress (2026-04-03):** Added a structural strategist backstop for existing `answer_first_then_stop` turns in `skills/coaching_reasoning/validator.py` and `skills/coaching_reasoning/runner.py`: when the doctrine trace already classifies a turn as narrow-answer, directives with `content_plan > 2` are rejected and retried once with structural feedback only. This closed the live `TestAnswerOnlyDirective` regression in `sam-app/email_service/test_coaching_reasoning_eval.py`, but `TestOneChangeNoRecap` still fails because that brief is currently classified by existing doctrine as `plan_mutation` / `structure_then_detail`, so bug 26 remains open.
+**Verification:** Reproduced again on April 18, 2026 via `ENABLE_LIVE_LLM_CALLS=true PYTHONPATH=sam-app/email_service python3 -m unittest -v sam-app/tests/email_service/test_coaching_reasoning_eval.py`; both `TestOneChangeNoRecap.test_avoid_blocks_recap_of_standing_constraints` and `TestOneChangeNoRecap.test_content_plan_stays_tight` failed.
 
 ## 27. Writer fabricates URLs and portal infrastructure
 **Status** Fixed
@@ -175,6 +183,7 @@
 **Observed in:** LAS-003 T5 vs T12–T13 (2026-03-28).
 **Desired Behaviour** The coach should have a consistent self-model of its capabilities. If it cannot attach files or load calendars, that should remain consistent. The correct behavior is to provide the training plan in email text and let the athlete manually create calendar entries.
 **Fix scope:** Coaching persona / system prompt — the coach's capabilities (email-only, no file attachments, no calendar integration) should be stated clearly and consistently. The writer prompt should include: "you communicate via email only; you cannot attach files, send calendar invites, or provide download links."
+**Verification:** Reproduced on April 18, 2026 via `ENABLE_LIVE_LLM_CALLS=true PYTHONPATH=sam-app/email_service python3 -m unittest -v sam-app/tests/email_service/test_capability_consistency_eval.py`; `test_cross_turn_does_not_invent_file_or_calendar_actions` failed because the writer still offered to attach an `.ics`/`.csv` file after the coach had established the email-only capability boundary.
 
 ## 29. Coach loses track of previously provided information in longer conversations
 **Status** Fixed
@@ -200,7 +209,7 @@
 **Fix scope:** Judge prompt — add criteria for "conversation progress" as a scoring dimension. A perfect score should require the coach to actually advance the coaching relationship, not just acknowledge a repeated message correctly.
 **Verification:** Fixed on 2026-04-03 by capping judge scores for trivial acknowledgment turns tagged `too_vague`. Covered by `test_validate_judge_output_caps_vague_trivial_ack_turn` in `sam-app/email_service/test_athlete_simulation.py`.
 
-# 32. Coach produces vague or non-decisive guidance when athlete asks for clear direction
+## 32. Coach produces vague or non-decisive guidance when athlete asks for clear direction
 **Status** Open
 **Context:** Across LAS-001, LAS-002, and LAS-003 simulation runs (2026-04-01 / 2026-04-03), the coach frequently defaults to safe, generic, or hedged responses instead of making a clear recommendation when the athlete asks for direction. This is reflected in repeated `too_vague` issue tags across all three runs and lower athlete-perceived understanding (~4.0–4.2) despite high judge scores (~4.4–4.5 coaching_quality). Typical pattern: athlete asks for a concrete choice or next step (e.g., device selection, weekly structure, progression decision), and the coach responds with multiple options, defers the decision back to the athlete, or asks for additional clarification that is not strictly required to act.
 
@@ -219,8 +228,9 @@ Concrete failure modes observed:
 **Elite Coach Reference:** A high-quality human coach will make a call under uncertainty: “Use Polar H10. It’s the most reliable for your use case. Only consider X if you specifically need Y.” or “Keep this week fully easy: 4 runs, 30–45 minutes, no strides. We’ll reassess after you report back.”
 
 **Fix scope:** Primarily strategist (coaching_reasoning) prompt — enforce a “decisive default” rule and limit option branching. Secondarily writer prompt — ensure recommendations are expressed as concrete actions, not abstract guidance.
+**Verification:** Reproduced on April 18, 2026 via `ENABLE_LIVE_LLM_CALLS=true PYTHONPATH=sam-app/email_service python3 -m unittest -v sam-app/tests/email_service/test_coaching_reasoning_eval.py`; both `TestPickOneOption.test_main_message_makes_a_choice` and `TestPickOneOption.test_avoid_blocks_both_sides_vagueness` failed.
 
-# 33. Judge scoring is inflated relative to athlete signal and fails to penalize coaching defects
+## 33. Judge scoring is inflated relative to athlete signal and fails to penalize coaching defects
 **Status** Fixed
 **Context:** Across LAS-001, LAS-002, and LAS-003 runs, judge scores remain consistently high (coaching_quality ~4.3–4.5, tone_trust ~4.8–5.0) even when objective defects are present: vagueness (`too_vague` in all runs), hallucinated context (LAS-002), missed continuity, and unfulfilled commitments. At the same time, athlete-reported “felt understood” is materially lower (~4.0–4.2), indicating a gap between perceived and actual coaching quality.
 
@@ -248,3 +258,24 @@ The judge currently:
 
 **Fix scope:** Judge prompt and scoring rubric — rebalance weights toward decision quality and coaching impact, and explicitly tie issue tags (e.g., `too_vague`, `hallucinated_context`) to score penalties. Optionally incorporate athlete feedback as a calibration signal during scoring.
 **Verification:** Fixed on 2026-04-03 by applying deterministic score caps when `hallucinated_context` or severe `too_vague` patterns are present. Covered by `test_validate_judge_output_caps_hallucinated_context_scores` in `sam-app/email_service/test_athlete_simulation.py` and confirmed compatible with `sam-app/email_service/test_prompt_feedback_aggregate.py`.
+
+## 34. Strategist still broadens narrow answer-first questions and triggers duplicate `coaching_directive` calls
+**Status** Open
+**Context:** On complete-profile lightweight question turns, the strategist still often produces an over-broad first draft, fails structural validation, and retries once. The retry usually returns a deliverable answer, but it still broadens beyond the athlete's explicit ask. This adds an extra `coaching_directive` prompt and degrades answer quality. Reproduced on 2026-04-15 with `tools/debug_turn.py` using `me-debug@example.com` and trace file `sam-app/.cache/debug_turn_trace/me-debug_at_example.com.jsonl`, line 34.
+
+Repro message:
+`What else I can try to keep my heartrate under control? For example I noticed that if I watch a movie my heartrate my spike just because the movie is taking an interesting turn. Is this bad for my training? Is the making the signal less reliable?`
+
+Observed behavior:
+- log prints `coaching_reasoning retrying after structural validation failure: directive too broad for answer-first turn`
+- turn fires `coaching_directive` twice
+- final reply still adds adjacent tactics and stale caveats not strictly required by the ask (warm-up routine, search suggestions, knee-soreness caveat, pause-pedaling protocol)
+
+**Desired Behaviour** For `answer_first_then_stop` / lightweight-answer turns, the strategist should answer only the explicit question(s) in the latest athlete message. Prior context may support correctness or safety, but it should not expand the response agenda. A narrow question should result in one strategist call and a narrow answer.
+
+**What was already tried**
+- Validator tightening beyond the existing `content_plan > 2` backstop was attempted and reverted. It exposed worse failure modes, including suppressed blank replies when both strategist attempts failed.
+- The active strategist prompt was already consolidated into the monolithic `v1/coaching_reasoning.json` prompt, but the duplicate-call / over-broad behavior persists.
+- The issue appears to be primarily in strategist scope control, not in memory refresh or validator strictness.
+
+**Fix scope:** `sam-app/email_service/skills/coaching_reasoning` prompt / retry behavior for lightweight answer-first turns.

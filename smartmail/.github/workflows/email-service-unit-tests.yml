@@ -5,12 +5,14 @@ on:
   pull_request:
     paths:
       - "sam-app/email_service/**"
+      - "sam-app/tests/**"
       - ".github/workflows/email-service-unit-tests.yml"
   push:
     branches:
       - main
     paths:
       - "sam-app/email_service/**"
+      - "sam-app/tests/**"
       - ".github/workflows/email-service-unit-tests.yml"
 
 permissions:
@@ -21,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: sam-app/email_service
+        working-directory: sam-app
 
     steps:
       - name: Checkout
@@ -33,10 +35,13 @@ jobs:
           python-version: "3.13"
 
       - name: Install dependencies
+        working-directory: sam-app/email_service
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
           python -m pip install boto3
 
       - name: Run unit tests
-        run: python -m unittest discover -p "test_*.py"
+        env:
+          PYTHONPATH: email_service
+        run: python -m unittest discover -v -s tests/email_service -p "test_*.py"

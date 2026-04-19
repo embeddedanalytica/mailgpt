@@ -16,6 +16,18 @@ Narrow responsibility. Isolated tests. Strict schema validation before output pr
 | `memory/unified/` | Unified memory notes + continuity refresh | refactoring target |
 | `obedience_eval/` | LLM-based last-line compliance checker + correction | new |
 
+## Layer Ownership
+
+Each skill owns a specific domain. Do not bleed knowledge across layers.
+
+| Layer | Owns | Must NOT contain |
+|---|---|---|
+| `coaching_reasoning/` + `doctrine/` | Coaching knowledge: what to say, what numbers are plausible, what's safe, training methodology | Prose style rules, formatting, compliance checks |
+| `response_generation/` | Prose: turning a directive into a polished email | Coaching decisions, plausibility judgments, domain-specific ranges |
+| `obedience_eval/` | Directive compliance: did the writer follow the directive's content_plan, avoid list, and constraints | Coaching knowledge, domain-specific validation, anything not derivable from the directive |
+
+When a coaching quality problem surfaces, diagnose which layer is producing bad output and fix it there. Do not add downstream checks that duplicate upstream responsibility.
+
 ## Design Rules
 
 - **Prompt ownership:** prompts belong here, never in `email_copy.py`.

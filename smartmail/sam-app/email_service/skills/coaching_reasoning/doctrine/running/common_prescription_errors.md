@@ -39,3 +39,6 @@ APPLIES WHEN: Any running recommendation involving load, workout choice, comebac
 - Workout added after inconsistent week
 - Long run stretched after recent pain, illness, or travel
 - Pace prescription despite unstable energy or symptoms
+- Computing a pace target from a goal description (e.g., deriving per-mile pace from "sub-3:30") instead of reading the stored pace from memory — goal descriptions are not pace values; the stored training_baseline has the actual target
+- Writing a number that does not appear in the input — weekly mileage, session yardage, rep counts, and durations must be read from memory facts or plan data, not computed or approximated
+- Implausible magnitudes: weekly run mileage in the hundreds or thousands, swim volumes above 30,000 yards, stride durations above 40 seconds, effort above 100% — any of these signals a fabricated number

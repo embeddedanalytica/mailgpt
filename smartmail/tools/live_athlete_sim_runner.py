@@ -6,7 +6,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import re
+import zlib
 import secrets
 import sys
 import time
@@ -22,7 +24,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 EMAIL_SERVICE_PATH = REPO_ROOT / "sam-app" / "email_service"
-E2E_PATH = REPO_ROOT / "sam-app" / "e2e"
+E2E_PATH = REPO_ROOT / "sam-app" / "tests" / "e2e"
 if str(EMAIL_SERVICE_PATH) not in sys.path:
     sys.path.insert(0, str(EMAIL_SERVICE_PATH))
 if str(E2E_PATH) not in sys.path:
@@ -47,13 +49,19 @@ DEFAULT_OUTPUT_ROOT = REPO_ROOT / "sam-app" / ".cache" / "live-athlete-sim"
 OK = "ok"
 ERROR = "error"
 DEFAULT_SYNTHETIC_DAYS_PER_TURN = 7
-REPETITION_SIMILARITY_THRESHOLD = 0.6
+REPETITION_SIMILARITY_THRESHOLD = 0.5
 ANTI_REPETITION_OVERRIDE = (
     "ANTI-REPETITION OVERRIDE:\n"
     "Your recent messages are too similar. Change direction now.\n"
-    "- If you promised data, send it now\n"
+    "- If you promised data, send it now (real or plausible numbers)\n"
     "- If you already confirmed something, stop reconfirming it\n"
+    "- Change the opening topic or structure—do not reuse the same first paragraph framing\n"
     "- If the exchange has stalled, introduce a concrete update, complication, or next-step question"
+)
+DUPLICATE_SUBJECT_OVERRIDE = (
+    "SUBJECT COLLISION OVERRIDE:\n"
+    "Your subject line is too close to your last email's subject.\n"
+    "Choose a new subject that reflects this week's specific update (one outcome, snag, or question)—not a generic re-title."
 )
 _COMMITMENT_PATTERNS = [
     re.compile(r"\bi(?:\s+will|'ll)\s+(send|share|upload|confirm)\s+([^.!?\n]+)", flags=re.IGNORECASE),
@@ -325,6 +333,167 @@ def _detect_repetition(transcript: List[Dict[str, Any]]) -> Optional[str]:
     return None
 
 
+def _normalize_subject_for_dedup(subject: str) -> str:
+    s = str(subject or "").strip().lower()
+    s = re.sub(r"^re:\s*", "", s, flags=re.IGNORECASE).strip()
+    s = re.sub(r"[^a-z0-9]+", " ", s)
+    return " ".join(s.split())
+
+
+def _merge_conversation_directives(*parts: Optional[str]) -> Optional[str]:
+    cleaned = [str(p).strip() for p in parts if p and str(p).strip()]
+    if not cleaned:
+        return None
+    return "\n\n".join(cleaned)
+
+
+def _rng_for_turn(run_id: str, turn_number: int) -> random.Random:
+    seed = zlib.crc32(f"{run_id}:{turn_number}".encode()) & 0xFFFFFFFF
+    return random.Random(seed)
+
+
+_WORLD_NIGGLES = [
+    "no new niggles worth reporting",
+    "mild left calf tightness after hard days",
+    "right hip feels off when sleep is short",
+    "plantar area a little stiff on first steps",
+    "hamstring fine but glutes feel flat",
+    "soreness in quads after the long effort",
+    "neck/shoulder tension from desk work",
+]
+_WORLD_LIFE = [
+    "work is normal",
+    "a tight deadline stacked the week",
+    "kid sleep regression cut into recovery",
+    "travel threw a couple sessions off",
+    "weather was rough for outdoor sessions",
+    "family schedule shifted morning availability once",
+]
+
+
+def build_simulation_context(
+    *,
+    next_turn_number: int,
+    synthetic_days_per_turn: int,
+    run_id: str,
+    scenario_id: str,
+) -> Dict[str, Any]:
+    rng = _rng_for_turn(run_id, next_turn_number)
+    sleep = round(5.3 + rng.random() * 2.5, 1)
+    stress = rng.choice(["low", "moderate", "high"])
+    niggle = rng.choice(_WORLD_NIGGLES)
+    life = rng.choice(_WORLD_LIFE)
+    days_gap = 0 if next_turn_number <= 1 else int(synthetic_days_per_turn)
+    if days_gap <= 0:
+        cadence = "First email in this coaching thread."
+    elif days_gap == 1:
+        cadence = "About one day since your last email to the coach."
+    else:
+        cadence = (
+            f"About {days_gap} days since your last email to the coach "
+            "(simulate one email per time step; summarize what happened across that gap)."
+        )
+    return {
+        "next_turn_number": next_turn_number,
+        "scenario_id": scenario_id,
+        "days_since_previous_athlete_email": days_gap,
+        "cadence_note": cadence,
+        "world_state": {
+            "typical_sleep_hours_recent": sleep,
+            "stress_level": stress,
+            "body_signal": niggle,
+            "life_noise": life,
+        },
+    }
+
+
+def _extract_sleep_hours_token(body: str) -> Optional[str]:
+    m = re.search(
+        r"sleep[^\n]{0,48}?(\d+(?:\.\d+)?)\s*(?:h|hrs|hours)\b",
+        str(body or ""),
+        flags=re.IGNORECASE,
+    )
+    if m:
+        return m.group(1)
+    m2 = re.search(r"(\d+(?:\.\d+)?)\s*h\b[^\n]{0,40}sleep", str(body or ""), flags=re.IGNORECASE)
+    if m2:
+        return m2.group(1)
+    return None
+
+
+def transcript_quality_lint(transcript: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Heuristic quality signals for athlete realism (warnings, not hard failures)."""
+    athletes: List[Dict[str, Any]] = [
+        item
+        for item in transcript
+        if item.get("role") == "athlete" and str(item.get("body", "")).strip()
+    ]
+    warnings: List[str] = []
+    metrics: Dict[str, Any] = {
+        "athlete_message_count": len(athletes),
+        "max_consecutive_duplicate_subjects": 0,
+        "max_flat_sleep_streak": 0,
+    }
+    if not athletes:
+        return {"warnings": warnings, "metrics": metrics}
+
+    subj_run = 1
+    max_subj = 1
+    prev_sub: Optional[str] = None
+    for item in athletes:
+        sub = _normalize_subject_for_dedup(str(item.get("subject", "")))
+        if prev_sub is not None and sub and sub == prev_sub:
+            subj_run += 1
+            max_subj = max(max_subj, subj_run)
+        else:
+            subj_run = 1
+        prev_sub = sub if sub else None
+    metrics["max_consecutive_duplicate_subjects"] = max_subj
+
+    sleep_tokens: List[Optional[str]] = [_extract_sleep_hours_token(str(item.get("body", ""))) for item in athletes]
+    flat_run = 1
+    max_flat = 1
+    prev_tok: Optional[str] = None
+    for tok in sleep_tokens:
+        if tok and prev_tok and tok == prev_tok:
+            flat_run += 1
+            max_flat = max(max_flat, flat_run)
+        else:
+            flat_run = 1
+        prev_tok = tok
+    metrics["max_flat_sleep_streak"] = max_flat
+
+    if max_subj >= 3:
+        warnings.append(
+            f"max_consecutive_duplicate_subjects={max_subj} (consider stronger subject variety)"
+        )
+    if max_flat >= 5:
+        warnings.append(
+            f"max_flat_sleep_streak={max_flat} (same sleep token across many consecutive emails)"
+        )
+    return {"warnings": warnings, "metrics": metrics}
+
+
+def _athlete_react_with_subject_retry(
+    athlete_client: Any,
+    *,
+    react_kwargs: Dict[str, Any],
+    conversation_directive: Optional[str],
+    previous_athlete_subject: str,
+) -> tuple[Dict[str, Any], int]:
+    """One retry if the model repeats the same subject line as the prior athlete email."""
+    merged = conversation_directive
+    reaction = athlete_client.react_to_coach_reply(**{**react_kwargs, "conversation_directive": merged})
+    if not reaction.get("continue_conversation"):
+        return reaction, 0
+    if _normalize_subject_for_dedup(str(reaction.get("next_subject", ""))) != _normalize_subject_for_dedup(
+        previous_athlete_subject
+    ):
+        return reaction, 0
+    merged2 = _merge_conversation_directives(conversation_directive, DUPLICATE_SUBJECT_OVERRIDE)
+    reaction2 = athlete_client.react_to_coach_reply(**{**react_kwargs, "conversation_directive": merged2})
+    return reaction2, 1
+
 def _resolve_current_phase(scenario: Dict[str, Any], turn_number: int) -> Optional[Dict[str, Any]]:
     for phase in scenario.get("conversation_phases", []) or []:
         if phase["start_turn"] <= turn_number <= phase["end_turn"]:
@@ -526,6 +695,7 @@ def run_single_attempt(
     issue_counts: Counter[str] = Counter()
     strength_counts: Counter[str] = Counter()
     repetition_alert_count = 0
+    subject_duplicate_retries = 0
     pending_commitments: List[Dict[str, Any]] = []
     open_commitments_created = 0
     open_commitments_fulfilled = 0
@@ -550,6 +720,12 @@ def run_single_attempt(
     try:
         harness.prepare_verified_athlete(email_address)
         next_message: Optional[Dict[str, str]] = None
+        opening_ctx = build_simulation_context(
+            next_turn_number=1,
+            synthetic_days_per_turn=synthetic_days_per_turn,
+            run_id=run_id,
+            scenario_id=str(scenario["id"]),
+        )
         if scenario.get("opening_message"):
             opening_body = str(scenario["opening_message"]).strip()
             next_message = {
@@ -565,6 +741,7 @@ def run_single_attempt(
                 min_turns=min_turns,
                 max_turns=max_turns,
                 communication_style_preferences=communication_style_preferences,
+                simulation_context=opening_ctx,
                 model_name=athlete_model,
             )
 
@@ -577,6 +754,12 @@ def run_single_attempt(
                 days=synthetic_days_per_turn * (turn_number - 1)
             )
             synthetic_date_received = _format_rfc2822_utc(synthetic_received_at)
+            sim_ctx = build_simulation_context(
+                next_turn_number=turn_number,
+                synthetic_days_per_turn=synthetic_days_per_turn,
+                run_id=run_id,
+                scenario_id=str(scenario["id"]),
+            )
             athlete_turn = {
                 "role": "athlete",
                 "turn": turn_number,
@@ -584,6 +767,7 @@ def run_single_attempt(
                 "body": str(next_message["body"]).strip(),
                 "date_received": synthetic_date_received,
                 "current_phase": _resolve_current_phase(scenario, turn_number),
+                "simulation_context": sim_ctx,
             }
             transcript.append(athlete_turn)
             pending_commitments, created_now, fulfilled_now, max_age_now = _update_pending_commitments(
@@ -611,6 +795,7 @@ def run_single_attempt(
                     "body": athlete_turn["body"],
                     "date_received": synthetic_date_received,
                     "current_phase": athlete_turn["current_phase"],
+                    "simulation_context": athlete_turn["simulation_context"],
                     "pending_commitments": rendered_pending_commitments,
                 },
             )
@@ -657,22 +842,35 @@ def run_single_attempt(
                 conversation_directive = _detect_repetition(transcript)
                 if conversation_directive:
                     repetition_alert_count += 1
-                reaction = athlete_client.react_to_coach_reply(
-                    scenario_name=scenario["name"],
-                    athlete_brief=scenario["athlete_brief"],
-                    transcript=transcript,
-                    latest_athlete_message=athlete_turn,
-                    latest_coach_reply=coach_reply,
-                    min_turns=min_turns,
-                    max_turns=max_turns,
-                    turn_number=turn_number,
-                    evaluation_focus=list(scenario.get("evaluation_focus", [])),
-                    communication_style_preferences=communication_style_preferences,
-                    conversation_directive=conversation_directive,
-                    current_phase=athlete_turn["current_phase"],
-                    pending_commitments=rendered_pending_commitments,
-                    model_name=athlete_model,
+                next_ctx = build_simulation_context(
+                    next_turn_number=turn_number + 1,
+                    synthetic_days_per_turn=synthetic_days_per_turn,
+                    run_id=run_id,
+                    scenario_id=str(scenario["id"]),
                 )
+                react_kwargs = {
+                    "scenario_name": scenario["name"],
+                    "athlete_brief": scenario["athlete_brief"],
+                    "transcript": transcript,
+                    "latest_athlete_message": athlete_turn,
+                    "latest_coach_reply": coach_reply,
+                    "min_turns": min_turns,
+                    "max_turns": max_turns,
+                    "turn_number": turn_number,
+                    "evaluation_focus": list(scenario.get("evaluation_focus", [])),
+                    "communication_style_preferences": communication_style_preferences,
+                    "current_phase": athlete_turn["current_phase"],
+                    "pending_commitments": rendered_pending_commitments,
+                    "simulation_context": next_ctx,
+                    "model_name": athlete_model,
+                }
+                reaction, subj_retry = _athlete_react_with_subject_retry(
+                    athlete_client,
+                    react_kwargs=react_kwargs,
+                    conversation_directive=conversation_directive,
+                    previous_athlete_subject=athlete_turn["subject"],
+                )
+                subject_duplicate_retries += subj_retry
                 if turn_number < min_turns and not reaction["continue_conversation"]:
                     if not reaction["next_subject"] or not reaction["next_body"]:
                         raise AthleteSimulationError(
@@ -788,22 +986,35 @@ def run_single_attempt(
             conversation_directive = _detect_repetition(transcript)
             if conversation_directive:
                 repetition_alert_count += 1
-            reaction = athlete_client.react_to_coach_reply(
-                scenario_name=scenario["name"],
-                athlete_brief=scenario["athlete_brief"],
-                transcript=transcript,
-                latest_athlete_message=athlete_turn,
-                latest_coach_reply=coach_reply,
-                min_turns=min_turns,
-                max_turns=max_turns,
-                turn_number=turn_number,
-                evaluation_focus=list(scenario.get("evaluation_focus", [])),
-                communication_style_preferences=communication_style_preferences,
-                conversation_directive=conversation_directive,
-                current_phase=athlete_turn["current_phase"],
-                pending_commitments=rendered_pending_commitments,
-                model_name=athlete_model,
+            next_ctx = build_simulation_context(
+                next_turn_number=turn_number + 1,
+                synthetic_days_per_turn=synthetic_days_per_turn,
+                run_id=run_id,
+                scenario_id=str(scenario["id"]),
             )
+            react_kwargs = {
+                "scenario_name": scenario["name"],
+                "athlete_brief": scenario["athlete_brief"],
+                "transcript": transcript,
+                "latest_athlete_message": athlete_turn,
+                "latest_coach_reply": coach_reply,
+                "min_turns": min_turns,
+                "max_turns": max_turns,
+                "turn_number": turn_number,
+                "evaluation_focus": list(scenario.get("evaluation_focus", [])),
+                "communication_style_preferences": communication_style_preferences,
+                "current_phase": athlete_turn["current_phase"],
+                "pending_commitments": rendered_pending_commitments,
+                "simulation_context": next_ctx,
+                "model_name": athlete_model,
+            }
+            reaction, subj_retry = _athlete_react_with_subject_retry(
+                athlete_client,
+                react_kwargs=react_kwargs,
+                conversation_directive=conversation_directive,
+                previous_athlete_subject=athlete_turn["subject"],
+            )
+            subject_duplicate_retries += subj_retry
             if turn_number < min_turns and not reaction["continue_conversation"]:
                 if not reaction["next_subject"] or not reaction["next_body"]:
                     raise AthleteSimulationError(
@@ -860,6 +1071,7 @@ def run_single_attempt(
         )
         max_consecutive_similar_athlete_messages = _max_consecutive_similar_athlete_messages(transcript)
         phase_coverage = _phase_coverage(transcript)
+        transcript_lint = transcript_quality_lint(transcript)
         ended_at = _utc_now_iso()
         summary = {
             **base,
@@ -869,6 +1081,7 @@ def run_single_attempt(
             "email_address": email_address,
             "synthetic_start_datetime": synthetic_start_datetime.isoformat(),
             "synthetic_days_per_turn": synthetic_days_per_turn,
+            "repetition_similarity_threshold": REPETITION_SIMILARITY_THRESHOLD,
             "turn_count": turn_count,
             "stop_reason": stop_reason,
             "average_judge_scores": avg_scores,
@@ -877,11 +1090,13 @@ def run_single_attempt(
             "issue_tag_counts": _sorted_counter(issue_counts),
             "strength_tag_counts": _sorted_counter(strength_counts),
             "repetition_alert_count": repetition_alert_count,
+            "subject_duplicate_retries": subject_duplicate_retries,
             "max_consecutive_similar_athlete_messages": max_consecutive_similar_athlete_messages,
             "open_commitments_created": open_commitments_created,
             "open_commitments_fulfilled": open_commitments_fulfilled,
             "max_commitment_age_turns": max_commitment_age_turns,
             "phase_coverage": phase_coverage,
+            "transcript_quality_lint": transcript_lint,
             "final_narrative_summary": _build_run_narrative(
                 turn_count=turn_count,
                 stop_reason=stop_reason,
@@ -922,6 +1137,9 @@ def run_single_attempt(
             "open_commitments_fulfilled": open_commitments_fulfilled,
             "max_commitment_age_turns": max_commitment_age_turns,
             "phase_coverage": _phase_coverage(transcript),
+            "repetition_similarity_threshold": REPETITION_SIMILARITY_THRESHOLD,
+            "subject_duplicate_retries": subject_duplicate_retries,
+            "transcript_quality_lint": transcript_quality_lint(transcript),
             "final_narrative_summary": f"Run failed after {len(athlete_reactions)} completed turns: {exc}",
         }
         _write_json(summary_path, error_summary)

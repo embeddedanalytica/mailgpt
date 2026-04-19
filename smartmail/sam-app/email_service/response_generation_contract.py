@@ -7,9 +7,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
-from athlete_memory_contract import (
-    AthleteMemoryContractError,
+from sectioned_memory_contract import (
     ContinuitySummary,
+    SectionedMemoryContractError,
+    validate_sectioned_memory,
 )
 
 
@@ -78,10 +79,12 @@ _MEMORY_CONTEXT_FIELDS = {
     "memory_available",
     "priority_facts",
     "structure_facts",
+    "preference_facts",
     "context_facts",
     "continuity_summary",
     "continuity_focus",
     "contradicted_facts",
+    "sectioned_memory",
 }
 _REQUIRED_MEMORY_CONTEXT_FIELDS = {
     "memory_available",
@@ -369,7 +372,7 @@ def _validate_memory_context(payload: Dict[str, Any]) -> Dict[str, Any]:
                 )
             normalized_structure_facts.append(item.strip())
 
-    # AM2: context_facts (optional list of summary strings — preference + other)
+    # AM2: context_facts (optional list of summary strings — life/equipment context)
     normalized_context_facts: list[str] = []
     if "context_facts" in context:
         raw = context["context_facts"]
@@ -381,6 +384,19 @@ def _validate_memory_context(payload: Dict[str, Any]) -> Dict[str, Any]:
                     f"memory_context.context_facts[{idx}] must be a non-empty string"
                 )
             normalized_context_facts.append(item.strip())
+
+    # Sectioned store: preference summaries (communication / planning style / other)
+    normalized_preference_facts: list[str] = []
+    if "preference_facts" in context:
+        raw = context["preference_facts"]
+        if not isinstance(raw, list):
+            raise ResponseGenerationContractError("memory_context.preference_facts must be a list")
+        for idx, item in enumerate(raw):
+            if not isinstance(item, str) or not item.strip():
+                raise ResponseGenerationContractError(
+                    f"memory_context.preference_facts[{idx}] must be a non-empty string"
+                )
+            normalized_preference_facts.append(item.strip())
 
     # Contradicted durable facts (optional list of strings describing what was superseded)
     normalized_contradicted_facts: list[str] = []
@@ -400,9 +416,19 @@ def _validate_memory_context(payload: Dict[str, Any]) -> Dict[str, Any]:
     if raw_continuity_summary is not None:
         try:
             normalized_continuity_summary = ContinuitySummary.from_dict(raw_continuity_summary).to_dict()
-        except AthleteMemoryContractError as exc:
+        except SectionedMemoryContractError as exc:
             raise ResponseGenerationContractError(
                 f"memory_context.continuity_summary invalid: {exc}"
+            ) from exc
+
+    normalized_sectioned_memory = None
+    if "sectioned_memory" in context:
+        raw_sec = context["sectioned_memory"]
+        try:
+            normalized_sectioned_memory = validate_sectioned_memory(raw_sec)
+        except SectionedMemoryContractError as exc:
+            raise ResponseGenerationContractError(
+                f"memory_context.sectioned_memory invalid: {exc}"
             ) from exc
 
     normalized_continuity_focus = None
@@ -415,6 +441,7 @@ def _validate_memory_context(payload: Dict[str, Any]) -> Dict[str, Any]:
     if not normalized_memory_available and (
         normalized_priority_facts
         or normalized_structure_facts
+        or normalized_preference_facts
         or normalized_context_facts
         or normalized_continuity_summary
         or normalized_continuity_focus
@@ -431,12 +458,16 @@ def _validate_memory_context(payload: Dict[str, Any]) -> Dict[str, Any]:
         result["priority_facts"] = normalized_priority_facts
     if normalized_structure_facts:
         result["structure_facts"] = normalized_structure_facts
+    if normalized_preference_facts:
+        result["preference_facts"] = normalized_preference_facts
     if normalized_context_facts:
         result["context_facts"] = normalized_context_facts
     if normalized_continuity_focus:
         result["continuity_focus"] = normalized_continuity_focus
     if normalized_contradicted_facts:
         result["contradicted_facts"] = normalized_contradicted_facts
+    if normalized_sectioned_memory is not None:
+        result["sectioned_memory"] = normalized_sectioned_memory
     return result
 
 

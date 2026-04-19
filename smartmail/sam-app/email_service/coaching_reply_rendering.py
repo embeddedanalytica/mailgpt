@@ -2,8 +2,11 @@
 
 from typing import Any, Dict, Optional
 
-from athlete_memory_contract import format_unix_timestamp_for_prompt
 from response_generation_contract import ResponseBrief
+from sectioned_memory_contract import (
+    VALID_STORAGE_BUCKETS,
+    format_unix_timestamp_for_prompt,
+)
 
 
 def render_rule_engine_payload_reply(
@@ -82,25 +85,31 @@ def build_memory_context_block(memory_context: Dict[str, Any]) -> str:
             lines.append("Open loops:")
             lines.extend(f"- {item}" for item in open_loops)
 
-    memory_notes = memory_context.get("memory_notes")
-    if isinstance(memory_notes, list) and memory_notes:
-        lines.append("Athlete memory notes:")
-        for note in memory_notes:
-            if not isinstance(note, dict):
+    sectioned = memory_context.get("sectioned_memory")
+    if isinstance(sectioned, dict) and sectioned:
+        lines.append("Athlete memory (sectioned):")
+        for bucket in VALID_STORAGE_BUCKETS:
+            active = (sectioned.get(bucket) or {}).get("active") or []
+            if not active:
                 continue
-            note_id = note.get("memory_note_id")
-            fact_type = str(note.get("fact_type", "")).strip()
-            summary = str(note.get("summary", "")).strip()
-            importance = str(note.get("importance", "")).strip()
-            last_confirmed_at = note.get("last_confirmed_at")
-            if summary:
+            label = str(bucket).replace("_", " ")
+            lines.append(f"{label}:")
+            for fact in active:
+                if not isinstance(fact, dict):
+                    continue
+                mid = fact.get("memory_id")
+                section = str(fact.get("section", "")).strip()
+                summary = str(fact.get("summary", "")).strip()
+                last_confirmed_at = fact.get("last_confirmed_at")
+                if not summary:
+                    continue
                 recency_suffix = ""
                 if isinstance(last_confirmed_at, int):
                     recency_suffix = (
                         f" [last confirmed {format_unix_timestamp_for_prompt(last_confirmed_at)}]"
                     )
                 lines.append(
-                    f"- [{note_id}] {fact_type} ({importance}): {summary}{recency_suffix}"
+                    f"- [{mid}] {section}: {summary}{recency_suffix}"
                 )
     return "\n".join(lines)
 

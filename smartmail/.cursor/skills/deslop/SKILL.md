@@ -25,7 +25,7 @@ python3 "$DESLOP_HOME/scripts/collect_targets.py" sam-app/email_service
 
 ## Workflow
 
-1. Read repo instructions first. Check files like `AGENTS.md`, test guidance, and local conventions before proposing edits.
+1. Read repo instructions first: [`CLAUDE.md`](../../../CLAUDE.md), [`AGENTS.md`](../../../AGENTS.md) (merge bar), then skill/module `CLAUDE.md` if touching that area.
 2. Select targets.
    - If the user named files or directories, inspect only those paths.
    - Otherwise run `scripts/collect_targets.py` and start with changed files in the current git repo.

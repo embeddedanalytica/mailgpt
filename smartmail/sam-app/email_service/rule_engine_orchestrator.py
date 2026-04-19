@@ -7,6 +7,12 @@ from typing import Any, Dict
 
 import logging as _logging
 
+from sectioned_memory_contract import (
+    BUCKET_CONSTRAINTS,
+    BUCKET_PREFERENCES,
+    BUCKET_SCHEDULE_ANCHORS,
+)
+
 _orch_logger = _logging.getLogger(__name__)
 
 try:  # pragma: no cover - import style depends on runner context
@@ -203,22 +209,22 @@ def apply_rule_engine_plan_update(
     )
 
 
-def _extract_session_preferences(memory_notes: list[Dict[str, Any]]) -> list[str]:
-    """Extract schedule and preference facts from memory notes for the planner.
+def _extract_session_preferences(sectioned_memory: Dict[str, Any] | None) -> list[str]:
+    """Extract schedule, preference, and constraint summaries for the planner.
 
-    Returns a list of plain-text summaries that describe the athlete's
-    stated session preferences (frequency, days, durations, session types).
+    Reads active facts from schedule_anchors, preferences, and constraints buckets.
     """
+    if not isinstance(sectioned_memory, dict):
+        return []
     preferences: list[str] = []
-    for note in memory_notes:
-        if not isinstance(note, dict):
-            continue
-        fact_type = str(note.get("fact_type", "")).strip().lower()
-        if fact_type not in ("schedule", "preference", "constraint"):
-            continue
-        summary = str(note.get("summary", "")).strip()
-        if summary:
-            preferences.append(summary)
+    for bucket in (BUCKET_SCHEDULE_ANCHORS, BUCKET_PREFERENCES, BUCKET_CONSTRAINTS):
+        active = (sectioned_memory.get(bucket) or {}).get("active") or []
+        for fact in active:
+            if not isinstance(fact, dict):
+                continue
+            summary = str(fact.get("summary", "")).strip()
+            if summary:
+                preferences.append(summary)
     return preferences
 
 
@@ -229,7 +235,7 @@ def run_rule_engine_for_week(
     today_date: date,
     *,
     persist_state: bool = True,
-    memory_notes: list[Dict[str, Any]] | None = None,
+    sectioned_memory: Dict[str, Any] | None = None,
 ) -> RuleEngineOutput:
     if not isinstance(athlete_id, str) or not athlete_id.strip():
         raise RuleEngineOrchestratorError("athlete_id must be a non-empty string")
@@ -358,7 +364,7 @@ def run_rule_engine_for_week(
     except (ContinuityStateContractError, Exception) as exc:
         _orch_logger.debug("continuity_state unavailable for planner: %s", exc)
 
-    athlete_session_preferences = _extract_session_preferences(memory_notes or [])
+    athlete_session_preferences = _extract_session_preferences(sectioned_memory)
     planner_brief = build_planner_brief(
         effective_profile,
         checkin,

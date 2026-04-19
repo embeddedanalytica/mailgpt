@@ -16,17 +16,22 @@
 
 ## Running tests
 
-From `email_service/`:
+From the repo root, with `email_service` on `PYTHONPATH` (see merge bar in [`AGENTS.md`](../../../AGENTS.md#merge-bar)):
 
 ```bash
 # All tests (coaching/business skipped if boto not installed)
-python3 -m unittest discover -v
+PYTHONPATH=sam-app/email_service python3 -m unittest discover -v -s sam-app/tests/email_service -p "test_*.py"
 
 # Quota + handler (E2E-style) only
-python3 -m unittest test_verified_quota_gate -v
+PYTHONPATH=sam-app/email_service python3 -m unittest -v sam-app/tests/email_service/test_verified_quota_gate.py
 
 # Unit tests that don't need boto
-python3 -m unittest test_profile test_email_processor test_recommendation_contract test_data_request_policy test_connector_gateway -v
+PYTHONPATH=sam-app/email_service python3 -m unittest -v \
+  sam-app/tests/email_service/test_profile.py \
+  sam-app/tests/email_service/test_email_processor.py \
+  sam-app/tests/email_service/test_recommendation_contract.py \
+  sam-app/tests/email_service/test_data_request_policy.py \
+  sam-app/tests/email_service/test_connector_gateway.py
 ```
 
 With boto3/botocore installed (e.g. in Lambda or a venv), coaching and business tests run as well.

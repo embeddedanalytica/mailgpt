@@ -18,16 +18,17 @@ import json
 import hashlib
 import math
 from decimal import Decimal
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Optional, Dict, Any, List
 from botocore.exceptions import ClientError
 import boto3
 from boto3.dynamodb.conditions import Key
 from boto3.dynamodb.types import TypeSerializer
-from athlete_memory_contract import (
-    AthleteMemoryContractError,
+from sectioned_memory_contract import (
     ContinuitySummary,
-    validate_memory_notes,
+    SectionedMemoryContractError,
+    empty_sectioned_memory,
+    validate_sectioned_memory,
 )
 from continuity_state_contract import (
     ContinuityState,
@@ -486,7 +487,7 @@ def _get_valid_continuity_summary_from_profile(
         return None
     try:
         return ContinuitySummary.from_dict(raw_continuity_summary).to_dict()
-    except AthleteMemoryContractError as exc:
+    except SectionedMemoryContractError as exc:
         logger.error(
             "Invalid persisted continuity_summary athlete_id=%s error=%s",
             athlete_id,
@@ -518,33 +519,41 @@ def get_continuity_summary(athlete_id: str) -> Optional[Dict[str, Any]]:
 # ============================================================================
 
 
-def get_memory_notes(athlete_id: str) -> List[Dict[str, Any]]:
-    """Returns the persisted memory_notes list, or empty list if absent/invalid."""
+def get_sectioned_memory(athlete_id: str) -> Dict[str, Any]:
+    """Returns validated sectioned memory from the memory_notes field, or empty structure."""
     profile = _get_raw_coach_profile(athlete_id) or {}
-    raw_notes = profile.get("memory_notes")
-    if not isinstance(raw_notes, list):
-        return []
+    raw = profile.get("memory_notes")
+    if raw is None:
+        return empty_sectioned_memory()
+    if isinstance(raw, list):
+        logger.warning(
+            "Legacy flat memory_notes list for athlete_id=%s — treating as empty sectioned memory",
+            athlete_id,
+        )
+        return empty_sectioned_memory()
+    if not isinstance(raw, dict):
+        return empty_sectioned_memory()
     try:
-        return validate_memory_notes(raw_notes)
-    except AthleteMemoryContractError as exc:
+        return validate_sectioned_memory(raw)
+    except SectionedMemoryContractError as exc:
         logger.error(
-            "Invalid persisted memory_notes athlete_id=%s error=%s",
+            "Invalid persisted sectioned memory athlete_id=%s error=%s",
             athlete_id,
             exc,
         )
-        return []
+        return empty_sectioned_memory()
 
 
 def replace_memory(
     athlete_id: str,
-    memory_notes: List[Dict[str, Any]],
+    sectioned_memory: Dict[str, Any],
     continuity_summary: Dict[str, Any],
 ) -> bool:
-    """Atomically replaces memory_notes + continuity_summary on coach_profiles."""
+    """Atomically replaces memory_notes (sectioned JSON) + continuity_summary on coach_profiles."""
     try:
-        validated_notes = validate_memory_notes(memory_notes)
+        validated_memory = validate_sectioned_memory(sectioned_memory)
         validated_continuity = ContinuitySummary.from_dict(continuity_summary).to_dict()
-    except AthleteMemoryContractError as exc:
+    except SectionedMemoryContractError as exc:
         logger.error(
             "Invalid memory payload athlete_id=%s error=%s",
             athlete_id,
@@ -572,7 +581,7 @@ def replace_memory(
             ExpressionAttributeValues=serialize_dynamodb_payload({
                 ":created_at": now,
                 ":updated_at": now,
-                ":memory_notes": validated_notes,
+                ":memory_notes": validated_memory,
                 ":continuity_summary": validated_continuity,
             }),
         )
@@ -583,12 +592,12 @@ def replace_memory(
 
 
 def get_memory_context_for_response_generation(athlete_id: str) -> Dict[str, Any]:
-    """Returns AM2 memory context (memory_notes + continuity) for response generation."""
+    """Returns sectioned memory + continuity for response generation."""
     raw_profile = _get_raw_coach_profile(athlete_id) or {}
-    memory_notes = get_memory_notes(athlete_id)
+    sectioned_memory = get_sectioned_memory(athlete_id)
     continuity_summary = _get_valid_continuity_summary_from_profile(athlete_id, raw_profile)
     return {
-        "memory_notes": memory_notes,
+        "sectioned_memory": sectioned_memory,
         "continuity_summary": continuity_summary,
     }
 
@@ -1498,6 +1507,29 @@ def _normalize_next_recommended_session(value: Any, fallback_date: str) -> Dict[
     return {"date": date_value, "type": type_value, "target": target_value}
 
 
+def _parse_iso_date_only(value: str) -> Optional[date]:
+    """Parse YYYY-MM-DD from plan session strings; return None if not parseable."""
+    raw = str(value or "").strip()
+    if not raw or raw == "unknown-date":
+        return None
+    try:
+        return date.fromisoformat(raw[:10])
+    except ValueError:
+        return None
+
+
+def _display_next_session_date(stored_date: str, reference_date: Optional[date]) -> str:
+    """If stored next-session date is behind the inbound email's calendar date, roll forward."""
+    if reference_date is None:
+        return stored_date
+    parsed = _parse_iso_date_only(stored_date)
+    if parsed is None:
+        return stored_date
+    if parsed < reference_date:
+        return reference_date.isoformat()
+    return stored_date
+
+
 def _normalize_string_list(value: Any) -> List[str]:
     if not isinstance(value, list):
         return []
@@ -1811,9 +1843,18 @@ def get_current_plan(athlete_id: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def fetch_current_plan_summary(athlete_id: str) -> Optional[str]:
+def fetch_current_plan_summary(
+    athlete_id: str,
+    *,
+    reference_date: Optional[date] = None,
+) -> Optional[str]:
     """
     Returns a compact human-readable plan summary for reply composition.
+
+    When ``reference_date`` is set (typically the inbound email's calendar date),
+    the displayed next-session calendar day is rolled forward if the plan still
+    carries an older default start date — avoiding stale "Next session: YYYY-MM-DD"
+    text weeks later.
     """
     plan = get_current_plan(athlete_id)
     if not plan:
@@ -1827,8 +1868,9 @@ def fetch_current_plan_summary(athlete_id: str) -> Optional[str]:
     next_session = _normalize_next_recommended_session(
         plan.get("next_recommended_session"), fallback_date="unknown-date"
     )
+    display_date = _display_next_session_date(next_session["date"], reference_date)
     next_session_text = (
-        f"{next_session['date']}: {next_session['type']} ({next_session['target']})"
+        f"{display_date}: {next_session['type']} ({next_session['target']})"
     )
     return (
         f"Current plan - Goal: {goal}. Version: {version}. "

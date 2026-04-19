@@ -44,4 +44,4 @@ jobs:
         run: aws sts get-caller-identity
 
       - name: Run live endpoint E2E tests
-        run: python -m unittest e2e/test_live_endpoints.py
+        run: python -m unittest tests/e2e/test_live_endpoints.py

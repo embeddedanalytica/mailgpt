@@ -170,6 +170,11 @@ ATHLETE_OPENING_SYSTEM_PROMPT = (
     "Write like a real person sending an email. Be specific when it feels natural, but do not dump every hidden fact immediately.\n"
     "The coach should have to earn more detail over time.\n"
     "You are engaged, not cynical, but you notice when guidance feels generic, dismissive, or off—you are not a pushover who rewards every reply.\n"
+    "Cadence: this email is the athlete's current message—summarize what has been going on lately in plain language. "
+    "Do not write a screenplay of every future weekday session (Tue/Thu/Sat micro-plan) in one email; real athletes either send shorter updates "
+    "or focus on what already happened plus at most one or two concrete upcoming asks.\n"
+    "If the payload includes simulation_context.world_state, weave it in naturally (sleep, stress, a niggle, life context). "
+    "Do not paste it as a labeled block; vary the wording.\n"
     "If the payload includes communication_style_preferences (non-empty), let your first email reflect the same tendencies "
     "(e.g. brief vs warm, direct vs chatty) without naming preferences or sounding like a spec sheet.\n"
     "If communication_style_preferences is empty, infer tone only from the athlete_brief.\n"
@@ -180,13 +185,20 @@ ATHLETE_REACTION_SYSTEM_PROMPT = (
     "You are simulating a real athlete reacting privately to a coach's latest email.\n"
     "Stay in character. Never become meta, never grade the benchmark, and never speak like an evaluator.\n"
     "Do not get stuck in loops. Do not send a message that is substantially the same as your previous message.\n"
+    "Cadence: simulation_context (when present) tells you how much calendar time passed since your last email to the coach. "
+    "Write this next email as what you send after that gap—prioritize what happened since last time (sessions, feel, life snags) "
+    "and one clear ask or update. Avoid stacking many future-session promises (\"I'll do Tue easy, Thu tempo, Sat long...\") in one email; "
+    "that reads like a script, not an inbox.\n"
     "If the coach acknowledged your last note, move the conversation forward with a concrete answer, real or invented training data, "
     "a new concern, or the next training question.\n"
     "If you told the coach you would send data, logs, splits, files, dates, or a check-in, usually follow through within the next "
     "1-2 turns instead of repeating the promise.\n"
     "If the payload includes conversation_directive, obey it unless it would force you to break character or contradict the visible thread.\n"
+    "If the payload includes simulation_context.world_state, incorporate it naturally—vary sleep and stress wording week to week; "
+    "do not repeat the same numeric sleep hours every single email unless the thread calls for it.\n"
     "If the payload includes current_phase, use it as guidance for what kind of conversation move should happen next. "
-    "Treat it as directional guidance, not a rigid script.\n"
+    "Treat it as directional guidance, not a rigid script—advance the plot with at least one new concrete fact, outcome, or question; "
+    "do not re-ask the same clarification you already settled unless something changed.\n"
     "If the payload includes pending_commitments, treat them as promises you already made in the visible thread. "
     "If one has been outstanding for 2 or more turns, usually fulfill it now instead of promising it again, unless the coach's latest "
     "reply clearly made it irrelevant.\n"
@@ -496,6 +508,7 @@ class AthleteSimulator:
         min_turns: int,
         max_turns: int,
         communication_style_preferences: Optional[List[str]] = None,
+        simulation_context: Optional[Dict[str, Any]] = None,
         model_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         payload = {
@@ -505,6 +518,8 @@ class AthleteSimulator:
             "communication_style_preferences": list(communication_style_preferences or []),
             "conversation_bounds": {"min_turns": min_turns, "max_turns": max_turns},
         }
+        if simulation_context:
+            payload["simulation_context"] = simulation_context
         try:
             result, _ = skill_runtime.execute_json_schema(
                 logger=logger,
@@ -539,6 +554,7 @@ class AthleteSimulator:
         conversation_directive: Optional[str] = None,
         current_phase: Optional[Dict[str, Any]] = None,
         pending_commitments: Optional[List[Dict[str, Any]]] = None,
+        simulation_context: Optional[Dict[str, Any]] = None,
         model_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         payload = {
@@ -555,6 +571,8 @@ class AthleteSimulator:
             "current_phase": current_phase or None,
             "pending_commitments": list(pending_commitments or []),
         }
+        if simulation_context:
+            payload["simulation_context"] = simulation_context
         try:
             result, _ = skill_runtime.execute_json_schema(
                 logger=logger,

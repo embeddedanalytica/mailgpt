@@ -14,10 +14,10 @@ from dynamodb_models import (
     merge_coach_profile_fields,
     ensure_current_plan,
     fetch_current_plan_summary,
-    get_memory_notes,
     get_continuity_summary,
     get_continuity_state,
     get_memory_context_for_response_generation,
+    get_sectioned_memory,
     replace_memory,
     update_continuity_state,
     create_action_token,
@@ -30,28 +30,23 @@ from continuity_recommendation_contract import ContinuityRecommendation, Continu
 from continuity_updater import apply_continuity_recommendation
 from config import ACTION_BASE_URL
 from activity_snapshot import parse_manual_activity_snapshot_from_email
-from ai_extraction_contract import (
-    list_missing_or_low_confidence_critical_fields,
-    should_request_clarification,
-)
+from email_copy import EmailCopy
 from coaching_phases import (
     apply_profile_updates_phase,
     load_profile_gate_state_phase,
-    maybe_extract_profile_gate_checkin_phase,
     maybe_store_manual_snapshot_phase,
 )
 from profile import (
     parse_profile_updates_from_email,
     get_missing_required_profile_fields,
 )
-from config import ENABLE_COACHING_REASONING, ENABLE_SESSION_CHECKIN_EXTRACTION
+from config import ENABLE_COACHING_REASONING
 from skills.planner import (
     SessionCheckinExtractionProposalError,
     run_session_checkin_extraction_workflow,
 )
 from coaching_memory import (
     maybe_post_reply_memory_refresh,
-    should_attempt_memory_refresh,
 )
 from rule_engine_orchestrator import (
     RuleEngineOrchestratorError,
@@ -221,16 +216,18 @@ def _maybe_apply_rule_engine_mutation(
     if bool(rule_engine_decision.get("clarification_needed")):
         return rule_engine_decision
 
-    try:
-        extracted_checkin = run_session_checkin_extraction_workflow(inbound_body)
-    except SessionCheckinExtractionProposalError as exc:
-        logger.warning(
-            "rule_engine_mutation_extraction_failed athlete_id=%s error=%s",
-            athlete_id,
-            exc,
-        )
-        log(result="rule_engine_mutation_extraction_failed")
-        return dict(rule_engine_decision)
+    extracted_checkin = rule_engine_decision.get("extracted_checkin")
+    if not isinstance(extracted_checkin, dict) or not extracted_checkin:
+        try:
+            extracted_checkin = run_session_checkin_extraction_workflow(inbound_body)
+        except SessionCheckinExtractionProposalError as exc:
+            logger.warning(
+                "rule_engine_mutation_extraction_failed athlete_id=%s error=%s",
+                athlete_id,
+                exc,
+            )
+            log(result="rule_engine_mutation_extraction_failed")
+            return dict(rule_engine_decision)
 
     if not extracted_checkin:
         logger.info("rule_engine_mutation_skipped_empty_checkin athlete_id=%s", athlete_id)
@@ -243,7 +240,7 @@ def _maybe_apply_rule_engine_mutation(
             profile=profile_after,
             checkin=extracted_checkin,
             today_date=effective_today or date.today(),
-            memory_notes=get_memory_notes(athlete_id),
+            sectioned_memory=get_sectioned_memory(athlete_id),
         )
         plan_update_result = apply_rule_engine_plan_update(
             athlete_id=athlete_id,
@@ -320,10 +317,17 @@ def _generate_llm_reply(
 ) -> Optional[str]:
     global last_obedience_eval_result, last_pipeline_trace
     last_pipeline_trace = None
+    last_obedience_eval_result = None
     reply_mode = _resolve_reply_mode(
         missing_profile_fields=missing_profile_fields,
         rule_engine_decision=rule_engine_decision,
     )
+    if intake_just_completed and reply_mode != "normal_coaching":
+        logger.info(
+            "intake_just_completed override: %s -> normal_coaching athlete_id=%s",
+            reply_mode, athlete_id,
+        )
+        reply_mode = normalize_reply_mode("normal_coaching")
     memory_refresh_reply_kind = "profile_incomplete" if missing_profile_fields else reply_mode
 
     memory_context = get_memory_context_for_response_generation(athlete_id)
@@ -419,10 +423,17 @@ def _generate_llm_reply(
                 selected_model_name=selected_model_name,
                 rule_engine_decision=None,
                 log=log,
-                get_memory_notes_fn=get_memory_notes,
+                get_sectioned_memory_fn=get_sectioned_memory,
                 get_continuity_summary_fn=get_continuity_summary,
                 replace_memory_fn=replace_memory,
             )
+            last_pipeline_trace = {
+                "strategist_input": {"reply_mode": reply_mode, "quick_reply": True},
+                "strategist_output": quick_directive,
+                "strategist_trace": None,
+                "writer_input": None,
+                "writer_output": {"final_email_body": quick_reply},
+            }
             log(result="quick_reply_sent")
             return quick_reply
 
@@ -524,35 +535,42 @@ def _generate_llm_reply(
             "writer_output": generated_response,
         }
 
-        # Obedience eval: LLM-based last-line compliance check + correction
-        try:
-            obedience_result = run_obedience_eval(
-                email_body=reply,
-                directive=directive,
-                continuity_context=next_continuity_context,
-            )
-            original_reply = reply
-            if obedience_result["passed"]:
-                logger.info("obedience_eval_passed athlete_id=%s", athlete_id)
-            else:
-                violation_tags = [v["violation_type"] for v in obedience_result["violations"]]
-                logger.warning(
-                    "obedience_eval_corrected athlete_id=%s tags=%s reasoning=%s",
-                    athlete_id,
-                    ",".join(violation_tags),
-                    obedience_result["reasoning"],
-                )
-                reply = obedience_result["corrected_email_body"]
+        if missing_profile_fields:
             last_obedience_eval_result = {
-                "passed": obedience_result["passed"],
-                "violations": obedience_result["violations"],
-                "corrected": not obedience_result["passed"],
-                "original_email_body": original_reply if not obedience_result["passed"] else None,
-                "reasoning": obedience_result["reasoning"],
+                "skipped": True,
+                "reason": "profile_incomplete",
             }
-        except Exception:
-            logger.warning("obedience_eval_error athlete_id=%s — using original email", athlete_id, exc_info=True)
-            last_obedience_eval_result = {"passed": None, "error": True}
+            logger.info("obedience_eval_skipped athlete_id=%s reason=profile_incomplete", athlete_id)
+        else:
+            # Obedience eval: LLM-based last-line compliance check + correction
+            try:
+                obedience_result = run_obedience_eval(
+                    email_body=reply,
+                    directive=directive,
+                    continuity_context=next_continuity_context,
+                )
+                original_reply = reply
+                if obedience_result["passed"]:
+                    logger.info("obedience_eval_passed athlete_id=%s", athlete_id)
+                else:
+                    violation_tags = [v["violation_type"] for v in obedience_result["violations"]]
+                    logger.warning(
+                        "obedience_eval_corrected athlete_id=%s tags=%s reasoning=%s",
+                        athlete_id,
+                        ",".join(violation_tags),
+                        obedience_result["reasoning"],
+                    )
+                    reply = obedience_result["corrected_email_body"]
+                last_obedience_eval_result = {
+                    "passed": obedience_result["passed"],
+                    "violations": obedience_result["violations"],
+                    "corrected": not obedience_result["passed"],
+                    "original_email_body": original_reply if not obedience_result["passed"] else None,
+                    "reasoning": obedience_result["reasoning"],
+                }
+            except Exception:
+                logger.warning("obedience_eval_error athlete_id=%s — using original email", athlete_id, exc_info=True)
+                last_obedience_eval_result = {"passed": None, "error": True}
 
     except ResponseGenerationProposalError as exc:
         _log_response_generation_failure(
@@ -566,7 +584,7 @@ def _generate_llm_reply(
             error_code="response_generation_failed",
             error_detail=str(exc),
         )
-        return None
+        return EmailCopy.FALLBACK_AI_ERROR_REPLY
 
     # Persist continuity state (skip write if unchanged)
     if next_continuity_state != current_continuity_state or raw_continuity is None:
@@ -575,22 +593,26 @@ def _generate_llm_reply(
                 "continuity_state_persist_failed athlete_id=%s", athlete_id,
             )
 
-    # AM2: single post-reply candidate-operation memory refresh
-    maybe_post_reply_memory_refresh(
-        athlete_id=athlete_id,
-        inbound_body=inbound_body,
-        inbound_subject=inbound_subject,
-        reply_text=reply,
-        reply_kind=memory_refresh_reply_kind,
-        parsed_updates=parsed_updates,
-        manual_snapshot=manual_snapshot,
-        selected_model_name=selected_model_name,
-        rule_engine_decision=None,
-        log=log,
-        get_memory_notes_fn=get_memory_notes,
-        get_continuity_summary_fn=get_continuity_summary,
-        replace_memory_fn=replace_memory,
-    )
+    # Incomplete-profile intake turns do not spend an extra LLM call on memory refresh.
+    if missing_profile_fields:
+        log(result="memory_refresh_skipped_profile_incomplete")
+    else:
+        # AM2: single post-reply candidate-operation memory refresh
+        maybe_post_reply_memory_refresh(
+            athlete_id=athlete_id,
+            inbound_body=inbound_body,
+            inbound_subject=inbound_subject,
+            reply_text=reply,
+            reply_kind=memory_refresh_reply_kind,
+            parsed_updates=parsed_updates,
+            manual_snapshot=manual_snapshot,
+            selected_model_name=selected_model_name,
+            rule_engine_decision=None,
+            log=log,
+            get_sectioned_memory_fn=get_sectioned_memory,
+            get_continuity_summary_fn=get_continuity_summary,
+            replace_memory_fn=replace_memory,
+        )
     return reply
 
 
@@ -640,24 +662,6 @@ def _apply_profile_updates(
         get_missing_fields_fn=get_missing_required_profile_fields,
         parse_updates_fn=parse_profile_updates_from_email,
         merge_profile_fn=merge_coach_profile_fields,
-    )
-
-
-def _maybe_extract_profile_gate_checkin(
-    *,
-    athlete_id: str,
-    inbound_body: str,
-    log: Callable[..., None],
-) -> None:
-    if not ENABLE_SESSION_CHECKIN_EXTRACTION:
-        return
-    maybe_extract_profile_gate_checkin_phase(
-        athlete_id=athlete_id,
-        inbound_body=inbound_body,
-        log=log,
-        run_checkin_extraction_fn=run_session_checkin_extraction_workflow,
-        should_clarify_fn=should_request_clarification,
-        list_missing_fn=list_missing_or_low_confidence_critical_fields,
     )
 
 
@@ -736,11 +740,6 @@ def build_profile_gated_reply(
         aws_request_id=aws_request_id,
         log=log,
     )
-    _maybe_extract_profile_gate_checkin(
-        athlete_id=athlete_id,
-        inbound_body=inbound_body,
-        log=log,
-    )
     manual_snapshot = _maybe_store_manual_snapshot(
         athlete_id=athlete_id,
         inbound_body=inbound_body,
@@ -807,7 +806,10 @@ def build_profile_gated_reply(
         missing_before=len(missing_before),
         missing_after=len(missing_after),
     )
-    plan_summary = fetch_current_plan_summary(athlete_id)
+    plan_summary = fetch_current_plan_summary(
+        athlete_id,
+        reference_date=effective_today,
+    )
     if not selected_model_name:
         logger.error("selected_model_name is required for profile-gated athlete replies")
         return None

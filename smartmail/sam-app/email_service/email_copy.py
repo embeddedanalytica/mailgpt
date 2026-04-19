@@ -68,7 +68,12 @@ class EmailCopy:
     REPLY_WRAPPER_CC = "CC"
     REPLY_WRAPPER_SUBJECT = "Subject"
 
-    FALLBACK_AI_ERROR_REPLY = "I'm sorry, but I couldn't generate a response at this time."
+    FALLBACK_AI_ERROR_REPLY = (
+        "I hit a temporary issue generating your full coaching reply.\n\n"
+        "Please resend your note or reply with the single most important update or question, "
+        "and I'll pick it up from there.\n\n"
+        "SmartMail Coach"
+    )
 
     @staticmethod
     def render_verify_email(

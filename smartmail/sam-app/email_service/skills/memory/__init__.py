@@ -1,9 +1,9 @@
-"""Public entrypoints for the MemorySkill package."""
+"""Public entrypoints for the memory skill package."""
 
-from skills.memory.unified.errors import MemoryRefreshError
-from skills.memory.unified.runner import run_candidate_memory_refresh
+from skills.memory.errors import MemoryRefreshError
+from skills.memory.sectioned.runner import run_sectioned_memory_refresh
 
 __all__ = [
     "MemoryRefreshError",
-    "run_candidate_memory_refresh",
+    "run_sectioned_memory_refresh",
 ]

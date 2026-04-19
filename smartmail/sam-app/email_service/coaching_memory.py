@@ -1,17 +1,15 @@
 """Memory-refresh orchestration helpers for coaching.
 
-AM2: single post-reply candidate-operation refresh replaces the old full-state
-replacement pipeline. The deterministic gate (should_attempt_memory_refresh) is
-unchanged.
+Sectioned durable memory: post-reply candidate refresh applies ops to the sectioned store.
 """
 
 import logging
 import time
 from typing import Any, Callable, Dict, List, Optional
 
-from athlete_memory_reducer import apply_candidate_refresh, CandidateReducerError
-from skills.memory.unified import run_candidate_memory_refresh
-from skills.memory.unified.errors import MemoryRefreshError
+from sectioned_memory_reducer import SectionedCandidateReducerError, apply_sectioned_refresh
+from skills.memory.errors import MemoryRefreshError
+from skills.memory.sectioned import run_sectioned_memory_refresh
 
 logger = logging.getLogger(__name__)
 
@@ -70,14 +68,11 @@ def maybe_post_reply_memory_refresh(
     selected_model_name: Optional[str],
     rule_engine_decision: Optional[Dict[str, Any]],
     log: Callable[..., None],
-    get_memory_notes_fn: Callable[[str], List[Dict[str, Any]]],
+    get_sectioned_memory_fn: Callable[[str], Dict[str, Any]],
     get_continuity_summary_fn: Callable[[str], Optional[Dict[str, Any]]],
-    replace_memory_fn: Callable[[str, List[Dict[str, Any]], Dict[str, Any]], bool],
+    replace_memory_fn: Callable[[str, Dict[str, Any], Dict[str, Any]], bool],
 ) -> None:
-    """Runs candidate-operation memory refresh after response generation.
-
-    Fail-closed: on any error, logs and returns without propagating.
-    """
+    """Runs sectioned candidate memory refresh after response generation."""
     if not should_attempt_memory_refresh(reply_kind=reply_kind, parsed_updates=parsed_updates):
         log(result="memory_refresh_skipped_by_gate", reply_kind=reply_kind)
         return
@@ -92,28 +87,29 @@ def maybe_post_reply_memory_refresh(
         reply_text=reply_text,
     )
 
-    current_memory_notes = get_memory_notes_fn(athlete_id)
+    current_memory = get_sectioned_memory_fn(athlete_id)
     current_continuity = get_continuity_summary_fn(athlete_id)
 
     try:
-        validated = run_candidate_memory_refresh(
-            current_memory_notes=current_memory_notes,
+        validated = run_sectioned_memory_refresh(
+            current_memory=current_memory,
             current_continuity=current_continuity,
             interaction_context=interaction_context,
         )
 
         now_epoch = int(time.time())
-        persisted = apply_candidate_refresh(validated, current_memory_notes, now_epoch)
+        persisted = apply_sectioned_refresh(validated, current_memory, now_epoch)
 
         write_ok = replace_memory_fn(
             athlete_id,
-            persisted["memory_notes"],
+            persisted["sectioned_memory"],
             persisted["continuity_summary"],
         )
         if not write_ok:
             raise MemoryRefreshError("memory persistence failed")
 
-    except (MemoryRefreshError, CandidateReducerError):
+    except (MemoryRefreshError, SectionedCandidateReducerError) as exc:
+        logger.warning("Post-reply memory refresh did not persist: %s", exc)
         log(result="memory_refresh_failed")
         return
     except Exception:
@@ -121,7 +117,11 @@ def maybe_post_reply_memory_refresh(
         log(result="memory_refresh_failed")
         return
 
+    active_count = sum(
+        len((persisted["sectioned_memory"].get(b) or {}).get("active") or [])
+        for b in persisted["sectioned_memory"]
+    )
     log(
         result="memory_refresh_persisted",
-        active_fact_count=len(persisted["memory_notes"]),
+        active_fact_count=active_count,
     )

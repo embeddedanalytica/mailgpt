@@ -37,6 +37,13 @@ Checkpoint assertions use the same human-centric fact schema as the short athlet
 - `coach_should_adjust_for`
 - `coach_should_not_do`
 
+Checkpoint assertions may also include optional architecture-specific checks for the redesigned memory system:
+
+- `expected_active_storage`
+- `expected_retired_storage`
+- `expected_compiled_prompt`
+- `expected_rejections`
+
 Each fact uses:
 
 - `label`
@@ -48,6 +55,32 @@ Final assertions include:
 - `final_durable_truths`
 - `final_retrieval_support`
 - `final_retired_truths`
+
+Final assertions may also include optional architecture-specific checks:
+
+- `final_active_storage`
+- `final_retired_storage`
+- `final_compiled_prompt`
+- `final_rejections`
+
+Optional architecture-specific assertion shapes:
+
+- `expected_active_storage`
+  - `must_include`
+  - `must_exclude`
+  - `max_active_counts`
+- `expected_retired_storage`
+  - `must_include`
+  - `must_exclude`
+  - `max_retired_counts`
+- `expected_compiled_prompt`
+  - `must_include`
+  - `must_exclude`
+- `expected_rejections`
+  - list of objects with:
+    - `label`
+    - `signals`
+    - `reason`
 
 ```json
 [
@@ -1593,6 +1626,601 @@ Final assertions include:
           "importance": "high"
         }
       ]
+    }
+  },
+  {
+    "id": "AM-LH-004",
+    "athlete_name": "Erin Walsh",
+    "sport": "marathon running",
+    "profile_hint": "Experienced marathon athlete with enough stable structure to pressure goal caps and compiler trimming.",
+    "phases": [
+      {
+        "phase_id": "goal_cap_setup",
+        "phase_goal": "Fill the active goal section with legitimate durable goals before introducing an overflow candidate.",
+        "messages": [
+          {
+            "step": 1,
+            "email": "My main goal is the Harbor City Marathon this fall, and my second goal is staying healthy enough to finish the full build.",
+            "synthetic_coach_reply": "We'll treat the marathon and staying healthy through the build as the top two goals."
+          },
+          {
+            "step": 2,
+            "email": "I also want two short strength sessions every week and better race fueling by the end of this cycle.",
+            "synthetic_coach_reply": "Good, we'll keep the strength rhythm and fueling work as durable supporting goals."
+          },
+          {
+            "step": 3,
+            "email": "Weekday runs still have to finish before 6:30am, Friday is blocked for family logistics, and my Achilles still needs gradual intensity progression.",
+            "synthetic_coach_reply": "We'll protect the 6:30am cutoff, Friday block, and conservative Achilles progression."
+          },
+          {
+            "step": 4,
+            "email": "Sunday stays my long run, I prefer concise bullet summaries, and Tuesday lunch strength is the most stable extra session.",
+            "synthetic_coach_reply": "Perfect, we'll keep Sunday and Tuesday lunch strength as recurring anchors and keep the communication concise."
+          },
+          {
+            "step": 5,
+            "email": "Quick confirmation: the Harbor City Marathon is still the A race and the healthy full build still matters more than any side objective.",
+            "synthetic_coach_reply": "Understood. The marathon remains the primary target and healthy consistency through the build stays central."
+          },
+          {
+            "step": 6,
+            "email": "Still no change on Friday being blocked, and weekday runs really do need to wrap before 6:30am.",
+            "synthetic_coach_reply": "We'll keep Friday protected and continue planning all weekday work inside the 6:30am boundary."
+          },
+          {
+            "step": 7,
+            "email": "The Achilles is calm as long as intensity rises slowly, and I still want the two weekly strength sessions to stay in the plan.",
+            "synthetic_coach_reply": "Good. We'll preserve the gradual Achilles progression and keep the twice-weekly strength goal active."
+          },
+          {
+            "step": 8,
+            "email": "Fueling is still one of the durable targets for this cycle, especially practicing gels on long-run days.",
+            "synthetic_coach_reply": "Makes sense. We'll keep fueling improvement as part of the standing goal set."
+          },
+          {
+            "step": 9,
+            "email": "No new constraints today, just restating that Sunday long run and Tuesday lunch strength are the anchors that keep the week stable.",
+            "synthetic_coach_reply": "Those anchors still look stable, so we'll keep building the week around them."
+          },
+          {
+            "step": 10,
+            "email": "Small detail: I had a normal easy run today and nothing about the durable setup changed.",
+            "synthetic_coach_reply": "Noted. We'll treat that as routine noise and keep the established backbone unchanged."
+          }
+        ],
+        "checkpoint_assertions": {
+          "label": "goal cap setup checkpoint",
+          "durable_truths": [
+            {
+              "label": "Harbor City Marathon goal",
+              "signals": [
+                "Harbor City Marathon",
+                "marathon this fall"
+              ],
+              "importance": "high"
+            },
+            {
+              "label": "healthy full-build goal",
+              "signals": [
+                "staying healthy enough",
+                "finish the full build"
+              ],
+              "importance": "high"
+            },
+            {
+              "label": "two strength sessions goal",
+              "signals": [
+                "two short strength sessions",
+                "strength rhythm"
+              ],
+              "importance": "medium"
+            },
+            {
+              "label": "fueling improvement goal",
+              "signals": [
+                "better race fueling",
+                "fueling work"
+              ],
+              "importance": "medium"
+            }
+          ],
+          "active_context": [],
+          "retired_truths": [],
+          "routine_noise": [],
+          "coach_should_adjust_for": [],
+          "coach_should_not_do": [],
+          "expected_active_storage": {
+            "max_active_counts": {
+              "goals": 4
+            }
+          }
+        }
+      },
+      {
+        "phase_id": "goal_overflow_and_prompt_pressure",
+        "phase_goal": "Reject a fifth non-superseding goal and ensure compiler keeps the backbone while trimming lower-priority detail.",
+        "messages": [
+          {
+            "step": 11,
+            "email": "One extra idea: I also want a 10k PR this summer, separate from the marathon cycle.",
+            "synthetic_coach_reply": "That's useful context, but unless it replaces something else we'll keep the current goal stack focused on the marathon build."
+          },
+          {
+            "step": 12,
+            "email": "Adding more stable details too: Wednesday doubles are often possible, Saturday shakeout is common, I prefer no exclamation marks, and I now use a Stryd pod.",
+            "synthetic_coach_reply": "Got it. We'll keep the lower-priority details secondary and preserve the main coaching backbone first."
+          },
+          {
+            "step": 13,
+            "email": "Nothing changed about the important parts though. The 6:30am cutoff, Friday block, Sunday long run, and Achilles caution all still stand.",
+            "synthetic_coach_reply": "Perfect. Those remain the backbone, and we'll let the small details stay secondary."
+          },
+          {
+            "step": 14,
+            "email": "The marathon is still the top race, and the healthy full build is still more important than chasing another event.",
+            "synthetic_coach_reply": "That keeps the goal stack clear, so we won't let the side objective displace the main build."
+          },
+          {
+            "step": 15,
+            "email": "I also still want the fueling work and two strength sessions, but those are already in place and not changing.",
+            "synthetic_coach_reply": "Understood. We'll maintain those existing goals rather than opening a new slot."
+          },
+          {
+            "step": 16,
+            "email": "Routine update only: easy miles felt fine, no new injuries, and the Achilles caution remains exactly the same.",
+            "synthetic_coach_reply": "Noted. We'll keep the established injury guardrails and ignore the routine churn."
+          },
+          {
+            "step": 17,
+            "email": "Wednesday doubles and Saturday shakeout are still just nice-to-have details, not things that should displace the main structure.",
+            "synthetic_coach_reply": "Right. Those can stay secondary and should not outrank the backbone facts."
+          },
+          {
+            "step": 18,
+            "email": "The Stryd pod detail and no-exclamation preference are both still minor compared with the marathon, Achilles, and time constraints.",
+            "synthetic_coach_reply": "Agreed. We'll keep minor detail out of the way if prompt pressure forces trimming."
+          },
+          {
+            "step": 19,
+            "email": "Just reconfirming one more time that Friday is blocked and weekday running has to end before 6:30am.",
+            "synthetic_coach_reply": "Those remain hard planning boundaries."
+          },
+          {
+            "step": 20,
+            "email": "Nothing new today besides the same marathon-first setup.",
+            "synthetic_coach_reply": "Then we'll keep the same coaching backbone intact."
+          }
+        ],
+        "checkpoint_assertions": {
+          "label": "goal overflow and prompt pressure checkpoint",
+          "durable_truths": [
+            {
+              "label": "Harbor City Marathon goal",
+              "signals": [
+                "Harbor City Marathon"
+              ],
+              "importance": "high"
+            },
+            {
+              "label": "healthy full-build goal",
+              "signals": [
+                "staying healthy enough"
+              ],
+              "importance": "high"
+            },
+            {
+              "label": "weekday before 6:30am cutoff",
+              "signals": [
+                "before 6:30am",
+                "6:30am cutoff"
+              ],
+              "importance": "high"
+            },
+            {
+              "label": "Achilles gradual progression constraint",
+              "signals": [
+                "Achilles",
+                "gradual intensity progression"
+              ],
+              "importance": "high"
+            }
+          ],
+          "active_context": [],
+          "retired_truths": [],
+          "routine_noise": [],
+          "coach_should_adjust_for": [
+            {
+              "label": "keep backbone ahead of lower-priority detail",
+              "signals": [
+                "main coaching backbone",
+                "small details stay secondary"
+              ],
+              "importance": "medium"
+            }
+          ],
+          "coach_should_not_do": [
+            {
+              "label": "admit a fifth active goal without replacement",
+              "signals": [
+                "10k PR this summer"
+              ],
+              "importance": "high"
+            }
+          ],
+          "expected_active_storage": {
+            "must_exclude": [
+              {
+                "label": "rejected fifth goal",
+                "signals": [
+                  "10k PR this summer",
+                  "separate from the marathon cycle"
+                ],
+                "importance": "high"
+              }
+            ],
+            "max_active_counts": {
+              "goals": 4
+            }
+          },
+          "expected_compiled_prompt": {
+            "must_include": [
+              {
+                "label": "all goals and constraints survive compiler trimming",
+                "signals": [
+                  "Harbor City Marathon",
+                  "staying healthy enough",
+                  "6:30am cutoff",
+                  "Achilles",
+                  "Friday block"
+                ],
+                "importance": "high"
+              }
+            ],
+            "must_exclude": [
+              {
+                "label": "lower-priority detail trimmed before backbone",
+                "signals": [
+                  "no exclamation marks",
+                  "Stryd pod"
+                ],
+                "importance": "low"
+              }
+            ]
+          },
+          "expected_rejections": [
+            {
+              "label": "fifth goal rejected at cap",
+              "signals": [
+                "10k PR this summer"
+              ],
+              "reason": "active_section_at_capacity_without_supersession"
+            }
+          ]
+        }
+      }
+    ],
+    "final_assertions": {
+      "final_durable_truths": [
+        {
+          "label": "Harbor City Marathon goal",
+          "signals": [
+            "Harbor City Marathon"
+          ],
+          "importance": "high"
+        },
+        {
+          "label": "weekday before 6:30am cutoff",
+          "signals": [
+            "before 6:30am",
+            "6:30am cutoff"
+          ],
+          "importance": "high"
+        }
+      ],
+      "final_retrieval_support": [
+        {
+          "label": "compiled prompt retains the backbone",
+          "signals": [
+            "Harbor City Marathon",
+            "staying healthy enough",
+            "6:30am cutoff",
+            "Achilles"
+          ],
+          "importance": "high"
+        }
+      ],
+      "final_retired_truths": [],
+      "final_rejections": [
+        {
+          "label": "fifth goal rejected at cap",
+          "signals": [
+            "10k PR this summer"
+          ],
+          "reason": "active_section_at_capacity_without_supersession"
+        }
+      ]
+    }
+  },
+  {
+    "id": "AM-LH-005",
+    "athlete_name": "Noah Patel",
+    "sport": "masters swimming",
+    "profile_hint": "Masters swimmer with repeated recurring-slot changes used to test replacement lineage and retired-cap trimming.",
+    "phases": [
+      {
+        "phase_id": "initial_anchor",
+        "phase_goal": "Establish the first durable recurring slot.",
+        "messages": [
+          {
+            "step": 1,
+            "email": "Right now Tuesday masters is my fixed weekly swim anchor.",
+            "synthetic_coach_reply": "Great, we'll treat Tuesday masters as the standing weekly swim slot."
+          },
+          {
+            "step": 2,
+            "email": "Nothing fancy this week, just confirming Tuesday masters is still the recurring session I plan around.",
+            "synthetic_coach_reply": "Good. Tuesday masters remains the durable weekly anchor."
+          },
+          {
+            "step": 3,
+            "email": "Routine update only: I hit the session and there are no other schedule anchors I want to store yet.",
+            "synthetic_coach_reply": "Noted. We'll keep Tuesday masters as the only standing slot."
+          },
+          {
+            "step": 4,
+            "email": "Still the same situation: Tuesday masters is the one swim slot that really sticks.",
+            "synthetic_coach_reply": "Understood. Tuesday masters stays active."
+          }
+        ],
+        "checkpoint_assertions": {
+          "label": "initial anchor checkpoint",
+          "durable_truths": [
+            {
+              "label": "Tuesday masters",
+              "signals": [
+                "Tuesday masters",
+                "fixed weekly swim anchor"
+              ],
+              "importance": "high"
+            }
+          ],
+          "active_context": [],
+          "retired_truths": [],
+          "routine_noise": [],
+          "coach_should_adjust_for": [],
+          "coach_should_not_do": []
+        }
+      },
+      {
+        "phase_id": "repeated_replacements",
+        "phase_goal": "Force repeated durable replacements until the retired schedule bucket exceeds cap.",
+        "messages": [
+          {
+            "step": 5,
+            "email": "I switched from Tuesday masters to Wednesday nights.",
+            "synthetic_coach_reply": "Got it. We'll retire Tuesday masters and use Wednesday nights as the new standing slot."
+          },
+          {
+            "step": 6,
+            "email": "Confirming that Wednesday nights, not Tuesday masters, is now the fixed session.",
+            "synthetic_coach_reply": "Understood. Wednesday nights is the active slot."
+          },
+          {
+            "step": 7,
+            "email": "Another change: Wednesday nights are out now, so Thursday dawn has become the fixed swim slot.",
+            "synthetic_coach_reply": "Understood. We'll retire Wednesday nights and anchor the week to Thursday dawn instead."
+          },
+          {
+            "step": 8,
+            "email": "Quick routine note: the Thursday dawn slot held this week and is the one I plan around now.",
+            "synthetic_coach_reply": "Good. Thursday dawn remains the active recurring slot."
+          },
+          {
+            "step": 9,
+            "email": "Pool access shifted again. Thursday dawn is gone and Friday lunch is now the reliable recurring option.",
+            "synthetic_coach_reply": "Thanks. We'll retire Thursday dawn and use Friday lunch as the recurring slot."
+          },
+          {
+            "step": 10,
+            "email": "Confirming that Friday lunch is now the stable choice and the older slots should stay retired.",
+            "synthetic_coach_reply": "Yes. Friday lunch is active and the earlier slots stay retired."
+          },
+          {
+            "step": 11,
+            "email": "One more move: Friday lunch no longer works, but Saturday masters does.",
+            "synthetic_coach_reply": "Perfect, we'll retire Friday lunch and use Saturday masters as the new weekly anchor."
+          },
+          {
+            "step": 12,
+            "email": "Routine check-in only: Saturday masters is still the current anchor.",
+            "synthetic_coach_reply": "Noted. Saturday masters remains active."
+          },
+          {
+            "step": 13,
+            "email": "The latest stable change is that Saturday masters got replaced by Sunday dawn.",
+            "synthetic_coach_reply": "Understood. We'll retire Saturday masters and anchor the week to Sunday dawn."
+          },
+          {
+            "step": 14,
+            "email": "Quick confirmation that Sunday dawn, not Saturday masters, is the live slot right now.",
+            "synthetic_coach_reply": "Correct. Sunday dawn is the current active slot."
+          },
+          {
+            "step": 15,
+            "email": "Final update for now: Sunday dawn fell apart, and Monday lunch is the slot that should stick.",
+            "synthetic_coach_reply": "Got it. We'll retire Sunday dawn and use Monday lunch as the current standing swim slot."
+          },
+          {
+            "step": 16,
+            "email": "No change from yesterday: Monday lunch is still the recurring session and the older anchors should stay retired.",
+            "synthetic_coach_reply": "Understood. Monday lunch remains active and the superseded anchors remain retired."
+          },
+          {
+            "step": 17,
+            "email": "Routine note only: I made Monday lunch again and nothing about the schedule hierarchy changed.",
+            "synthetic_coach_reply": "Noted. We'll keep Monday lunch as the single active anchor."
+          },
+          {
+            "step": 18,
+            "email": "Just restating it clearly: do not drift back to Tuesday masters or Wednesday nights; Monday lunch is the slot now.",
+            "synthetic_coach_reply": "Understood. Only Monday lunch should remain active."
+          },
+          {
+            "step": 19,
+            "email": "Another routine check-in. Monday lunch still holds, and there are no additional recurring slots to add.",
+            "synthetic_coach_reply": "Good. We'll keep the active schedule compact around Monday lunch."
+          },
+          {
+            "step": 20,
+            "email": "Final reconfirmation: Monday lunch is the only current anchor.",
+            "synthetic_coach_reply": "Confirmed. Monday lunch remains the only active recurring slot."
+          }
+        ],
+        "checkpoint_assertions": {
+          "label": "repeated replacements checkpoint",
+          "durable_truths": [
+            {
+              "label": "Monday lunch swim slot",
+              "signals": [
+                "Monday lunch",
+                "current standing swim slot"
+              ],
+              "importance": "high"
+            }
+          ],
+          "active_context": [],
+          "retired_truths": [
+            {
+              "label": "recent retired slots retained",
+              "signals": [
+                "Wednesday nights",
+                "Thursday dawn",
+                "Friday lunch",
+                "Saturday masters",
+                "Sunday dawn"
+              ],
+              "importance": "high"
+            }
+          ],
+          "routine_noise": [],
+          "coach_should_adjust_for": [
+            {
+              "label": "only newest slot is active",
+              "signals": [
+                "Monday lunch"
+              ],
+              "importance": "high"
+            }
+          ],
+          "coach_should_not_do": [
+            {
+              "label": "resurrect oldest retired slot once cap is exceeded",
+              "signals": [
+                "Tuesday masters"
+              ],
+              "importance": "high"
+            }
+          ],
+          "expected_retired_storage": {
+            "must_include": [
+              {
+                "label": "five most recent retired slots retained",
+                "signals": [
+                  "Wednesday nights",
+                  "Thursday dawn",
+                  "Friday lunch",
+                  "Saturday masters",
+                  "Sunday dawn"
+                ],
+                "importance": "high"
+              }
+            ],
+            "must_exclude": [
+              {
+                "label": "oldest retired slot trimmed at cap",
+                "signals": [
+                  "Tuesday masters"
+                ],
+                "importance": "high"
+              }
+            ],
+            "max_retired_counts": {
+              "schedule_anchors": 5
+            }
+          },
+          "expected_compiled_prompt": {
+            "must_include": [
+              {
+                "label": "only latest active slot appears in compiled prompt",
+                "signals": [
+                  "Monday lunch"
+                ],
+                "importance": "high"
+              }
+            ],
+            "must_exclude": [
+              {
+                "label": "retired slots excluded from compiled prompt",
+                "signals": [
+                  "Tuesday masters",
+                  "Wednesday nights",
+                  "Sunday dawn"
+                ],
+                "importance": "high"
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "final_assertions": {
+      "final_durable_truths": [
+        {
+          "label": "Monday lunch swim slot",
+          "signals": [
+            "Monday lunch",
+            "current standing swim slot"
+          ],
+          "importance": "high"
+        }
+      ],
+      "final_retrieval_support": [
+        {
+          "label": "compiled prompt uses only current active slot",
+          "signals": [
+            "Monday lunch"
+          ],
+          "importance": "high"
+        }
+      ],
+      "final_retired_truths": [
+        {
+          "label": "recent retired replacements preserved",
+          "signals": [
+            "Wednesday nights",
+            "Thursday dawn",
+            "Friday lunch",
+            "Saturday masters",
+            "Sunday dawn"
+          ],
+          "importance": "high"
+        }
+      ],
+      "final_retired_storage": {
+        "must_exclude": [
+          {
+            "label": "oldest retired slot dropped after cap pressure",
+            "signals": [
+              "Tuesday masters"
+            ],
+            "importance": "high"
+          }
+        ],
+        "max_retired_counts": {
+          "schedule_anchors": 5
+        }
+      }
     }
   }
 ]

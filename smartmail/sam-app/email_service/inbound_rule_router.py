@@ -215,6 +215,7 @@ def route_inbound_with_rule_engine(
     clarification_needed = extraction_failed
     decision["clarification_needed"] = clarification_needed
     decision["missing_or_low_confidence"] = list(missing_or_low)
+    decision["extracted_checkin"] = dict(extracted_checkin) if extracted_checkin else None
     decision["mode"] = _mode_for_intent(intent, clarification_needed, bool(extracted_checkin), requested_action)
     if decision["mode"] == "skip" and clarification_needed:
         decision["rule_engine_status"] = "clarification_needed"

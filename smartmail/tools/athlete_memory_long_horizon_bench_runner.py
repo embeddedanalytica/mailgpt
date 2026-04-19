@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Dict, List
+from typing import Any, Dict, Iterable, List
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -184,26 +184,259 @@ def _salience_dimension(
     }
 
 
+def _section_key_from_label(label: str) -> str:
+    normalized = str(label or "").strip().lower()
+    return {
+        "goal": "goals",
+        "goals": "goals",
+        "constraint": "constraints",
+        "constraints": "constraints",
+        "schedule_anchor": "schedule_anchors",
+        "schedule_anchors": "schedule_anchors",
+        "preference": "preferences",
+        "preferences": "preferences",
+        "context": "context_notes",
+        "context_note": "context_notes",
+        "context_notes": "context_notes",
+    }.get(normalized, normalized)
+
+
+def _note_texts(notes: Iterable[Dict[str, Any]]) -> List[str]:
+    return short_bench._note_texts(notes)  # type: ignore[attr-defined]
+
+
+def _normalize_text(value: Any) -> str:
+    return short_bench._normalize_text(value)  # type: ignore[attr-defined]
+
+
+def _normalize_signal(value: Any) -> str:
+    return short_bench._normalize_text(value)  # type: ignore[attr-defined]
+
+
+def _active_and_retired_notes(memory_state: Any) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    if isinstance(memory_state, list):
+        return [item for item in memory_state if isinstance(item, dict)], []
+    if not isinstance(memory_state, dict):
+        return [], []
+    section_keys = ("goals", "constraints", "schedule_anchors", "preferences", "context_notes")
+    if not any(key in memory_state for key in section_keys):
+        notes = memory_state.get("memory_notes")
+        if isinstance(notes, list):
+            return [item for item in notes if isinstance(item, dict)], []
+        return [], []
+    active: List[Dict[str, Any]] = []
+    retired: List[Dict[str, Any]] = []
+    for key in section_keys:
+        bucket = memory_state.get(key)
+        if not isinstance(bucket, dict):
+            continue
+        active.extend(item for item in bucket.get("active", []) if isinstance(item, dict))
+        retired.extend(item for item in bucket.get("retired", []) if isinstance(item, dict))
+    return active, retired
+
+
+def _section_counts(memory_state: Any, *, bucket_name: str) -> Dict[str, int]:
+    if not isinstance(memory_state, dict):
+        return {}
+    counts: Dict[str, int] = {}
+    for key in ("goals", "constraints", "schedule_anchors", "preferences", "context_notes"):
+        bucket = memory_state.get(key)
+        if isinstance(bucket, dict):
+            values = bucket.get(bucket_name, [])
+            if isinstance(values, list):
+                counts[key] = sum(1 for item in values if isinstance(item, dict))
+    return counts
+
+
+def _compiled_prompt_texts(retrieval_context: Dict[str, Any] | None) -> List[str]:
+    if not isinstance(retrieval_context, dict):
+        return []
+    texts: List[str] = []
+    for key in ("priority_facts", "structure_facts", "preference_facts", "context_facts"):
+        values = retrieval_context.get(key)
+        if not isinstance(values, list):
+            continue
+        for item in values:
+            if isinstance(item, dict):
+                normalized = _normalize_text(item.get("summary", ""))
+            else:
+                normalized = _normalize_text(item)
+            if normalized:
+                texts.append(normalized)
+    if texts:
+        return texts
+    notes = retrieval_context.get("memory_notes")
+    if isinstance(notes, list):
+        return _note_texts(notes)
+    return []
+
+
+def _memory_refresh_error_details(exc: Exception) -> Dict[str, Any]:
+    raw_response = ""
+    cause_message = ""
+    if isinstance(exc, MemoryRefreshError):
+        raw_response = str(getattr(exc, "raw_response", "") or "")
+        cause_message = str(getattr(exc, "cause_message", "") or "")
+    cause = getattr(exc, "__cause__", None)
+    return {
+        "error_type": type(exc).__name__,
+        "error_message": str(exc),
+        "cause_type": type(cause).__name__ if cause is not None else "",
+        "cause_message": cause_message or (str(cause) if cause is not None else ""),
+        "raw_response_preview": raw_response[:1000],
+    }
+
+
+def _evaluate_storage_assertions(
+    *,
+    assertions: Dict[str, Any],
+    texts: Iterable[str],
+    counts: Dict[str, int],
+    dimension_name: str,
+) -> Dict[str, Any]:
+    findings: List[str] = []
+    matched: List[str] = []
+    missing: List[str] = []
+    if not assertions:
+        return {
+            "name": dimension_name,
+            "score": 1.0,
+            "state": short_bench._dimension_state(1.0),  # type: ignore[attr-defined]
+            "matched": [],
+            "missing": [],
+            "findings": [],
+        }
+
+    must_include = assertions.get("must_include", [])
+    if must_include:
+        matched, missing = short_bench._match_labels(facts=must_include, texts=texts)  # type: ignore[attr-defined]
+        if missing:
+            findings.append(f"{dimension_name} missing: {', '.join(missing)}")
+
+    excluded_present: List[str] = []
+    for fact in assertions.get("must_exclude", []):
+        if short_bench._fact_matches_any_text(fact, texts):  # type: ignore[attr-defined]
+            excluded_present.append(fact["label"])
+    if excluded_present:
+        findings.append(f"{dimension_name} unexpectedly included: {', '.join(excluded_present)}")
+
+    for raw_key, limit in assertions.get("max_active_counts", {}).items():
+        section_key = _section_key_from_label(raw_key)
+        actual = counts.get(section_key, 0)
+        if actual > limit:
+            findings.append(f"{dimension_name} {section_key} count {actual} exceeds max {limit}")
+    for raw_key, limit in assertions.get("max_retired_counts", {}).items():
+        section_key = _section_key_from_label(raw_key)
+        actual = counts.get(section_key, 0)
+        if actual > limit:
+            findings.append(f"{dimension_name} {section_key} count {actual} exceeds max {limit}")
+
+    score = 1.0 if not findings else 0.0
+    return {
+        "name": dimension_name,
+        "score": score,
+        "state": short_bench._dimension_state(score),  # type: ignore[attr-defined]
+        "matched": matched,
+        "missing": missing + excluded_present,
+        "findings": findings,
+    }
+
+
+def _evaluate_rejections(
+    *,
+    assertions: List[Dict[str, Any]],
+    step_results: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    findings: List[str] = []
+    matched: List[str] = []
+    missing: List[str] = []
+    actual_texts: List[str] = []
+    for step in step_results:
+        for rejection in step.get("rejected_candidates", []):
+            if not isinstance(rejection, dict):
+                continue
+            actual_texts.append(
+                _normalize_text(
+                    " ".join(
+                        str(rejection.get(field, ""))
+                        for field in ("label", "summary", "fact_key", "reason")
+                    )
+                )
+            )
+    for expected in assertions:
+        signals = [_normalize_signal(signal) for signal in expected.get("signals", [])]
+        reason = _normalize_text(expected.get("reason", ""))
+        found = any(all(signal in text for signal in signals) and reason in text for text in actual_texts)
+        if found:
+            matched.append(expected["label"])
+        else:
+            missing.append(expected["label"])
+    if missing:
+        findings.append(f"expected rejections missing: {', '.join(missing)}")
+    score = 1.0 if not findings else 0.0
+    return {
+        "name": "expected_rejections",
+        "score": score,
+        "state": short_bench._dimension_state(score),  # type: ignore[attr-defined]
+        "matched": matched,
+        "missing": missing,
+        "findings": findings,
+    }
+
+
 def evaluate_checkpoint_result(
     *,
-    current_notes: List[Dict[str, Any]],
+    current_notes: Any,
     continuity_summary: Dict[str, Any] | None,
     checkpoint_assertions: Dict[str, Any],
+    retrieval_context: Dict[str, Any] | None = None,
+    step_results: List[Dict[str, Any]] | None = None,
 ) -> Dict[str, Any]:
+    active_notes, retired_notes = _active_and_retired_notes(current_notes)
     base = short_bench.evaluate_step_result(
-        current_notes=current_notes,
+        current_notes=active_notes,
         continuity_summary=continuity_summary,
         expectations=checkpoint_assertions,
     )
     dimensions = dict(base["dimensions"])
     salience_dimension = _salience_dimension(
         checkpoint_assertions=checkpoint_assertions,
-        current_notes=current_notes,
+        current_notes=active_notes,
     )
     dimensions["salience_under_pressure"] = salience_dimension
 
+    if checkpoint_assertions.get("expected_active_storage"):
+        dimensions["expected_active_storage"] = _evaluate_storage_assertions(
+            assertions=checkpoint_assertions["expected_active_storage"],
+            texts=_note_texts(active_notes),
+            counts=_section_counts(current_notes, bucket_name="active"),
+            dimension_name="expected_active_storage",
+        )
+
+    if checkpoint_assertions.get("expected_retired_storage"):
+        dimensions["expected_retired_storage"] = _evaluate_storage_assertions(
+            assertions=checkpoint_assertions["expected_retired_storage"],
+            texts=_note_texts(retired_notes),
+            counts=_section_counts(current_notes, bucket_name="retired"),
+            dimension_name="expected_retired_storage",
+        )
+
+    if checkpoint_assertions.get("expected_compiled_prompt"):
+        dimensions["expected_compiled_prompt"] = _evaluate_storage_assertions(
+            assertions=checkpoint_assertions["expected_compiled_prompt"],
+            texts=_compiled_prompt_texts(retrieval_context),
+            counts={},
+            dimension_name="expected_compiled_prompt",
+        )
+
+    if checkpoint_assertions.get("expected_rejections"):
+        dimensions["expected_rejections"] = _evaluate_rejections(
+            assertions=checkpoint_assertions["expected_rejections"],
+            step_results=step_results or [],
+        )
+
     weighted_score = round(
-        sum(dimensions[name]["score"] * weight for name, weight in LONG_DIMENSION_WEIGHTS.items()),
+        sum(dimensions[name]["score"] * weight for name, weight in LONG_DIMENSION_WEIGHTS.items() if name in dimensions),
         3,
     )
     failing = {
@@ -223,6 +456,15 @@ def evaluate_checkpoint_result(
 
     key_misses = list(base["key_misses"]) + list(salience_dimension["missing"])
     findings = list(base["findings"]) + list(salience_dimension["findings"])
+    for dimension_name in (
+        "expected_active_storage",
+        "expected_retired_storage",
+        "expected_compiled_prompt",
+        "expected_rejections",
+    ):
+        dimension = dimensions.get(dimension_name) or {}
+        key_misses.extend(dimension.get("missing", []))
+        findings.extend(dimension.get("findings", []))
     critical_failures = list(base["critical_failures"])
     if salience_dimension["state"] == "fail":
         critical_failures.append("salience_under_pressure")
@@ -284,14 +526,17 @@ def run_single_scenario(scenario: Dict[str, Any]) -> Dict[str, Any]:
                 except MemoryRefreshError as exc:
                     api_duration_seconds = round(perf_counter() - step_timer_start, 4)
                     step_completed_at = _utc_now_iso()
+                    error_details = _memory_refresh_error_details(exc)
                     logger.error(
-                        "Long-horizon memory refresh failed scenario=%s phase=%s step=%s athlete_id=%s duration_seconds=%.4f cause=%s",
+                        "Long-horizon memory refresh failed scenario=%s phase=%s step=%s athlete_id=%s duration_seconds=%.4f error_type=%s cause_type=%s cause=%s",
                         scenario["id"],
                         phase["phase_id"],
                         message["step"],
                         athlete_id,
                         api_duration_seconds,
-                        getattr(exc, "cause_message", str(exc)),
+                        error_details["error_type"],
+                        error_details["cause_type"],
+                        error_details["cause_message"] or error_details["error_message"],
                     )
                     step_results.append(
                         {
@@ -307,6 +552,8 @@ def run_single_scenario(scenario: Dict[str, Any]) -> Dict[str, Any]:
                             "post_reply_route": "",
                             "memory_notes": [],
                             "continuity_summary": None,
+                            "rejected_candidates": [],
+                            **error_details,
                         }
                     )
                     return {
@@ -338,15 +585,19 @@ def run_single_scenario(scenario: Dict[str, Any]) -> Dict[str, Any]:
                         "post_reply_route": refreshed.get("post_reply_route", ""),
                         "memory_notes": current_notes,
                         "continuity_summary": continuity_summary,
+                        "rejected_candidates": list(refreshed.get("rejected_candidates", [])) if isinstance(refreshed, dict) else [],
                     }
                 )
 
             phase_notes = short_bench.get_benchmark_memory_notes(athlete_id)
             phase_continuity = dynamodb_models.get_continuity_summary(athlete_id)
+            phase_retrieval_context = short_bench.get_benchmark_retrieval_context(athlete_id)
             checkpoint = evaluate_checkpoint_result(
                 current_notes=phase_notes,
                 continuity_summary=phase_continuity,
                 checkpoint_assertions=phase["checkpoint_assertions"],
+                retrieval_context=phase_retrieval_context,
+                step_results=step_results,
             )
             checkpoint_results.append(
                 {
@@ -363,6 +614,49 @@ def run_single_scenario(scenario: Dict[str, Any]) -> Dict[str, Any]:
             retrieval_context=retrieval_context,
             final_assertions=scenario["final_assertions"],
         )
+        final_active_notes, final_retired_notes = _active_and_retired_notes(
+            short_bench.get_benchmark_memory_notes(athlete_id)
+        )
+        final_findings = list(final_evaluation.get("findings", []))
+        final_key_misses = list(final_evaluation.get("durable_missing", [])) + list(final_evaluation.get("retrieval_missing", []))
+        if scenario["final_assertions"].get("final_active_storage"):
+            dimension = _evaluate_storage_assertions(
+                assertions=scenario["final_assertions"]["final_active_storage"],
+                texts=_note_texts(final_active_notes),
+                counts=_section_counts(short_bench.get_benchmark_memory_notes(athlete_id), bucket_name="active"),
+                dimension_name="final_active_storage",
+            )
+            final_findings.extend(dimension["findings"])
+            final_key_misses.extend(dimension["missing"])
+        if scenario["final_assertions"].get("final_retired_storage"):
+            dimension = _evaluate_storage_assertions(
+                assertions=scenario["final_assertions"]["final_retired_storage"],
+                texts=_note_texts(final_retired_notes),
+                counts=_section_counts(short_bench.get_benchmark_memory_notes(athlete_id), bucket_name="retired"),
+                dimension_name="final_retired_storage",
+            )
+            final_findings.extend(dimension["findings"])
+            final_key_misses.extend(dimension["missing"])
+        if scenario["final_assertions"].get("final_compiled_prompt"):
+            dimension = _evaluate_storage_assertions(
+                assertions=scenario["final_assertions"]["final_compiled_prompt"],
+                texts=_compiled_prompt_texts(retrieval_context),
+                counts={},
+                dimension_name="final_compiled_prompt",
+            )
+            final_findings.extend(dimension["findings"])
+            final_key_misses.extend(dimension["missing"])
+        if scenario["final_assertions"].get("final_rejections"):
+            dimension = _evaluate_rejections(
+                assertions=scenario["final_assertions"]["final_rejections"],
+                step_results=step_results,
+            )
+            final_findings.extend(dimension["findings"])
+            final_key_misses.extend(dimension["missing"])
+        final_evaluation["findings"] = final_findings
+        final_evaluation["key_misses"] = final_key_misses
+        if final_findings:
+            final_evaluation["status"] = ASSERTION_FAILED
         scenario_status = OK
         if any(result["label"] == UNSAFE_FOR_COACHING for result in checkpoint_results):
             scenario_status = ASSERTION_FAILED

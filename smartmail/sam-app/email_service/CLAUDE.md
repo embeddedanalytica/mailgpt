@@ -13,20 +13,18 @@ Pipeline: `SES → SNS → app.py → business.py → coaching.py → skills/* �
 | `business.py` | Orchestration entrypoint | refactor |
 | `coaching.py` | Profile gate + LLM reply generation | refactor |
 | `response_generation_*.py` | ResponseBrief assembly + contracts | refactor |
-| `athlete_memory_*.py` / `coaching_memory.py` | Memory contracts + refresh | refactor |
+| `sectioned_memory_*.py`, `memory_compiler.py`, `coaching_memory.py` | Sectioned durable memory + prompt compile + refresh | refactor |
 | `profile.py` / `ai_extraction_contract.py` | Profile parsing + AI extraction | refactor |
 | `conversation_intelligence.py` / `inbound_rule_router.py` | Classification + routing | refactor |
 
 ## Testing
 
-```bash
-python3 -m unittest discover -v -p "test_*.py" -s sam-app/email_service
-python3 -m unittest -v sam-app/e2e/test_live_endpoints.py   # requires live AWS
-```
+**Merge bar (all packages) and inner-loop guidance** are single-sourced in **[`AGENTS.md`](../../AGENTS.md#merge-bar)**. Update test commands there only.
 
-Do not mock DynamoDB in unit tests. See `skills/CLAUDE.md` for skill-level testing.
+Email-service–specific conventions:
 
-**Merge bar vs inner loop:** Full gate (including live e2e) is defined in repo `AGENTS.md`. During edits, prefer running the `email_service` discovery command above often; run e2e before merge or when validating AWS-facing behavior.
+- Do not mock DynamoDB in unit tests. See `skills/CLAUDE.md` for skill-level testing.
+- During edits, prefer running the `email_service` discovery command from `CLAUDE.md` often; run e2e before merge or when validating AWS-facing behavior.
 
 **Refactors and `unittest.mock`:** Many tests patch symbols on `coaching` (e.g. `coaching.get_coach_profile`), not on helper modules. If you move orchestration into another module (`coaching_phases.py`, etc.), either keep those entrypoints on `coaching` and pass callables into helpers, or update tests to patch the new import paths—otherwise patches silently stop applying.
 

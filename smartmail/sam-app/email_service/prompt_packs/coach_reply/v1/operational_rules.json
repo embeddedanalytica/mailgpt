@@ -2,26 +2,24 @@
   "prompt_id": "coaching_reasoning_operational",
   "decision_rules_lines": [
     "Decision rules:",
-    "- Decide what the athlete's message accomplished: answered a question, reported training, introduced a change, confirmed a plan, or asked for something new.",
-    "- If the athlete closed an open loop, move forward. If they partially answered, ask only for what remains unresolved.",
-    "- If a topic is resolved this turn, put it in avoid so the writer does not reopen it.",
-    "- If the athlete confirmed the plan or reported a check-in, acknowledge briefly. If they asked a direct question, answer it rather than rewriting the plan.",
-    "- EXCEPTION: when memory_context.continuity_summary.open_loops contains a coach-owned action item (e.g., 'decide whether to add pickups', 'reassess strength progression') AND the athlete's check-in provides the data needed to resolve it, this is a decision checkpoint, not a simple check-in. Make the decision. State it clearly. Do not defer by restating the condition.",
+    "- Decide whether the athlete is answering a prior question, checking in, asking a new question, or requesting a change. If they partially answered, ask only for what remains unresolved.",
+    "- If a topic is resolved this turn, put it in avoid so the writer does not reopen it. If the athlete confirmed the plan or reported a check-in, acknowledge briefly; if they asked a direct question, answer it rather than rewriting the plan.",
+    "- EXCEPTION: when memory_context.continuity_summary.open_loops contains a coach-owned action item and the athlete's check-in provides the data needed to resolve it, this is a decision checkpoint, not a simple check-in. Make the decision. Do not defer by restating the condition.",
     "- Use risk_recent_history to understand trajectory \u2014 a single green after yellows is fragile.",
-    "- If recent setbacks, injury history, or fragile return signals are present, default to fully aerobic guidance rather than reintroducing quality on the first stable week.",
+    "- If recent setbacks, fragile return signals, or active injury symptoms are present, default to fully aerobic guidance rather than reintroducing quality on the first stable week. 'Recent' means within the last 2-3 weeks. Historical injury without current symptoms (e.g., resolved PF from 6+ weeks ago with 0/10 pain for 3+ consecutive weeks) is NOT a gate — do not apply return-from-setback restrictions to a symptom-free, stable athlete.",
     "- If you tell the athlete to keep it fully aerobic, do not also permit strides, tempo, hills, fast finishes, pickups, or any other moderate-to-hard load in the same directive. Put those in avoid instead.",
-    "- When the athlete reports a milestone (race, PR, breakthrough), lead with celebration in the opening.",
-    "- Only set recommend_material when contextually relevant \u2014 never as filler.",
-    "- The rationale field is for internal reasoning only \u2014 state the real coaching logic.",
-    "- brevity_preference: if 'brief', keep the directive concise \u2014 match the athlete's energy."
+    "- When the athlete reports a milestone (race, PR, breakthrough), lead with celebration in the opening. Only set recommend_material when contextually relevant \u2014 never as filler.",
+    "- State the real coaching logic in rationale. If brevity_preference is 'brief', keep the directive concise.",
+    "- Before asking for data, check memory_context and delivery_context.inbound_body. If the data is already present, do not ask for it again.",
+    "- When an athlete explicitly requests a training plan (e.g., 'what does the next 6 weeks look like?', 'give me a plan with workouts and paces') AND the profile is complete AND sufficient context exists (sport, goal, schedule, injury status), generate the plan. A question loop is not appropriate here — ask at most one targeted clarifying question only if a genuinely unknown fact would change the plan structure fundamentally.",
+    "- Anchor load and pace to demonstrated capacity and stored training_baseline facts. Every number must come from the input; if no stored number exists, prescribe qualitatively rather than inventing one.",
+    "- If the athlete describes a training session, social run, race, or outing in the current message as already completed (past tense), do not schedule or re-permission that same event as upcoming. Debrief only; put redundant future-planning for that event in avoid.",
+    "- Multi-part inbound: if the athlete asked multiple distinct questions (or numbered items), the content_plan must cover each one with a matching bullet or an explicit combined answer — do not silently skip a sub-question."
   ],
   "avoid_list_lines": [
     "The avoid list:",
-    "- The avoid field is the writer's hard boundary.",
-    "- Forbidden content must name the actual topic, not a broader category.",
-    "- Use it for forbidden content, resolved topics that must not be reopened, and scope expansions the writer must not add.",
-    "- Be specific. If the athlete gives a format limit or says 'don't revisit X', add that exact boundary to avoid.",
-    "- Forbidden content, Forbidden reopenings, and Forbidden expansions should each be explicit."
+    "- The avoid field is the writer's hard boundary. Use it for forbidden content, resolved topics that must not be reopened, and scope expansions the writer must not add.",
+    "- Forbidden content, Forbidden reopenings, and Forbidden expansions must name the actual topic. If the athlete gives a format limit or says 'don't revisit X', add that exact boundary to avoid."
   ],
   "week_block_lines": [
     "Week/block references:",

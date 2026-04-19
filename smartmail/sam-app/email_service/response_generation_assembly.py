@@ -6,12 +6,14 @@ import re
 import time as _time
 from typing import Any, Dict, List, Optional
 
-from athlete_memory_contract import (
-    AthleteMemoryContractError,
-    ContinuitySummary,
-    validate_memory_notes,
-)
+from memory_compiler import compile_prompt_memory
 from response_generation_contract import ResponseBrief, normalize_reply_mode
+from sectioned_memory_contract import (
+    ContinuitySummary,
+    SectionedMemoryContractError,
+    empty_sectioned_memory,
+    validate_sectioned_memory,
+)
 from skills.response_generation import build_clarification_questions
 
 
@@ -22,53 +24,15 @@ def _string_field(value: Any) -> Optional[str]:
     return normalized or None
 
 
-# Fact type ordering for deterministic salience
-_FACT_TYPE_ORDER = {"goal": 0, "constraint": 1, "schedule": 2, "preference": 3, "other": 4}
-
-
-def _shape_memory_salience_v4(
-    memory_notes: list[dict[str, Any]],
-    continuity_summary: Optional[dict[str, Any]],
-) -> dict[str, Any]:
-    """Shapes AM2 durable facts into salience categories for the response LLM.
-
-    Deterministic ordering: goal before constraint within priority tier,
-    then by most recent last_confirmed_at. Schedule next. Preference/other last.
-    """
-    # Sort all facts by (type_order, -last_confirmed_at) for stable ordering
-    def _sort_key(f: dict[str, Any]) -> tuple:
-        type_order = _FACT_TYPE_ORDER.get(f.get("fact_type", "other"), 4)
-        last_confirmed = f.get("last_confirmed_at", 0)
-        return (type_order, -last_confirmed)
-
-    sorted_facts = sorted(memory_notes, key=_sort_key)
-
-    priority_facts: list[str] = []  # goal + constraint
-    structure_facts: list[str] = []  # schedule
-    context_facts: list[str] = []  # preference + other
-
-    for fact in sorted_facts:
-        summary = _string_field(fact.get("summary"))
-        if not summary:
+def _fact_summaries(facts: List[Dict[str, Any]]) -> List[str]:
+    out: List[str] = []
+    for fact in facts:
+        if not isinstance(fact, dict):
             continue
-        fact_type = fact.get("fact_type", "other")
-        if fact_type in ("goal", "constraint"):
-            priority_facts.append(summary)
-        elif fact_type == "schedule":
-            structure_facts.append(summary)
-        else:
-            context_facts.append(summary)
-
-    continuity_focus = None
-    if isinstance(continuity_summary, dict):
-        continuity_focus = _string_field(continuity_summary.get("summary"))
-
-    return {
-        "priority_facts": priority_facts,
-        "structure_facts": structure_facts,
-        "context_facts": context_facts,
-        "continuity_focus": continuity_focus,
-    }
+        s = _string_field(fact.get("summary"))
+        if s:
+            out.append(s)
+    return out
 
 
 def _constraint_summaries(profile_after: Dict[str, Any]) -> Optional[str]:
@@ -274,15 +238,14 @@ def build_response_brief(
 
     normalized_memory_context = memory_context if isinstance(memory_context, dict) else {}
 
-    # AM2 durable fact model
-    memory_notes = normalized_memory_context.get("memory_notes")
-    if not isinstance(memory_notes, list):
-        memory_notes = []
+    raw_sectioned = normalized_memory_context.get("sectioned_memory")
+    if not isinstance(raw_sectioned, dict):
+        sectioned_memory = empty_sectioned_memory()
     else:
         try:
-            memory_notes = validate_memory_notes(memory_notes)
-        except AthleteMemoryContractError:
-            memory_notes = []
+            sectioned_memory = validate_sectioned_memory(raw_sectioned)
+        except SectionedMemoryContractError:
+            sectioned_memory = empty_sectioned_memory()
 
     continuity_summary = normalized_memory_context.get("continuity_summary")
     if not isinstance(continuity_summary, dict):
@@ -290,35 +253,43 @@ def build_response_brief(
     else:
         try:
             continuity_summary = ContinuitySummary.from_dict(continuity_summary).to_dict()
-        except AthleteMemoryContractError:
+        except SectionedMemoryContractError:
             continuity_summary = None
 
-    memory_salience = _shape_memory_salience_v4(memory_notes, continuity_summary)
+    compiled = compile_prompt_memory(sectioned_memory, continuity_summary)
+    priority_facts = _fact_summaries(compiled["priority_facts"])
+    structure_facts = _fact_summaries(compiled["structure_facts"])
+    preference_facts = _fact_summaries(compiled["preference_facts"])
+    context_facts = _fact_summaries(compiled["context_facts"])
+    continuity_focus = compiled.get("continuity_focus")
+
     memory_available = bool(
-        memory_salience["priority_facts"]
-        or memory_salience["structure_facts"]
-        or memory_salience["context_facts"]
-        or memory_salience["continuity_focus"]
+        priority_facts
+        or structure_facts
+        or preference_facts
+        or context_facts
+        or continuity_focus
     )
 
     memory_payload: Dict[str, Any] = {
         "memory_available": memory_available,
         "continuity_summary": continuity_summary,
+        "sectioned_memory": sectioned_memory,
     }
-    if memory_salience["priority_facts"]:
-        memory_payload["priority_facts"] = memory_salience["priority_facts"]
-    if memory_salience["structure_facts"]:
-        memory_payload["structure_facts"] = memory_salience["structure_facts"]
-    if memory_salience["context_facts"]:
-        memory_payload["context_facts"] = memory_salience["context_facts"]
-    if memory_salience["continuity_focus"]:
-        memory_payload["continuity_focus"] = memory_salience["continuity_focus"]
+    if priority_facts:
+        memory_payload["priority_facts"] = priority_facts
+    if structure_facts:
+        memory_payload["structure_facts"] = structure_facts
+    if preference_facts:
+        memory_payload["preference_facts"] = preference_facts
+    if context_facts:
+        memory_payload["context_facts"] = context_facts
+    if continuity_focus:
+        memory_payload["continuity_focus"] = continuity_focus
 
     # Detect memory facts contradicted by the current inbound message
     all_memory_summaries = (
-        memory_salience["priority_facts"]
-        + memory_salience["structure_facts"]
-        + memory_salience["context_facts"]
+        priority_facts + structure_facts + preference_facts + context_facts
     )
     contradicted = detect_contradicted_facts(
         normalized_body if normalized_body else None,

@@ -11,7 +11,7 @@ Use the repository docs with these roles (paths are repo-relative from the Smart
 - This README is the current implementation and runtime overview.
 - Rule behavior is defined by the implementation in `email_service` and its tests.
 - [`sam-app/DECISIONS.md`](DECISIONS.md) records durable architectural decisions only.
-- [`response-generation-epic.md`](../response-generation-epic.md) is the planned replacement for the current MVP response-composition path.
+- [`archive/response-generation-epic.md`](../archive/response-generation-epic.md) (archived design) describes the planned replacement for the current MVP response-composition path.
 - [`BACKLOG.md`](../archive/BACKLOG.md) is **archived** early/foundational backlog—do not use it for current prioritization (see banner in that file).
 
 The current codebase goes beyond the original verification MVP. It now includes:
@@ -45,7 +45,7 @@ This is the code-accurate state as of the current repository:
 
 ## Next Planned Area
 
-The next major capability under active design is the dedicated response-generation layer. That design lives in [`response-generation-epic.md`](../response-generation-epic.md). The current reply path is still MVP scaffolding and is expected to be replaced by RG1.
+The next major capability under active design is the dedicated response-generation layer. Historical design notes live in [`archive/response-generation-epic.md`](../archive/response-generation-epic.md). The current reply path is still MVP scaffolding and is expected to be replaced by RG1.
 
 ## LLM Skill Architecture
 
@@ -196,7 +196,7 @@ Athlete memory is lightweight state on `coach_profiles`:
 - **`memory_notes`** — durable or semi-durable facts; each note has a stable integer `memory_note_id`; Unix timestamps in storage.
 - **`continuity_summary`** — one rolling record per athlete for short-lived coaching continuity.
 
-The **response-generation** path receives a bounded, contract-shaped `memory_context` (see `response_generation_assembly.py` and `athlete_memory_contract.py`) built from persisted data—not a raw dump of the DynamoDB item.
+The **response-generation** path receives a bounded, contract-shaped `memory_context` (see `response_generation_assembly.py` and `sectioned_memory_contract.py` / `memory_compiler.py`) built from persisted data—not a raw dump of the DynamoDB item.
 
 **Refresh:** Post-reply refresh is LLM-assisted via `skills/memory/unified/`, orchestrated by `coaching_memory.py`, and persisted with `replace_memory` when validation succeeds.
 
@@ -264,7 +264,7 @@ Behavior:
 
 - `coach_profiles`
   - PK: `athlete_id`
-  - athlete profile, `current_plan`, and memory fields including at least `memory_notes` and `continuity_summary` (see `dynamodb_models.py` / `athlete_memory_contract.py` for the full shape used today)
+  - athlete profile, `current_plan`, and memory fields including at least `memory_notes` and `continuity_summary` (see `dynamodb_models.py` / `sectioned_memory_contract.py` for the full shape used today)
 - `athlete_identities`
   - PK: `email`
   - maps email to `athlete_id`
@@ -365,7 +365,7 @@ Inside `email_service/`, the most relevant modules are:
 - `business.py` - conversation intelligence and routing orchestration
 - `coaching.py` - profile gate, manual snapshots, final reply path
 - `coaching_phases.py` - phase helpers for profile-gated pipeline (wired from `coaching.py` for testability)
-- `athlete_memory_contract.py` - memory-note and continuity-summary contracts/guardrails
+- `sectioned_memory_contract.py` - sectioned memory-note and continuity-summary contracts/guardrails
 - `coaching_memory.py` - post-reply memory refresh orchestration and gate (`should_attempt_memory_refresh`)
 - `inbound_rule_router.py` - mutate/read-only rule-engine routing
 - `rule_engine_*` - deterministic rule-engine implementation
@@ -381,14 +381,13 @@ Prerequisites:
 - SAM CLI
 - Python 3.13
 - Node.js 22
-- Docker if you build with containers
 - AWS credentials with SES, Lambda, API Gateway, DynamoDB, SNS, and KMS access
 
 Build:
 
 ```bash
 cd sam-app
-sam build --use-container
+sam build
 ```
 
 Run the local API:
@@ -411,13 +410,7 @@ sam local invoke EmailServiceFunction --event events/sns-email-event.json
 
 ## Testing
 
-Before considering a change done, run the full gate (same commands as repo [`AGENTS.md`](../AGENTS.md)). During development, run **`sam-app/email_service` unit tests** frequently; reserve **`sam-app/e2e/test_live_endpoints.py`** for pre-merge or when validating live AWS behavior.
-
-```bash
-python3 -m unittest discover -v -s sam-app/action_link_handler -p "test_*.py"
-python3 -m unittest discover -v -p "test_*.py" -s sam-app/email_service
-python3 -m unittest -v sam-app/e2e/test_live_endpoints.py
-```
+Merge bar and copy-paste commands: **[`AGENTS.md`](../AGENTS.md#merge-bar)** (repo root). During development, run **`sam-app/tests/email_service`** units often; reserve **`sam-app/tests/e2e/test_live_endpoints.py`** for pre-merge (live AWS).
 
 Useful focused areas already covered by tests:
 
@@ -435,14 +428,14 @@ Typical deploy flow:
 
 ```bash
 cd sam-app
-sam build --use-container
+sam build
 sam deploy --guided
 ```
 
 After first deploy:
 
 ```bash
-sam build --use-container
+sam build
 sam deploy
 ```
 

@@ -91,17 +91,8 @@ def _build_continuity_section(continuity_context: Optional[Dict[str, Any]]) -> s
 
 
 def _build_tiered_base_prompt(reply_mode: str) -> str:
-    """Assemble the base prompt from constitution + operational rules + mode-specific rules.
-
-    Falls back to the legacy monolithic base prompt when split files are absent.
-    """
-    if not _CONSTITUTION:
-        return _BASE_PROMPT
-    mode_rules = _REPLY_MODE_RULES.get(reply_mode, "")
-    parts = [_CONSTITUTION, _OPERATIONAL_RULES]
-    if mode_rules:
-        parts.append(mode_rules)
-    return "\n\n".join(parts)
+    """Return the monolithic strategist base prompt."""
+    return _BASE_PROMPT
 
 
 def _build_selector_hints_section(response_brief: Dict[str, Any]) -> str:

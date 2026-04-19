@@ -24,6 +24,11 @@ APPLIES WHEN: Training resuming after pain flare, illness, fatigue spike, disrup
 - If the athlete wants to make up lost training, treat that as a risk signal
 - If the inherited plan is more aggressive than current status supports, coach the safer interpretation
 
+## Resolution — When This Protocol No Longer Applies
+- This protocol ends after 3+ consecutive stable, symptom-free weeks where the athlete completed normal training without compensation, guarding, or recurring symptoms.
+- Once resolved: stop applying "first good week" logic. The athlete is no longer in a fragile return phase — treat them as a healthy athlete in normal progression.
+- Do not reopen this gate based on historical injury labels alone. Reopen only if new symptoms appear or recovery metrics worsen.
+
 ## Avoid
 - Catch-up language or make-up-work logic
 - Testing language

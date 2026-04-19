@@ -35,6 +35,5 @@ SYSTEM_PROMPT = (
     "- equipment_access\n"
     "- field_confidence\n"
     "- free_text_summary\n\n"
-    "Safety rule: if severe acute risk is present, set risk_candidate=red_b.\n"
     "The response MUST be valid JSON object."
 )

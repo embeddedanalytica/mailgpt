@@ -28,12 +28,13 @@ if str(EMAIL_SERVICE_PATH) not in sys.path:
     sys.path.insert(0, str(EMAIL_SERVICE_PATH))
 
 import dynamodb_models
-from athlete_memory_reducer import apply_candidate_refresh
+from memory_compiler import compile_prompt_memory
+from sectioned_memory_reducer import apply_sectioned_refresh
 from athlete_memory_bench_fixture import (
     DEFAULT_BENCH_PATH,
     load_athlete_memory_bench_scenarios,
 )
-from skills.memory import MemoryRefreshError, run_candidate_memory_refresh
+from skills.memory import MemoryRefreshError, run_sectioned_memory_refresh
 
 
 logger = logging.getLogger(__name__)
@@ -294,15 +295,50 @@ def _note_texts(notes: Iterable[Dict[str, Any]]) -> List[str]:
     return [_normalize_text(note.get("summary", "")) for note in notes if isinstance(note, dict)]
 
 
-def get_benchmark_memory_notes(athlete_id: str) -> List[Dict[str, Any]]:
-    """Read AM2 durable facts for benchmark matching."""
-    return dynamodb_models.get_memory_notes(athlete_id)
+def _flatten_active_notes(memory_state: Any) -> List[Dict[str, Any]]:
+    if isinstance(memory_state, list):
+        return [item for item in memory_state if isinstance(item, dict)]
+    if not isinstance(memory_state, dict):
+        return []
+    section_keys = ("goals", "constraints", "schedule_anchors", "preferences", "context_notes")
+    active: List[Dict[str, Any]] = []
+    for key in section_keys:
+        bucket = memory_state.get(key)
+        if not isinstance(bucket, dict):
+            continue
+        active.extend(item for item in bucket.get("active", []) if isinstance(item, dict))
+    return active
+
+
+def _compiled_prompt_texts(retrieval_context: Dict[str, Any]) -> List[str]:
+    if not isinstance(retrieval_context, dict):
+        return []
+    texts: List[str] = []
+    for key in ("priority_facts", "structure_facts", "preference_facts", "context_facts"):
+        values = retrieval_context.get(key)
+        if not isinstance(values, list):
+            continue
+        for item in values:
+            if isinstance(item, dict):
+                normalized = _normalize_text(item.get("summary", ""))
+            else:
+                normalized = _normalize_text(item)
+            if normalized:
+                texts.append(normalized)
+    return texts
+
+
+def get_benchmark_memory_notes(athlete_id: str) -> Dict[str, Any]:
+    """Read sectioned durable memory for benchmark matching."""
+    return dynamodb_models.get_sectioned_memory(athlete_id)
 
 
 def get_benchmark_retrieval_context(athlete_id: str) -> Dict[str, Any]:
-    retrieval_context = dynamodb_models.get_memory_context_for_response_generation(athlete_id)
-    # memory_notes is already a flat list of DurableFact dicts from AM2
-    return retrieval_context
+    memory_context = dynamodb_models.get_memory_context_for_response_generation(athlete_id)
+    return compile_prompt_memory(
+        memory_context.get("sectioned_memory") or {},
+        memory_context.get("continuity_summary"),
+    )
 
 
 def _continuity_texts(continuity_summary: Dict[str, Any] | None) -> Dict[str, List[str] | str]:
@@ -501,12 +537,13 @@ def _coach_label(score: float, dimensions: Dict[str, Dict[str, Any]]) -> str:
 
 def evaluate_step_result(
     *,
-    previous_notes: List[Dict[str, Any]] | None = None,
-    current_notes: List[Dict[str, Any]],
+    previous_notes: Any = None,
+    current_notes: Any = None,
     continuity_summary: Dict[str, Any] | None,
     expectations: Dict[str, Any],
 ) -> Dict[str, Any]:
-    previous_notes = previous_notes or []
+    previous_notes = _flatten_active_notes(previous_notes or [])
+    current_notes = _flatten_active_notes(current_notes or [])
     note_texts = _note_texts(current_notes)
     continuity_text = _continuity_texts(continuity_summary)
     continuity_all = list(continuity_text["all_text"])
@@ -687,12 +724,12 @@ def evaluate_step_result(
 
 def evaluate_final_retrieval(
     *,
-    current_notes: List[Dict[str, Any]],
+    current_notes: Any,
     retrieval_context: Dict[str, Any],
     final_assertions: Dict[str, Any],
 ) -> Dict[str, Any]:
-    note_texts = _note_texts(current_notes)
-    retrieval_texts = _note_texts(retrieval_context.get("memory_notes", []))
+    note_texts = _note_texts(_flatten_active_notes(current_notes))
+    retrieval_texts = _compiled_prompt_texts(retrieval_context)
 
     durable_matched, durable_missing = _match_labels(
         facts=final_assertions["final_durable_truths"],
@@ -787,18 +824,18 @@ def apply_benchmark_memory_refresh(
     athlete_id: str,
     latest_interaction_context: Dict[str, Any],
 ) -> Dict[str, Any]:
-    current_memory_notes = dynamodb_models.get_memory_notes(athlete_id)
+    current_memory = dynamodb_models.get_sectioned_memory(athlete_id)
     current_continuity = dynamodb_models.get_continuity_summary(athlete_id)
 
-    validated = run_candidate_memory_refresh(
-        current_memory_notes=current_memory_notes,
+    validated = run_sectioned_memory_refresh(
+        current_memory=current_memory,
         current_continuity=current_continuity,
         interaction_context=latest_interaction_context,
     )
-    persisted = apply_candidate_refresh(validated, current_memory_notes, int(time.time()))
+    persisted = apply_sectioned_refresh(validated, current_memory, int(time.time()))
     if not dynamodb_models.replace_memory(
         athlete_id,
-        persisted["memory_notes"],
+        persisted["sectioned_memory"],
         persisted["continuity_summary"],
     ):
         raise MemoryRefreshError("memory persistence failed")

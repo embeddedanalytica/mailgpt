@@ -343,9 +343,11 @@ def _run_response_generation(brief: dict, *, model_name: str | None) -> dict:
 
 
 def _run_memory_refresh(payload: dict) -> dict:
-    from skills.memory.unified.runner import run_candidate_memory_refresh
-    return run_candidate_memory_refresh(
-        current_memory_notes=payload.get("current_memory_notes", []),
+    from sectioned_memory_contract import empty_sectioned_memory
+    from skills.memory.sectioned.runner import run_sectioned_memory_refresh
+
+    return run_sectioned_memory_refresh(
+        current_memory=empty_sectioned_memory(),
         current_continuity=payload.get("current_continuity"),
         interaction_context=payload["interaction_context"],
     )

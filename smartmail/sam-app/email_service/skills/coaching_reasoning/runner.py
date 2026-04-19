@@ -17,6 +17,16 @@ from skills.coaching_reasoning.validator import validate_coaching_directive
 logger = logging.getLogger(__name__)
 
 
+def _brief_has_missing_profile_fields(response_brief: Dict[str, Any]) -> bool:
+    decision_context = response_brief.get("decision_context")
+    if not isinstance(decision_context, dict):
+        return False
+    missing = decision_context.get("missing_profile_fields")
+    return isinstance(missing, list) and any(
+        isinstance(item, str) and item.strip() for item in missing
+    )
+
+
 def _build_revision_request(
     response_brief: Dict[str, Any],
     payload: Dict[str, Any],
@@ -60,6 +70,7 @@ def run_coaching_reasoning_workflow(
         doctrine_trace = build_doctrine_selection_trace(response_brief)
         response_shape = doctrine_trace.get("response_shape")
         turn_purpose = doctrine_trace.get("turn_purpose")
+        force_send = _brief_has_missing_profile_fields(response_brief)
         system_prompt = build_system_prompt(response_brief, continuity_context=continuity_context)
         user_content = json.dumps(response_brief, separators=(",", ":"), ensure_ascii=True)
         validated = None
@@ -78,6 +89,9 @@ def run_coaching_reasoning_workflow(
             )
 
             try:
+                if force_send and isinstance(payload, dict):
+                    payload = dict(payload)
+                    payload["reply_action"] = "send"
                 validated = validate_coaching_directive(
                     payload,
                     response_shape=response_shape,

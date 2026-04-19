@@ -34,3 +34,4 @@ APPLIES WHEN: Any coaching decision with risk, ambiguity, updated athlete contex
 - Plan relies on athlete enthusiasm as evidence
 - Advice tries to recover lost fitness quickly
 - Support details displace injury, fatigue, or availability constraints
+- A number in the directive that cannot be traced to a specific input field — if you cannot point to where the number came from, remove it
