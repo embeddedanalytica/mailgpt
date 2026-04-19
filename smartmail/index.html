@@ -15,81 +15,20 @@
   <link rel="icon" type="image/png" href="assets/icon/smartmail-strava-icon-final-128.png">
   <style>
     :root {
-      /* Brand */
-      --anthropic-coral: #DA7756;
-      --anthropic-terracotta: #C4553D;
-      --anthropic-terracotta-active: #B34A35;
-      --anthropic-coral-light: #F5DDD4;
-      --anthropic-coral-hover: #E88B6A;
-      --anthropic-coral-subtle: rgba(218, 119, 86, 0.12);
-
-      /* Light theme surfaces */
-      --bg-primary: #FAF9F5;
-      --bg-surface: #FFFFFE;
-      --bg-surface-alt: #F5F3ED;
-
-      /* Warm grays */
-      --warm-200: #EBE8E2;
-      --warm-300: #DDD9D1;
-      --warm-400: #B5AFA5;
-      --warm-500: #8A8279;
-      --warm-600: #6B6359;
-      --warm-700: #4D463E;
-      --warm-800: #2D2825;
-      --warm-900: #1F1915;
-
-      --text-primary: var(--warm-900);
-      --text-secondary: var(--warm-600);
-      --text-tertiary: var(--warm-500);
-      --text-body: var(--warm-700);
-      --border-color: var(--warm-200);
-      --border-strong: var(--warm-300);
-
-      --error-red: #D84C4C;
-      --success-green: #3D8B6E;
-
-      /* Typography */
-      --font-sans: 'Styrene A', 'Styrene B', -apple-system, BlinkMacSystemFont,
-        'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
-      --font-mono: 'JetBrains Mono', 'SF Mono', 'Menlo', monospace;
-
-      /* Tracking */
-      --tracking-tight: -0.02em;
-      --tracking-snug: -0.01em;
-      --tracking-normal: 0;
-      --tracking-relaxed: 0.005em;
-      --tracking-wide: 0.02em;
-
-      /* Spacing */
-      --space-1: 4px;
-      --space-2: 8px;
-      --space-3: 12px;
-      --space-4: 16px;
-      --space-5: 20px;
-      --space-6: 24px;
-      --space-7: 32px;
-      --space-8: 48px;
-      --space-9: 64px;
-      --space-10: 96px;
-
-      /* Radii */
-      --radius-sm: 6px;
-      --radius-md: 8px;
-      --radius-lg: 12px;
-      --radius-xl: 16px;
-
-      /* Shadows (warm) */
-      --shadow-sm: 0 1px 2px rgba(31, 25, 21, 0.04);
-      --shadow-md: 0 2px 8px rgba(31, 25, 21, 0.06);
-      --shadow-lg: 0 4px 12px rgba(31, 25, 21, 0.08);
-      --shadow-xl: 0 8px 24px rgba(31, 25, 21, 0.10);
-
-      /* Motion */
-      --transition-fast: 150ms ease;
-      --transition-normal: 200ms ease;
-
+      --bg: #f5f5f2;
+      --bg-card: #ffffff;
+      --text: #18211f;
+      --text-muted: #4f5f59;
+      --border: rgba(24, 33, 31, 0.12);
+      --accent: #0b6f5d;
+      --accent-strong: #085645;
+      --danger: #a13f3f;
+      --success: #0a5c4c;
+      --radius-lg: 24px;
+      --radius-md: 16px;
+      --radius-sm: 10px;
       --container: 1120px;
-      --prose: 720px;
+      --shadow: 0 16px 44px rgba(13, 30, 27, 0.08);
     }
 
     * {
@@ -103,575 +42,318 @@
     }
 
     body {
-      font-family: var(--font-sans);
-      font-size: 15px;
-      line-height: 1.65;
-      letter-spacing: var(--tracking-relaxed);
-      color: var(--text-body);
-      background: var(--bg-primary);
-      -webkit-font-smoothing: antialiased;
-      -moz-osx-font-smoothing: grayscale;
+      font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", "Nimbus Sans", sans-serif;
+      color: var(--text);
+      line-height: 1.55;
+      background:
+        radial-gradient(circle at 12% 12%, rgba(11, 111, 93, 0.14), transparent 28%),
+        radial-gradient(circle at 90% 10%, rgba(11, 111, 93, 0.08), transparent 32%),
+        var(--bg);
     }
 
     h1,
     h2,
     h3 {
-      font-family: var(--font-sans);
-      font-weight: 500;
-      color: var(--text-primary);
+      font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Palatino, Georgia, serif;
+      letter-spacing: -0.02em;
+      line-height: 1.1;
       margin: 0;
     }
 
-    h1 {
-      font-size: clamp(2.25rem, 5.2vw, 3.25rem);
-      line-height: 1.1;
-      letter-spacing: var(--tracking-tight);
-    }
-
-    h2 {
-      font-size: clamp(1.375rem, 3.2vw, 1.75rem);
-      line-height: 1.25;
-      letter-spacing: var(--tracking-snug);
-    }
-
-    h3 {
-      font-size: 1.375rem;
-      line-height: 1.3;
-      letter-spacing: -0.005em;
-    }
-
-    a {
-      color: var(--anthropic-terracotta);
-      text-decoration: none;
-      transition: color var(--transition-fast);
-    }
-
-    a:hover {
-      text-decoration: underline;
-    }
-
     .page {
-      width: min(var(--container), 100%);
+      width: min(var(--container), 92vw);
       margin: 0 auto;
-      padding: 0 var(--space-6) var(--space-9);
+      padding: 1rem 0 4rem;
     }
 
-    /* Top navigation */
-    .nav-header {
+    .topbar {
       position: sticky;
       top: 0;
-      z-index: 100;
-      height: 60px;
-      background: rgba(250, 249, 245, 0.92);
-      backdrop-filter: saturate(140%) blur(8px);
-      border-bottom: 1px solid var(--border-color);
+      z-index: 10;
+      margin-top: 0.5rem;
+      padding: 0.7rem 1rem;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.86);
+      backdrop-filter: blur(6px);
       display: flex;
-      align-items: center;
-    }
-
-    .nav-inner {
-      width: min(var(--container), 100%);
-      margin: 0 auto;
-      padding: 0 var(--space-6);
-      display: flex;
-      align-items: center;
       justify-content: space-between;
-      gap: var(--space-4);
-    }
-
-    .nav-logo {
-      font-size: 18px;
-      font-weight: 500;
-      color: var(--text-primary);
-      letter-spacing: var(--tracking-snug);
-    }
-
-    .nav-logo-accent {
-      color: var(--anthropic-coral);
-    }
-
-    /* Buttons */
-    .button-primary {
-      display: inline-flex;
       align-items: center;
-      justify-content: center;
-      background: var(--anthropic-terracotta);
-      color: #FFFFFE;
-      font-family: var(--font-sans);
-      font-size: 14px;
-      font-weight: 500;
-      letter-spacing: var(--tracking-relaxed);
-      padding: 10px 18px;
-      height: 40px;
-      border-radius: var(--radius-md);
-      border: none;
-      cursor: pointer;
-      transition: background var(--transition-fast), box-shadow var(--transition-fast);
+      gap: 1rem;
     }
 
-    .button-primary:hover:not(:disabled) {
-      background: var(--anthropic-coral);
-      text-decoration: none;
-    }
-
-    .button-primary:active:not(:disabled) {
-      background: var(--anthropic-terracotta-active);
-    }
-
-    .button-primary:focus-visible {
-      outline: none;
-      box-shadow: 0 0 0 2px var(--bg-primary), 0 0 0 4px var(--anthropic-coral);
-    }
-
-    .button-primary:disabled {
-      background: var(--warm-300);
-      color: var(--warm-500);
-      cursor: wait;
-    }
-
-    .button-large {
-      height: 48px;
-      padding: 12px 24px;
-      font-size: 15px;
-    }
-
-    /* Sections */
-    .section {
-      margin-top: var(--space-9);
-    }
-
-    .section-eyebrow {
-      display: inline-block;
-      font-size: 11px;
-      font-weight: 500;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: var(--anthropic-coral);
-      margin-bottom: var(--space-3);
-    }
-
-    .intro {
-      margin: var(--space-3) 0 0;
-      color: var(--text-body);
-      max-width: 60ch;
-      font-size: 17px;
-      line-height: 1.65;
-    }
-
-    /* Hero */
-    .hero {
-      margin-top: var(--space-8);
-      padding: clamp(28px, 4vw, 56px);
-      background: var(--bg-surface);
-      border: 1px solid var(--border-color);
-      border-radius: var(--radius-xl);
-      box-shadow: var(--shadow-md);
-    }
-
-    .hero h1 {
-      max-width: 18ch;
-    }
-
-    .hero-sub {
-      margin: var(--space-5) 0 var(--space-7);
-      color: var(--text-body);
-      font-size: 17px;
-      line-height: 1.65;
-      max-width: var(--prose);
-    }
-
-    .hero-scroll {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      margin-top: var(--space-5);
-      font-size: 14px;
-      font-weight: 500;
-      color: var(--anthropic-terracotta);
-    }
-
-    .hero-scroll:hover {
-      color: var(--anthropic-coral);
-    }
-
-    .cred-strip {
-      margin: var(--space-4) 0 0;
-      color: var(--text-tertiary);
-      font-size: 13px;
+    .brand {
+      font-weight: 700;
       letter-spacing: 0.01em;
     }
 
-    /* Waitlist form */
-    .waitlist-form {
-      margin-top: var(--space-4);
-      display: grid;
-      gap: var(--space-3);
-      max-width: 560px;
+    .cta-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 0;
+      border-radius: var(--radius-sm);
+      background: var(--accent);
+      color: #fff;
+      text-decoration: none;
+      font-weight: 700;
+      min-height: 46px;
+      padding: 0.7rem 1rem;
+      cursor: pointer;
+      transition: transform 150ms ease, background-color 150ms ease;
     }
 
-    .waitlist-form label {
-      font-size: 12px;
+    .cta-btn:hover:not(:disabled) {
+      transform: translateY(-1px);
+      background: var(--accent-strong);
+    }
+
+    .cta-btn:disabled {
+      opacity: 0.72;
+      cursor: wait;
+    }
+
+    .section {
+      margin-top: 4rem;
+    }
+
+    .hero {
+      margin-top: 1.4rem;
+      padding: clamp(1.4rem, 2.6vw, 2.8rem);
+      border-radius: var(--radius-lg);
+      background: rgba(255, 255, 255, 0.85);
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow);
+    }
+
+    .hero h1 {
+      font-size: clamp(2rem, 5.8vw, 3.7rem);
+      max-width: 16ch;
+    }
+
+    .hero-sub {
+      margin: 1rem 0 1.4rem;
+      color: var(--text-muted);
+      max-width: 64ch;
+      font-size: clamp(1rem, 1.9vw, 1.18rem);
+    }
+
+    .cred-strip {
+      margin-top: 0.9rem;
+      color: var(--text-muted);
+      font-size: 0.92rem;
+    }
+
+    .scroll-link {
+      display: inline-block;
+      margin-top: 0.8rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .section h2 {
+      font-size: clamp(1.65rem, 4.4vw, 2.65rem);
+    }
+
+    .intro {
+      margin: 0.9rem 0 0;
+      color: var(--text-muted);
+      max-width: 64ch;
+    }
+
+    .steps {
+      display: grid;
+      gap: 1rem;
+      margin-top: 1.3rem;
+    }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 1.1rem;
+    }
+
+    .card h3 {
+      font-size: 1.24rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .card p {
+      margin: 0;
+      color: var(--text-muted);
+    }
+
+    .audience-grid {
+      display: grid;
+      gap: 1rem;
+      margin-top: 1.3rem;
+    }
+
+    .audience-grid ul,
+    .benefits ul {
+      margin: 0;
+      padding-left: 1.2rem;
+      display: grid;
+      gap: 0.6rem;
+    }
+
+    .audience-grid li,
+    .benefits li {
       font-weight: 500;
-      letter-spacing: var(--tracking-wide);
-      text-transform: uppercase;
-      color: var(--text-tertiary);
+    }
+
+    .section-cta {
+      margin-top: 1.2rem;
+    }
+
+    .benefits {
+      background: rgba(255, 255, 255, 0.75);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 1.2rem;
+    }
+
+    .trust-note {
+      margin: 1rem 0 0;
+      color: var(--text-muted);
+      font-style: italic;
+    }
+
+    .quote {
+      font-size: 1.1rem;
+      font-style: italic;
+      margin: 1rem 0 0.5rem;
+    }
+
+    .quote-by {
+      margin: 0;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+
+    .faq {
+      display: grid;
+      gap: 0.8rem;
+      margin-top: 1.1rem;
+    }
+
+    .faq details {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 0.85rem 1rem;
+      background: rgba(255, 255, 255, 0.72);
+    }
+
+    .faq summary {
+      cursor: pointer;
+      font-weight: 700;
+    }
+
+    .faq p {
+      margin: 0.65rem 0 0;
+      color: var(--text-muted);
+    }
+
+    .final-cta {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      background: rgba(255, 255, 255, 0.88);
+      padding: clamp(1.4rem, 2.8vw, 2.4rem);
+      box-shadow: var(--shadow);
+    }
+
+    .waitlist-form {
+      margin-top: 1rem;
+      display: grid;
+      gap: 0.65rem;
+      max-width: 560px;
     }
 
     .input-row {
       display: grid;
-      gap: var(--space-3);
+      gap: 0.65rem;
     }
 
     .waitlist-form input[type="email"] {
-      font-family: var(--font-sans);
-      font-size: 15px;
-      color: var(--text-primary);
-      background: var(--bg-surface);
-      border: 1px solid var(--border-strong);
-      border-radius: var(--radius-md);
-      padding: 10px 14px;
-      height: 44px;
-      transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
-      width: 100%;
-    }
-
-    .waitlist-form input[type="email"]::placeholder {
-      color: var(--warm-400);
-    }
-
-    .waitlist-form input[type="email"]:hover {
-      border-color: var(--warm-400);
+      min-height: 46px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 0.65rem 0.8rem;
+      font-size: 1rem;
+      color: var(--text);
+      background: #fff;
     }
 
     .waitlist-form input[type="email"]:focus {
-      outline: none;
-      border-color: var(--anthropic-coral);
-      box-shadow: 0 0 0 3px var(--anthropic-coral-subtle);
+      outline: 2px solid rgba(11, 111, 93, 0.25);
+      outline-offset: 1px;
+      border-color: var(--accent);
     }
 
     .microcopy {
       margin: 0;
-      color: var(--text-tertiary);
-      font-size: 13px;
-      line-height: 1.5;
+      color: var(--text-muted);
+      font-size: 0.9rem;
     }
 
     .status {
       min-height: 1.3em;
       margin: 0;
-      font-weight: 500;
-      font-size: 14px;
+      font-weight: 600;
+      font-size: 0.93rem;
     }
 
     .status-success {
-      color: var(--success-green);
+      color: var(--success);
     }
 
     .status-error {
-      color: var(--error-red);
+      color: var(--danger);
     }
 
-    /* Feature cards */
-    .steps {
-      display: grid;
-      gap: var(--space-5);
-      margin-top: var(--space-6);
-    }
-
-    .card-feature {
-      background: var(--bg-surface);
-      border: 1px solid var(--border-color);
-      border-radius: var(--radius-xl);
-      padding: 28px;
-      transition: border-color var(--transition-normal), box-shadow var(--transition-normal);
-    }
-
-    .card-feature:hover {
-      border-color: var(--border-strong);
-      box-shadow: var(--shadow-lg);
-    }
-
-    .card-feature-icon {
-      width: 44px;
-      height: 44px;
-      background: var(--anthropic-coral-light);
-      border-radius: 10px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      margin-bottom: var(--space-4);
-      color: var(--anthropic-terracotta);
-    }
-
-    .card-feature h3 {
-      font-size: 18px;
-      letter-spacing: 0;
-      margin-bottom: var(--space-2);
-      color: var(--warm-800);
-    }
-
-    .card-feature p {
-      margin: 0;
-      color: var(--text-body);
-      font-size: 15px;
-      line-height: 1.6;
-    }
-
-    /* Research cards */
-    .audience-grid {
-      display: grid;
-      gap: var(--space-5);
-      margin-top: var(--space-6);
-    }
-
-    .card-research {
-      background: var(--bg-surface);
-      border: 1px solid var(--border-color);
-      border-left: 3px solid var(--anthropic-coral);
-      border-radius: var(--radius-md);
-      padding: 24px 28px;
-    }
-
-    .card-research h3 {
-      font-size: 18px;
-      letter-spacing: 0;
-      color: var(--text-primary);
-      margin-bottom: var(--space-4);
-    }
-
-    .card-research ul {
-      margin: 0;
-      padding: 0;
-      list-style: none;
-      display: grid;
-      gap: var(--space-3);
-    }
-
-    .card-research li {
-      position: relative;
-      padding-left: 22px;
-      font-size: 15px;
-      line-height: 1.6;
-      color: var(--text-body);
-    }
-
-    .card-research li::before {
-      content: "";
-      position: absolute;
-      left: 0;
-      top: 0.7em;
-      width: 10px;
-      height: 1px;
-      background: var(--anthropic-coral);
-    }
-
-    .section-cta {
-      margin-top: var(--space-6);
-    }
-
-    /* Benefits */
-    .benefits {
-      background: var(--bg-surface-alt);
-      border: 1px solid var(--border-color);
-      border-radius: var(--radius-lg);
-      padding: 28px;
-      margin-top: var(--space-6);
-    }
-
-    .benefits ul {
-      margin: 0;
-      padding: 0;
-      list-style: none;
-      display: grid;
-      gap: var(--space-3);
-    }
-
-    .benefits li {
-      position: relative;
-      padding-left: 28px;
-      font-size: 15px;
-      line-height: 1.6;
-      color: var(--warm-800);
-    }
-
-    .benefits li::before {
-      content: "";
-      position: absolute;
-      left: 0;
-      top: 0.35em;
-      width: 16px;
-      height: 16px;
-      background-color: var(--anthropic-coral-light);
-      border-radius: 4px;
-      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'><path d='M3 7.2l2.6 2.6L11 4.4' fill='none' stroke='%23C4553D' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/></svg>");
-      background-repeat: no-repeat;
-      background-position: center;
-      background-size: 12px 12px;
-    }
-
-    .trust-note {
-      margin: var(--space-5) 0 0;
-      color: var(--text-tertiary);
-      font-size: 13px;
-      font-style: italic;
-    }
-
-    /* Pull quote */
-    .pull-quote {
-      margin: var(--space-6) 0 0;
-      border-left: 3px solid var(--anthropic-coral);
-      padding: 6px 0 6px 20px;
-    }
-
-    .pull-quote p {
-      margin: 0;
-      font-size: 20px;
-      line-height: 1.45;
-      font-style: italic;
-      color: var(--warm-800);
-      letter-spacing: var(--tracking-relaxed);
-    }
-
-    .pull-quote .quote-by {
-      margin-top: var(--space-3);
-      font-style: normal;
-      font-size: 13px;
-      color: var(--text-tertiary);
-      letter-spacing: 0.01em;
-    }
-
-    /* FAQ */
-    .faq {
-      display: grid;
-      gap: var(--space-3);
-      margin-top: var(--space-5);
-    }
-
-    .faq details {
-      background: var(--bg-surface);
-      border: 1px solid var(--border-color);
-      border-radius: var(--radius-lg);
-      padding: 16px 20px;
-      transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
-    }
-
-    .faq details[open] {
-      border-color: var(--border-strong);
-      box-shadow: var(--shadow-sm);
-    }
-
-    .faq summary {
-      cursor: pointer;
-      font-size: 15px;
-      font-weight: 500;
-      color: var(--text-primary);
-      list-style: none;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: var(--space-4);
-    }
-
-    .faq summary::-webkit-details-marker {
-      display: none;
-    }
-
-    .faq summary::after {
-      content: "";
-      flex-shrink: 0;
-      width: 8px;
-      height: 8px;
-      border-right: 1.5px solid var(--anthropic-coral);
-      border-bottom: 1.5px solid var(--anthropic-coral);
-      transform: rotate(45deg);
-      transition: transform var(--transition-fast);
-    }
-
-    .faq details[open] summary::after {
-      transform: rotate(-135deg);
-    }
-
-    .faq p {
-      margin: var(--space-3) 0 0;
-      color: var(--text-body);
-      font-size: 15px;
-      line-height: 1.65;
-    }
-
-    /* Final CTA */
-    .final-cta {
-      background: var(--bg-surface);
-      border: 1px solid var(--border-color);
-      border-left: 3px solid var(--anthropic-coral);
-      border-radius: var(--radius-xl);
-      padding: clamp(28px, 4vw, 48px);
-      box-shadow: var(--shadow-md);
-    }
-
-    /* Footer */
     footer {
-      margin-top: var(--space-9);
-      padding-top: var(--space-6);
-      border-top: 1px solid var(--border-color);
-      color: var(--text-tertiary);
-      font-size: 13px;
-      line-height: 1.6;
+      margin-top: 3.4rem;
+      padding-top: 1.2rem;
+      border-top: 1px solid var(--border);
+      color: var(--text-muted);
+      font-size: 0.92rem;
       display: grid;
-      gap: var(--space-1);
+      gap: 0.35rem;
     }
 
     footer a {
       color: inherit;
-      text-decoration: underline;
-      text-decoration-color: var(--border-strong);
-      text-underline-offset: 2px;
     }
 
-    footer a:hover {
-      color: var(--text-primary);
-      text-decoration-color: var(--anthropic-coral);
-    }
-
-    /* Responsive */
-    @media (min-width: 640px) {
-      .input-row {
-        grid-template-columns: minmax(0, 1fr) auto;
-      }
-
-      .waitlist-form .button-primary {
-        min-width: 180px;
+    @media (min-width: 760px) {
+      .steps {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
       }
 
       .audience-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
-    }
 
-    @media (min-width: 960px) {
-      .steps {
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+      .input-row {
+        grid-template-columns: minmax(0, 1fr) auto;
       }
-    }
 
-    @media (prefers-reduced-motion: reduce) {
-      * {
-        transition: none !important;
+      .waitlist-form .cta-btn {
+        min-width: 200px;
       }
     }
   </style>
 </head>
 
 <body>
-  <header class="nav-header" aria-label="Primary">
-    <div class="nav-inner">
-      <div class="nav-logo">Geni<span class="nav-logo-accent">ML</span></div>
-      <a class="button-primary" href="#waitlist">Join the waitlist</a>
-    </div>
-  </header>
-
   <main class="page">
+    <header class="topbar" aria-label="Primary">
+      <div class="brand">GeniML</div>
+      <a class="cta-btn" href="#waitlist">Join the waitlist</a>
+    </header>
+
     <section class="hero" id="top" aria-labelledby="hero-title">
-      <span class="section-eyebrow">Early access</span>
       <h1 id="hero-title">Coaching that fits your life.</h1>
       <p class="hero-sub">Check in after workouts, get the next right step, and stay accountable — without the friction
         of traditional coaching.</p>
@@ -680,59 +362,48 @@
         <label for="hero-email">Email</label>
         <div class="input-row">
           <input id="hero-email" name="email" type="email" autocomplete="email" placeholder="you@example.com" required>
-          <button class="button-primary button-large" type="submit" data-submit-button>Join the waitlist</button>
+          <button class="cta-btn" type="submit" data-submit-button>Join the waitlist</button>
         </div>
         <p class="status" data-status role="status" aria-live="polite"></p>
         <p class="microcopy">Early access invites first. No spam — unsubscribe anytime.</p>
       </form>
 
-      <a class="hero-scroll" href="#how-it-works">See how it works →</a>
+      <a class="scroll-link" href="#how-it-works">See how it works</a>
       <p class="cred-strip">Built for real life: travel, busy weeks, and changing energy levels.</p>
     </section>
 
     <section class="section" id="how-it-works" aria-labelledby="how-title">
-      <span class="section-eyebrow">How it works</span>
-      <h2 id="how-title">A simple check-in loop.</h2>
-      <p class="intro">A conversation that stays useful without adding app overhead.</p>
+      <h2 id="how-title">How It Works</h2>
+      <p class="intro">A simple check-in loop that stays useful without adding app overhead.</p>
       <div class="steps">
-        <article class="card-feature">
-          <span class="card-feature-icon" aria-hidden="true">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.5 5.5L20 9l-4 4 1 6-5-3-5 3 1-6-4-4 5.5-1.5L12 2z"/></svg>
-          </span>
-          <h3>Tell us what you're training for</h3>
+        <article class="card">
+          <h3>Tell us what you’re training for</h3>
           <p>A quick conversation about your goal, schedule, experience, and constraints.</p>
         </article>
-        <article class="card-feature">
-          <span class="card-feature-icon" aria-hidden="true">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.5 8.5 0 1 1-3.2-6.6L21 3v5h-5"/><path d="M8 12l3 3 5-6"/></svg>
-          </span>
+        <article class="card">
           <h3>Check in after each session</h3>
-          <p>Drop a note like "I ran 5K" — we'll ask what matters, not everything.</p>
+          <p>Drop a note like “I ran 5K” — we’ll ask what matters, not everything.</p>
         </article>
-        <article class="card-feature">
-          <span class="card-feature-icon" aria-hidden="true">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15"/><path d="M13 6l6 6-6 6"/></svg>
-          </span>
+        <article class="card">
           <h3>Get the next right step</h3>
-          <p>Rest, push, adjust — guidance that adapts to how you're actually doing.</p>
+          <p>Rest, push, adjust — guidance that adapts to how you’re actually doing.</p>
         </article>
       </div>
     </section>
 
     <section class="section" id="who" aria-labelledby="who-title">
-      <span class="section-eyebrow">Who it's for</span>
-      <h2 id="who-title">Built for athletes and coaches.</h2>
+      <h2 id="who-title">Who It’s For</h2>
       <div class="audience-grid">
-        <article class="card-research" aria-labelledby="athlete-title">
-          <h3 id="athlete-title">For athletes</h3>
+        <article class="card" aria-labelledby="athlete-title">
+          <h3 id="athlete-title">For Athletes</h3>
           <ul>
             <li>You want structure, but not another app to manage.</li>
             <li>You want accountability without scheduling calls.</li>
             <li>You want guidance that adapts when life happens.</li>
           </ul>
         </article>
-        <article class="card-research" aria-labelledby="coach-title">
-          <h3 id="coach-title">For coaches</h3>
+        <article class="card" aria-labelledby="coach-title">
+          <h3 id="coach-title">For Coaches</h3>
           <ul>
             <li>You want cleaner athlete updates, not walls of noise.</li>
             <li>You want quick context: what changed, what matters.</li>
@@ -741,13 +412,12 @@
         </article>
       </div>
       <div class="section-cta">
-        <a class="button-primary" href="#waitlist">Join the waitlist</a>
+        <a class="cta-btn" href="#waitlist">Join the waitlist</a>
       </div>
     </section>
 
     <section class="section" id="benefits" aria-labelledby="benefits-title">
-      <span class="section-eyebrow">What you'll get</span>
-      <h2 id="benefits-title">Coaching that respects your reality.</h2>
+      <h2 id="benefits-title">What You’ll Get</h2>
       <div class="benefits">
         <ul>
           <li>A coach that remembers your goals and last sessions.</li>
@@ -761,21 +431,18 @@
     </section>
 
     <section class="section" id="social-proof" aria-labelledby="proof-title">
-      <span class="section-eyebrow">Early testers</span>
-      <h2 id="proof-title">What early users are saying.</h2>
-      <figure class="pull-quote">
-        <p>"This felt like texting a coach who actually pays attention."</p>
-        <figcaption class="quote-by">— Early tester (runner)</figcaption>
-      </figure>
+      <h2 id="proof-title">Preview quotes from early testers.</h2>
+      <p class="quote">“This felt like texting a coach who actually pays attention.”</p>
+      <p class="quote-by">— Early tester (runner)</p>
     </section>
 
     <section class="section" id="faq" aria-labelledby="faq-title">
-      <span class="section-eyebrow">FAQ</span>
-      <h2 id="faq-title">Frequently asked.</h2>
+      <h2 id="faq-title">FAQ</h2>
       <div class="faq">
         <details>
           <summary>Is this a training plan app?</summary>
-          <p>It's coaching-first. You check in, it responds with what's next. Plans exist, but they're meant to adapt.</p>
+          <p>It’s coaching-first. You check in, it responds with what’s next. Plans exist, but they’re meant to adapt.
+          </p>
         </details>
         <details>
           <summary>Do I need Strava or Garmin?</summary>
@@ -787,7 +454,7 @@
         </details>
         <details>
           <summary>Is this replacing a human coach?</summary>
-          <p>It's designed for people who can't or don't want the overhead of traditional coaching. Coaches will also be
+          <p>It’s designed for people who can’t or don’t want the overhead of traditional coaching. Coaches will also be
             able to use it later.</p>
         </details>
         <details>
@@ -802,7 +469,6 @@
     </section>
 
     <section class="section final-cta" id="waitlist" aria-labelledby="final-title">
-      <span class="section-eyebrow">Join the waitlist</span>
       <h2 id="final-title">Ready to train with less friction?</h2>
       <p class="intro">Join the waitlist and be first to try coaching that adapts to real life.</p>
 
@@ -810,7 +476,7 @@
         <label for="final-email">Email</label>
         <div class="input-row">
           <input id="final-email" name="email" type="email" autocomplete="email" placeholder="you@example.com" required>
-          <button class="button-primary button-large" type="submit" data-submit-button>Join the waitlist</button>
+          <button class="cta-btn" type="submit" data-submit-button>Join the waitlist</button>
         </div>
         <p class="status" data-status role="status" aria-live="polite"></p>
         <p class="microcopy">Early access invites first. No spam — unsubscribe anytime.</p>
@@ -900,7 +566,7 @@
         const result = await registerUser(email);
 
         if (result.ok) {
-          setStatus(form, "You're on the list — watch your inbox.", "success");
+          setStatus(form, "You’re on the list — watch your inbox.", "success");
           trackEvent("waitlist_submit_success", { location: form.id || "waitlist-form" });
           input.value = "";
         } else {
