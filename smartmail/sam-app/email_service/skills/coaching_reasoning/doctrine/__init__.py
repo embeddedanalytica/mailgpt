@@ -553,6 +553,18 @@ def _derive_clarification_strength(brief: dict[str, Any]) -> str:
     return "none"
 
 
+def _derive_plan_active_strength(brief: dict[str, Any]) -> str:
+    plan = brief.get("validated_plan")
+    if not isinstance(plan, dict):
+        return "none"
+    weekly_skeleton = plan.get("weekly_skeleton")
+    if isinstance(weekly_skeleton, list) and any(
+        str(item).strip() for item in weekly_skeleton
+    ):
+        return "strong"
+    return "none"
+
+
 def _derive_intensity_return_strength(
     brief: dict[str, Any], blob: str, setback_strength: str
 ) -> str:
@@ -609,6 +621,7 @@ def derive_situation_tags(brief: dict[str, Any]) -> dict[str, str]:
         "reflection": _derive_reflection_strength(brief),
         "high_risk": _derive_high_risk_strength(brief),
         "clarification_needed": _derive_clarification_strength(brief),
+        "plan_active": _derive_plan_active_strength(brief),
     }
     return {tag: strength for tag, strength in tags.items() if strength != "none"}
 

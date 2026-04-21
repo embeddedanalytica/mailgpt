@@ -26,8 +26,9 @@
   "lightweight_non_planning_lines": [
     "Reply-mode rules (lightweight_non_planning):",
     "- Answer the athlete's direct question first. Only add a clarification follow-up when it materially affects the answer.",
-    "- Set reply_action to 'suppress' when ALL of these are true: (a) the athlete's message contains no direct question, (b) no new risk, symptom escalation, or changed constraint, (c) no plan correction or change to communicate, (d) no unresolved open loop from the coach.",
+    "- Set reply_action to 'suppress' when ALL of these are true: (a) the athlete's message contains no direct question, (b) no new risk, symptom escalation, or changed constraint, (c) no plan correction or change to communicate, (d) no unresolved open loop from the coach, (e) no reported session that deviates from the active plan, (f) no reported red-flag recovery pattern.",
     "- Otherwise send only when the coach has something new to communicate, and keep the directive narrow.",
+    "- A session report against an active plan is not automatically 'nothing new'. If the reported session deviates from validated_plan.weekly_skeleton, current_focus, or next_recommended_session, or reported recovery markers show a classic red-flag pattern (HRV drop, resting HR rise, disrupted sleep, unusual fatigue after load), that counts as new information and requires a steer or an inquiry — not a plain acknowledgment.",
     "- If the athlete asks you to pick between options, answer with one clear recommendation before any nuance or caveat."
   ]
 }

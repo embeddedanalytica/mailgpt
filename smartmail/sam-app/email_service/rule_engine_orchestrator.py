@@ -200,6 +200,21 @@ def apply_rule_engine_plan_update(
         "plan_adjustments": [str(item) for item in payload.get("adjustments", [])],
         "plan_update_status": payload.get("plan_update_status"),
     }
+    next_email_payload = payload.get("next_email_payload")
+    if isinstance(next_email_payload, dict):
+        sessions = next_email_payload.get("sessions")
+        if isinstance(sessions, list):
+            updates["session_guidance"] = [
+                str(item).strip() for item in sessions if str(item).strip()
+            ]
+        rules = next_email_payload.get("if_then_rules")
+        if isinstance(rules, list):
+            updates["if_then_rules"] = [
+                str(item).strip() for item in rules if str(item).strip()
+            ]
+        safety_note = str(next_email_payload.get("safety_note", "")).strip()
+        if safety_note:
+            updates["safety_note"] = safety_note
     return update_current_plan(
         athlete_id,
         updates,

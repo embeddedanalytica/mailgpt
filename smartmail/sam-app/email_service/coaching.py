@@ -14,6 +14,7 @@ from dynamodb_models import (
     merge_coach_profile_fields,
     ensure_current_plan,
     fetch_current_plan_summary,
+    get_current_plan,
     get_continuity_summary,
     get_continuity_state,
     get_memory_context_for_response_generation,
@@ -89,19 +90,131 @@ _QUICK_REPLY_SCHEMA: Dict[str, Any] = {
 }
 
 
+_SESSION_REPORT_MARKERS = (
+    "run",
+    "ride",
+    "swim",
+    "workout",
+    "session",
+    "minutes",
+    "min",
+    "easy",
+    "tempo",
+    "threshold",
+    "interval",
+    "hr",
+    "heart rate",
+)
+_SESSION_DEVIATION_MARKERS = (
+    "instead of",
+    "threshold",
+    "tempo",
+    "interval",
+    "hard",
+    "faster",
+    "blocks",
+)
+_SESSION_RED_FLAG_MARKERS = (
+    "high heart rate",
+    "heart rate was unusually high",
+    "resting heart rate",
+    "slept badly",
+    "poor sleep",
+    "fatigue",
+    "exhausted",
+    "dizzy",
+    "fever",
+    "sore throat",
+)
+_SESSION_AMBIGUITY_MARKERS = (
+    "not sure",
+    "wasn't sure",
+    "was not sure",
+    "was it right",
+    "did i do too much",
+)
+
+
+def _build_active_monitoring_rules(current_plan: Optional[Dict[str, Any]]) -> Optional[list[Dict[str, str]]]:
+    if not isinstance(current_plan, dict):
+        return None
+    raw_rules = current_plan.get("if_then_rules")
+    if not isinstance(raw_rules, list):
+        return None
+    rules: list[Dict[str, str]] = []
+    for item in raw_rules:
+        rule = str(item).strip()
+        if not rule:
+            continue
+        rules.append({"rule": rule, "source": "current_plan.if_then_rules"})
+    return rules or None
+
+
+def _has_active_plan_context(current_plan: Optional[Dict[str, Any]]) -> bool:
+    if not isinstance(current_plan, dict):
+        return False
+    for field_name in ("weekly_skeleton", "session_guidance"):
+        raw = current_plan.get(field_name)
+        if isinstance(raw, list) and any(str(item).strip() for item in raw):
+            return True
+    next_session = current_plan.get("next_recommended_session")
+    return isinstance(next_session, dict) and bool(next_session)
+
+
+def _should_bypass_quick_reply(
+    *,
+    inbound_body: str,
+    current_plan: Optional[Dict[str, Any]],
+    rule_engine_decision: Optional[Dict[str, Any]],
+) -> bool:
+    if not _has_active_plan_context(current_plan):
+        return False
+
+    text = str(inbound_body or "").strip().lower()
+    if not text:
+        return False
+
+    extracted_checkin = {}
+    if isinstance(rule_engine_decision, dict):
+        maybe_checkin = rule_engine_decision.get("extracted_checkin")
+        if isinstance(maybe_checkin, dict):
+            extracted_checkin = maybe_checkin
+
+    looks_like_session_report = any(token in text for token in _SESSION_REPORT_MARKERS) or bool(
+        extracted_checkin
+    )
+    if not looks_like_session_report:
+        return False
+
+    has_deviation = any(token in text for token in _SESSION_DEVIATION_MARKERS)
+    has_red_flag = any(token in text for token in _SESSION_RED_FLAG_MARKERS)
+    has_ambiguity = any(token in text for token in _SESSION_AMBIGUITY_MARKERS) or "?" in text
+
+    risk_candidate = str(extracted_checkin.get("risk_candidate", "")).strip().lower()
+    if risk_candidate in {"yellow", "red_a", "red_b"}:
+        has_red_flag = True
+    if bool(extracted_checkin.get("heavy_fatigue")):
+        has_red_flag = True
+
+    for score_field in ("sleep_score", "energy_score", "pain_score"):
+        raw_score = extracted_checkin.get(score_field)
+        if isinstance(raw_score, (int, float)) and raw_score <= 2:
+            has_red_flag = True
+
+    return has_deviation or has_red_flag or has_ambiguity
+
+
 def _build_quick_reply_avoid_list(
     memory_context: Optional[Dict[str, Any]],
     profile_after: Dict[str, Any],
 ) -> list[str]:
     """Build an avoid list from memory facts and profile constraints for the quick-reply path."""
     avoid: list[str] = []
-    # Inactive injury constraints (athlete asked not to mention)
     for ic in profile_after.get("injury_constraints") or []:
         if not ic.get("active", True):
             summary = str(ic.get("summary", "")).strip()
             if summary:
                 avoid.append(summary)
-    # Contradicted facts from memory
     if isinstance(memory_context, dict):
         for fact in memory_context.get("contradicted_facts") or []:
             if isinstance(fact, str) and fact.strip():
@@ -171,7 +284,6 @@ def _generate_quick_reply(
 
 def _missing_injury_only(missing_profile_fields: list[str]) -> bool:
     return set(missing_profile_fields) == {"injury_status"}
-
 
 def _build_connect_strava_link(from_email: str) -> Optional[str]:
     """Creates a CONNECT_STRAVA action link for coaching onboarding."""
@@ -332,7 +444,6 @@ def _generate_llm_reply(
 
     memory_context = get_memory_context_for_response_generation(athlete_id)
 
-    # -- Continuity state: load or bootstrap --
     today = effective_today or date.today()
     current_continuity_state = None
     raw_continuity = get_continuity_state(athlete_id)
@@ -357,14 +468,19 @@ def _generate_llm_reply(
 
     current_continuity_context = current_continuity_state.to_continuity_context(today)
 
-    # -- Quick-reply short-circuit for simple ack/confirmation messages --
     requested_action = ""
     if isinstance(rule_engine_decision, dict):
         requested_action = str(rule_engine_decision.get("requested_action", "")).strip().lower()
 
+    current_plan = get_current_plan(athlete_id)
     if (
         reply_mode == "lightweight_non_planning"
         and requested_action in _QUICK_REPLY_ACTIONS
+        and not _should_bypass_quick_reply(
+            inbound_body=inbound_body,
+            current_plan=current_plan,
+            rule_engine_decision=rule_engine_decision,
+        )
     ):
         quick_reply = _generate_quick_reply(
             athlete_id=athlete_id,
@@ -375,7 +491,6 @@ def _generate_llm_reply(
             continuity_context=current_continuity_context,
         )
         if quick_reply is not None:
-            # Build a minimal directive for obedience eval
             quick_directive = {
                 "avoid": _build_quick_reply_avoid_list(memory_context, profile_after),
                 "content_plan": ["Answer the person's message"],
@@ -411,7 +526,6 @@ def _generate_llm_reply(
                 )
                 last_obedience_eval_result = {"passed": None, "error": True}
 
-            # Memory refresh still runs on quick-reply path
             maybe_post_reply_memory_refresh(
                 athlete_id=athlete_id,
                 inbound_body=inbound_body,
@@ -437,6 +551,7 @@ def _generate_llm_reply(
             log(result="quick_reply_sent")
             return quick_reply
 
+    active_monitoring_rules = _build_active_monitoring_rules(current_plan)
     response_brief = build_response_brief(
         athlete_id=athlete_id,
         reply_kind=reply_mode,
@@ -450,9 +565,10 @@ def _generate_llm_reply(
         memory_context=memory_context,
         connect_strava_link=connect_strava_link,
         intake_completed_this_turn=intake_just_completed and reply_mode == "normal_coaching",
+        current_plan=current_plan,
+        active_monitoring_rules=active_monitoring_rules,
     )
 
-    # -- Two-stage pipeline: coaching reasoning → response generation --
     coaching_result = None
     next_continuity_state = current_continuity_state
     if ENABLE_COACHING_REASONING:
@@ -469,7 +585,6 @@ def _generate_llm_reply(
                 coaching_result.get("doctrine_files_loaded", []),
             )
 
-            # Apply continuity recommendation
             raw_rec = coaching_result.get("continuity_recommendation")
             if raw_rec is not None:
                 try:
@@ -495,7 +610,6 @@ def _generate_llm_reply(
             )
             return None
 
-    # Build response generation input with NEXT continuity state (post-decision)
     next_continuity_context = next_continuity_state.to_continuity_context(today)
 
     directive = coaching_result["directive"]
@@ -542,7 +656,6 @@ def _generate_llm_reply(
             }
             logger.info("obedience_eval_skipped athlete_id=%s reason=profile_incomplete", athlete_id)
         else:
-            # Obedience eval: LLM-based last-line compliance check + correction
             try:
                 obedience_result = run_obedience_eval(
                     email_body=reply,
@@ -586,18 +699,15 @@ def _generate_llm_reply(
         )
         return EmailCopy.FALLBACK_AI_ERROR_REPLY
 
-    # Persist continuity state (skip write if unchanged)
     if next_continuity_state != current_continuity_state or raw_continuity is None:
         if not update_continuity_state(athlete_id, next_continuity_state.to_dict()):
             logger.error(
                 "continuity_state_persist_failed athlete_id=%s", athlete_id,
             )
 
-    # Incomplete-profile intake turns do not spend an extra LLM call on memory refresh.
     if missing_profile_fields:
         log(result="memory_refresh_skipped_profile_incomplete")
     else:
-        # AM2: single post-reply candidate-operation memory refresh
         maybe_post_reply_memory_refresh(
             athlete_id=athlete_id,
             inbound_body=inbound_body,

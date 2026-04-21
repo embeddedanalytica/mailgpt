@@ -1575,10 +1575,13 @@ def normalize_current_plan(plan: Optional[Dict[str, Any]], fallback_goal: Option
     )
     weekly_skeleton = _normalize_string_list(plan.get("weekly_skeleton"))
     plan_adjustments = _normalize_string_list(plan.get("plan_adjustments"))
+    session_guidance = _normalize_string_list(plan.get("session_guidance"))
+    if_then_rules = _normalize_string_list(plan.get("if_then_rules"))
+    safety_note = str(plan.get("safety_note", "")).strip()
     plan_update_status = str(plan.get("plan_update_status", "updated")).strip().lower()
     if plan_update_status not in _PLAN_UPDATE_STATUSES:
         plan_update_status = "updated"
-    return {
+    normalized = {
         "primary_goal": primary_goal,
         "plan_version": plan_version,
         "current_phase": phase,
@@ -1590,6 +1593,13 @@ def normalize_current_plan(plan: Optional[Dict[str, Any]], fallback_goal: Option
         "plan_update_status": plan_update_status,
         "updated_at": updated_at,
     }
+    if session_guidance:
+        normalized["session_guidance"] = session_guidance
+    if if_then_rules:
+        normalized["if_then_rules"] = if_then_rules
+    if safety_note:
+        normalized["safety_note"] = safety_note
+    return normalized
 
 
 def _build_default_current_plan(goal: Optional[str], now_epoch: Optional[int] = None) -> Dict[str, Any]:
@@ -1640,7 +1650,7 @@ def _normalize_changes_from_previous(changes_from_previous: Optional[List[str]])
 
 def _normalize_plan_updates(updates: Dict[str, Any]) -> Dict[str, Any]:
     normalized: Dict[str, Any] = {}
-    for key in ("primary_goal", "current_phase", "current_focus", "plan_status"):
+    for key in ("primary_goal", "current_phase", "current_focus", "plan_status", "safety_note"):
         value = updates.get(key)
         if isinstance(value, str) and value.strip():
             normalized[key] = value.strip()
@@ -1648,6 +1658,10 @@ def _normalize_plan_updates(updates: Dict[str, Any]) -> Dict[str, Any]:
         normalized["weekly_skeleton"] = _normalize_string_list(updates.get("weekly_skeleton"))
     if "plan_adjustments" in updates:
         normalized["plan_adjustments"] = _normalize_string_list(updates.get("plan_adjustments"))
+    if "session_guidance" in updates:
+        normalized["session_guidance"] = _normalize_string_list(updates.get("session_guidance"))
+    if "if_then_rules" in updates:
+        normalized["if_then_rules"] = _normalize_string_list(updates.get("if_then_rules"))
     if "plan_update_status" in updates:
         status = str(updates.get("plan_update_status", "")).strip().lower()
         if status in _PLAN_UPDATE_STATUSES:

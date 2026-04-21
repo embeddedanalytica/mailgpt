@@ -74,6 +74,7 @@ class TestGetReplyForInbound(unittest.TestCase):
             mock.patch.object(coaching, "merge_coach_profile_fields", return_value=True),
             mock.patch.object(coaching, "ensure_current_plan", return_value=True),
             mock.patch.object(coaching, "fetch_current_plan_summary", return_value="Current plan - Goal: 10k."),
+            mock.patch.object(coaching, "get_current_plan", return_value=None),
             mock.patch.object(coaching, "create_action_token", return_value=None),
         )
 

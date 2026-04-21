@@ -27,6 +27,7 @@ Inspect the trace with jq, e.g.:
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import os
 import secrets
@@ -51,6 +52,7 @@ os.environ["ENABLE_PROMPT_TRACE"] = "true"
 
 _DEFAULT_TRACE_DIR = REPO_ROOT / "sam-app" / ".cache" / "debug_turn_trace"
 _BAR = "─" * 60
+_SEND_HEARTBEAT_SECONDS = 10.0
 
 
 # ─── trace file helpers ─────────────────────────────────────────────────────
@@ -182,6 +184,7 @@ def _do_send_turn(
 ) -> dict:
     """Run one send turn. Captures state diff + prompt trace, appends a record."""
     email_l = email_addr.strip().lower()
+    started_at = time.monotonic()
 
     state_before = _safe_snapshot(harness, email_l)
     _reset_prompt_trace()
@@ -190,21 +193,64 @@ def _do_send_turn(
         "%a, %d %b %Y %H:%M:%S +0000"
     )
 
+    start_record = {
+        "kind": "debug_send_started",
+        "ts_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "trace_email": email_l,
+        "turn_num": turn_num,
+        "athlete": {
+            "subject": subject,
+            "body": body,
+            "date_received": resolved_date,
+        },
+        "state_before": state_before,
+    }
+    start_line_num = _append_trace(trace_path, start_record)
+
     error_msg: str | None = None
     result = None
-    try:
-        result = harness.send_inbound_email(
+    heartbeat_count = 0
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(
+            harness.send_inbound_email,
             email_addr,
             subject=subject,
             body=body,
             date_received=resolved_date,
         )
-    except RuntimeError as exc:
-        error_msg = str(exc)
+        while True:
+            try:
+                result = future.result(timeout=_SEND_HEARTBEAT_SECONDS)
+                break
+            except concurrent.futures.TimeoutError:
+                heartbeat_count += 1
+                elapsed_seconds = round(time.monotonic() - started_at, 2)
+                heartbeat_record = {
+                    "kind": "debug_send_heartbeat",
+                    "ts_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "trace_email": email_l,
+                    "turn_num": turn_num,
+                    "elapsed_seconds": elapsed_seconds,
+                    "heartbeat_index": heartbeat_count,
+                    "athlete": {
+                        "subject": subject,
+                        "body": body,
+                        "date_received": resolved_date,
+                    },
+                    "state_during": _safe_snapshot(harness, email_l),
+                }
+                _append_trace(trace_path, heartbeat_record)
+            except RuntimeError as exc:
+                error_msg = str(exc)
+                break
+            except Exception as exc:  # noqa: BLE001 - debug tool should surface failures
+                error_msg = str(exc)
+                break
 
     prompt_calls = _drain_prompt_trace()
     state_after = _safe_snapshot(harness, email_l)
     diff = _state_diff(state_before, state_after)
+    elapsed_seconds = round(time.monotonic() - started_at, 2)
 
     coach_subject = ""
     coach_text = ""
@@ -226,6 +272,9 @@ def _do_send_turn(
         "ts_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "trace_email": email_l,
         "turn_num": turn_num,
+        "elapsed_seconds": elapsed_seconds,
+        "heartbeat_count": heartbeat_count,
+        "start_trace_line": start_line_num,
         "athlete_id": athlete_id,
         "message_id": message_id,
         "athlete": {

@@ -152,12 +152,18 @@ class TestCurrentPlanHelpers(unittest.TestCase):
                 "plan_status": "adjusting",
                 "weekly_skeleton": ["easy_aerobic", "tempo", "strength"],
                 "plan_adjustments": ["reduce_intensity"],
+                "session_guidance": ["Tue easy 30", "Thu steady 45"],
+                "if_then_rules": ["If fatigue rises, downgrade to easy."],
+                "safety_note": "Monitor fatigue before adding intensity.",
                 "plan_update_status": "updated",
                 "updated_at": 1735732800,
             }
         )
         self.assertEqual(normalized["weekly_skeleton"], ["easy_aerobic", "tempo", "strength"])
         self.assertEqual(normalized["plan_adjustments"], ["reduce_intensity"])
+        self.assertEqual(normalized["session_guidance"], ["Tue easy 30", "Thu steady 45"])
+        self.assertEqual(normalized["if_then_rules"], ["If fatigue rises, downgrade to easy."])
+        self.assertEqual(normalized["safety_note"], "Monitor fatigue before adding intensity.")
         self.assertEqual(normalized["plan_update_status"], "updated")
 
     def test_ensure_current_plan_writes_default_once(self):
@@ -276,6 +282,9 @@ class TestCurrentPlanHelpers(unittest.TestCase):
                     "current_phase": "build",
                     "weekly_skeleton": ["easy_aerobic", "tempo", "strength"],
                     "plan_adjustments": ["reduce_intensity"],
+                    "session_guidance": ["Tue easy 30", "Thu steady 45"],
+                    "if_then_rules": ["If fatigue rises, downgrade to easy."],
+                    "safety_note": "Monitor fatigue before adding intensity.",
                     "plan_update_status": "updated",
                 },
                 logical_request_id="req-re2-fields",

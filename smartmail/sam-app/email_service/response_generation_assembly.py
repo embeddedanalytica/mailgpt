@@ -147,6 +147,8 @@ def build_response_brief(
     memory_context: Optional[Dict[str, Any]],
     connect_strava_link: Optional[str] = None,
     intake_completed_this_turn: bool = False,
+    current_plan: Optional[Dict[str, Any]] = None,
+    active_monitoring_rules: Optional[list] = None,
     # Legacy kwargs (ignored, kept for backward compat during transition)
     pre_reply_refresh_attempted: bool = False,
     post_reply_refresh_eligible: bool = False,
@@ -215,11 +217,44 @@ def build_response_brief(
         decision_context["weeks_in_coaching"] = weeks
 
     validated_plan: Dict[str, Any] = {}
-    include_plan_summary = reply_mode in {"normal_coaching", "safety_risk_managed"}
-    if include_plan_summary:
-        normalized_plan_summary = _string_field(plan_summary)
-        if normalized_plan_summary:
-            validated_plan["plan_summary"] = normalized_plan_summary
+    normalized_plan_summary = _string_field(plan_summary)
+    if normalized_plan_summary:
+        validated_plan["plan_summary"] = normalized_plan_summary
+
+    if isinstance(current_plan, dict):
+        weekly_skeleton = current_plan.get("weekly_skeleton")
+        if isinstance(weekly_skeleton, list):
+            cleaned = [str(item).strip() for item in weekly_skeleton if str(item).strip()]
+            if cleaned:
+                validated_plan["weekly_skeleton"] = cleaned
+        plan_adjustments = current_plan.get("plan_adjustments")
+        if isinstance(plan_adjustments, list):
+            cleaned = [str(item).strip() for item in plan_adjustments if str(item).strip()]
+            if cleaned:
+                validated_plan["plan_adjustments"] = cleaned
+        for src_field in ("session_guidance", "if_then_rules"):
+            raw_list = current_plan.get(src_field)
+            if isinstance(raw_list, list):
+                cleaned = [str(item).strip() for item in raw_list if str(item).strip()]
+                if cleaned:
+                    validated_plan[src_field] = cleaned
+        for src_field, dst_field in (
+            ("current_focus", "current_focus"),
+            ("current_phase", "current_phase"),
+            ("safety_note", "safety_note"),
+        ):
+            raw_val = _string_field(current_plan.get(src_field))
+            if raw_val:
+                validated_plan[dst_field] = raw_val
+        version_raw = current_plan.get("plan_version")
+        if isinstance(version_raw, int) and version_raw >= 1:
+            validated_plan["plan_version"] = version_raw
+        nrs = current_plan.get("next_recommended_session")
+        if isinstance(nrs, dict) and nrs:
+            validated_plan["next_recommended_session"] = {
+                k: (str(v) if not isinstance(v, (int, float, bool)) else v)
+                for k, v in nrs.items()
+            }
 
     delivery_context: Dict[str, Any] = {}
     normalized_subject = _string_field(inbound_subject)
@@ -306,6 +341,10 @@ def build_response_brief(
         "delivery_context": delivery_context,
         "memory_context": memory_payload,
     }
+    if isinstance(active_monitoring_rules, list) and active_monitoring_rules:
+        payload["active_monitoring_rules"] = [
+            dict(rule) for rule in active_monitoring_rules if isinstance(rule, dict)
+        ]
     return ResponseBrief.from_dict(payload)
 
 

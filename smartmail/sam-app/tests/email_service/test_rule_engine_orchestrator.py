@@ -40,6 +40,9 @@ class TestApplyRuleEnginePlanUpdate(unittest.TestCase):
         updates = update_plan.call_args.args[1]
         self.assertEqual(updates["weekly_skeleton"], ["easy_aerobic", "tempo", "strength"])
         self.assertEqual(updates["plan_update_status"], "updated")
+        self.assertTrue(updates["session_guidance"])
+        self.assertTrue(updates["if_then_rules"])
+        self.assertTrue(updates["safety_note"])
 
 
 class TestRunRuleEngineForWeek(unittest.TestCase):

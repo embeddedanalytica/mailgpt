@@ -19,6 +19,7 @@ OPTIONAL_UNIVERSAL_ORDER: Final[list[tuple[str, str]]] = [
     ("illness_and_low_energy", "universal/illness_and_low_energy.md"),
     ("travel_and_disruption", "universal/travel_and_disruption.md"),
     ("intensity_reintroduction", "universal/intensity_reintroduction.md"),
+    ("session_report_evaluation", "universal/session_report_evaluation.md"),
     ("common_coaching_failures", "universal/common_coaching_failures.md"),
 ]
 

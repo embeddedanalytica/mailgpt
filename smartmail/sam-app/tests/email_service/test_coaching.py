@@ -822,6 +822,7 @@ class TestBuildProfileGatedReply(unittest.TestCase):
              mock.patch.object(coaching, "get_progress_snapshot", return_value={"data_quality": "low"}), \
              mock.patch.object(coaching, "merge_coach_profile_fields", return_value=True), \
              mock.patch.object(coaching, "ensure_current_plan", return_value=True), \
+             mock.patch.object(coaching, "get_current_plan", return_value=None), \
              mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"sectioned_memory": empty_sectioned_memory(), "continuity_summary": None}), \
              mock.patch.object(coaching, "maybe_post_reply_memory_refresh"), \
              mock.patch.object(coaching, "run_response_generation_workflow") as run_response_generation_workflow:
@@ -853,6 +854,7 @@ class TestBuildProfileGatedReply(unittest.TestCase):
              mock.patch.object(coaching, "merge_coach_profile_fields") as merge, \
              mock.patch.object(coaching, "ensure_current_plan") as ensure_plan, \
              mock.patch.object(coaching, "fetch_current_plan_summary", return_value=None), \
+             mock.patch.object(coaching, "get_current_plan", return_value=None), \
              mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"sectioned_memory": empty_sectioned_memory(), "continuity_summary": None}), \
              mock.patch.object(coaching, "maybe_post_reply_memory_refresh"), \
              mock.patch.object(coaching, "create_action_token", return_value=None), \
@@ -978,6 +980,7 @@ class TestBuildProfileGatedReply(unittest.TestCase):
              mock.patch.object(coaching, "merge_coach_profile_fields") as merge, \
              mock.patch.object(coaching, "ensure_current_plan") as ensure_plan, \
              mock.patch.object(coaching, "fetch_current_plan_summary", return_value="Current plan - Goal: 10k."), \
+             mock.patch.object(coaching, "get_current_plan", return_value=None), \
              mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"sectioned_memory": empty_sectioned_memory(), "continuity_summary": None}), \
              mock.patch.object(coaching, "maybe_post_reply_memory_refresh") as maybe_post_refresh, \
              mock.patch.object(coaching, "create_action_token", return_value=None), \
@@ -1032,6 +1035,7 @@ class TestBuildProfileGatedReply(unittest.TestCase):
              mock.patch.object(coaching, "run_rule_engine_for_week", side_effect=lambda **kwargs: call_order.append("run_rule_engine_for_week") or engine_output) as run_engine, \
              mock.patch.object(coaching, "apply_rule_engine_plan_update", side_effect=lambda **kwargs: call_order.append("apply_rule_engine_plan_update") or {"status": "applied", "plan_version": 2, "error_code": None}) as apply_update, \
              mock.patch.object(coaching, "fetch_current_plan_summary", side_effect=lambda athlete_id, **kwargs: call_order.append("fetch_current_plan_summary") or "Current plan - Goal: 10k. Version 2"), \
+             mock.patch.object(coaching, "get_current_plan", return_value=None), \
              mock.patch.object(coaching, "run_response_generation_workflow") as run_response_generation_workflow:
             get_profile.return_value = {
                 "primary_goal": "10k",
@@ -1156,6 +1160,20 @@ class TestBuildProfileGatedReply(unittest.TestCase):
              mock.patch.object(coaching, "merge_coach_profile_fields", return_value=True), \
              mock.patch.object(coaching, "ensure_current_plan", return_value=True), \
              mock.patch.object(coaching, "fetch_current_plan_summary", return_value="Current plan - Goal: 10k."), \
+             mock.patch.object(coaching, "get_current_plan", return_value={
+                 "weekly_skeleton": ["Tue easy 30", "Thu tempo"],
+                 "session_guidance": ["Tue easy 30", "Thu tempo 20"],
+                 "if_then_rules": ["If fatigue rises, downgrade to easy."],
+                 "safety_note": "Monitor fatigue before intensity.",
+                 "current_focus": "10k preparation",
+                 "current_phase": "build",
+                 "plan_version": 3,
+                 "next_recommended_session": {
+                     "date": "2026-04-20",
+                     "type": "easy",
+                     "target": "30 minutes easy effort",
+                 },
+             }), \
              mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"sectioned_memory": empty_sectioned_memory(), "continuity_summary": None}), \
              mock.patch.object(coaching, "maybe_post_reply_memory_refresh"), \
              mock.patch.object(coaching, "create_action_token", return_value=None), \
@@ -1175,7 +1193,126 @@ class TestBuildProfileGatedReply(unittest.TestCase):
             writer_brief = run_response_generation_workflow.call_args.args[0]
             response_brief = self._mock_coaching_reasoning.call_args.args[0]
             self.assertEqual(writer_brief["reply_mode"], "lightweight_non_planning")
-            self.assertEqual(response_brief["validated_plan"], {})
+            self.assertEqual(response_brief["validated_plan"]["plan_summary"], "Current plan - Goal: 10k.")
+            self.assertEqual(
+                response_brief["validated_plan"]["if_then_rules"],
+                ["If fatigue rises, downgrade to easy."],
+            )
+            self.assertEqual(
+                response_brief["active_monitoring_rules"],
+                [{"rule": "If fatigue rises, downgrade to easy.", "source": "current_plan.if_then_rules"}],
+            )
+
+    def test_session_deviation_checkin_bypasses_quick_reply_and_runs_strategist(self):
+        with mock.patch.object(coaching, "get_coach_profile", return_value={
+            "primary_goal": "10k",
+            "time_availability": {"availability_notes": "About 2 hours per week"},
+            "experience_level": "unknown",
+            "injury_status": {"has_injuries": False},
+        }), \
+             mock.patch.object(coaching, "parse_profile_updates_from_email", return_value={}), \
+             mock.patch.object(coaching, "parse_manual_activity_snapshot_from_email", return_value=None), \
+             mock.patch.object(coaching, "put_manual_activity_snapshot", return_value=True), \
+             mock.patch.object(coaching, "get_progress_snapshot", return_value={"data_quality": "low"}), \
+             mock.patch.object(coaching, "merge_coach_profile_fields", return_value=True), \
+             mock.patch.object(coaching, "ensure_current_plan", return_value=True), \
+             mock.patch.object(coaching, "fetch_current_plan_summary", return_value="Current plan - Goal: 10k."), \
+             mock.patch.object(coaching, "get_current_plan", return_value={
+                 "weekly_skeleton": ["Tue easy 30", "Thu easy 30"],
+                 "session_guidance": ["Tue easy 30", "Thu easy 30"],
+                 "if_then_rules": ["If fatigue rises, downgrade to easy."],
+                 "safety_note": "Monitor fatigue before intensity.",
+                 "current_focus": "10k preparation",
+                 "current_phase": "build",
+                 "plan_version": 3,
+                 "next_recommended_session": {
+                     "date": "2026-04-20",
+                     "type": "easy",
+                     "target": "30 minutes easy effort",
+                 },
+             }), \
+             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"sectioned_memory": empty_sectioned_memory(), "continuity_summary": None}), \
+             mock.patch.object(coaching, "_generate_quick_reply", return_value="quick path") as quick_reply, \
+             mock.patch.object(coaching, "maybe_post_reply_memory_refresh"), \
+             mock.patch.object(coaching, "create_action_token", return_value=None), \
+             mock.patch.object(coaching, "run_response_generation_workflow") as run_response_generation_workflow:
+            run_response_generation_workflow.return_value = _final_email_response("Do an easy recovery tomorrow.")
+
+            coaching.build_profile_gated_reply(
+                "ath_1",
+                "user@example.com",
+                "Instead of the easy run I did 50 min with 3 threshold blocks because I felt good.",
+                inbound_subject="Check-in",
+                selected_model_name="gpt-5-nano",
+                rule_engine_decision={
+                    "intent": "coaching",
+                    "mode": "read_only",
+                    "requested_action": "checkin_ack",
+                    "extracted_checkin": {"days_available": 4},
+                },
+                log_outcome=None,
+            )
+
+            quick_reply.assert_not_called()
+            self.assertTrue(run_response_generation_workflow.called)
+            writer_brief = run_response_generation_workflow.call_args.args[0]
+            self.assertEqual(writer_brief["reply_mode"], "lightweight_non_planning")
+
+    def test_clean_checkin_ack_still_uses_quick_reply(self):
+        with mock.patch.object(coaching, "get_coach_profile", return_value={
+            "primary_goal": "10k",
+            "time_availability": {"availability_notes": "About 2 hours per week"},
+            "experience_level": "unknown",
+            "injury_status": {"has_injuries": False},
+        }), \
+             mock.patch.object(coaching, "parse_profile_updates_from_email", return_value={}), \
+             mock.patch.object(coaching, "parse_manual_activity_snapshot_from_email", return_value=None), \
+             mock.patch.object(coaching, "put_manual_activity_snapshot", return_value=True), \
+             mock.patch.object(coaching, "get_progress_snapshot", return_value={"data_quality": "low"}), \
+             mock.patch.object(coaching, "merge_coach_profile_fields", return_value=True), \
+             mock.patch.object(coaching, "ensure_current_plan", return_value=True), \
+             mock.patch.object(coaching, "fetch_current_plan_summary", return_value="Current plan - Goal: 10k."), \
+             mock.patch.object(coaching, "get_current_plan", return_value={
+                 "weekly_skeleton": ["Tue easy 30", "Thu easy 30"],
+                 "session_guidance": ["Tue easy 30", "Thu easy 30"],
+                 "current_focus": "10k preparation",
+                 "current_phase": "build",
+                 "plan_version": 3,
+                 "next_recommended_session": {
+                     "date": "2026-04-20",
+                     "type": "easy",
+                     "target": "30 minutes easy effort",
+                 },
+             }), \
+             mock.patch.object(coaching, "get_memory_context_for_response_generation", return_value={"sectioned_memory": empty_sectioned_memory(), "continuity_summary": None}), \
+             mock.patch.object(coaching, "_generate_quick_reply", return_value="Quick acknowledgment.") as quick_reply, \
+             mock.patch.object(coaching, "run_obedience_eval", return_value={
+                 "passed": True,
+                 "violations": [],
+                 "corrected_email_body": "Quick acknowledgment.",
+                 "reasoning": "ok",
+             }), \
+             mock.patch.object(coaching, "maybe_post_reply_memory_refresh"), \
+             mock.patch.object(coaching, "create_action_token", return_value=None), \
+             mock.patch.object(coaching, "run_response_generation_workflow") as run_response_generation_workflow:
+            reply = coaching.build_profile_gated_reply(
+                "ath_1",
+                "user@example.com",
+                "Did the planned easy 45 min today, felt normal, sleep was good.",
+                inbound_subject="Check-in",
+                selected_model_name="gpt-5-nano",
+                rule_engine_decision={
+                    "intent": "coaching",
+                    "mode": "read_only",
+                    "requested_action": "checkin_ack",
+                    "extracted_checkin": {"days_available": 4},
+                },
+                log_outcome=None,
+            )
+
+            self.assertEqual(reply, "Quick acknowledgment.")
+            quick_reply.assert_called_once()
+            run_response_generation_workflow.assert_not_called()
 
     def test_question_intent_with_only_missing_injury_stays_lightweight(self):
         # Profile has everything except injury_status — question intent should stay lightweight

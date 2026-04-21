@@ -215,6 +215,54 @@ class TestBuildResponseBrief(unittest.TestCase):
         self.assertEqual(len(brief.memory_context["preference_facts"]), 2)
         self.assertTrue(brief.memory_context["memory_available"])
 
+    def test_current_plan_threads_monitoring_and_session_fields_into_brief(self):
+        brief = build_response_brief(
+            athlete_id="ath_plan_fields",
+            reply_kind="lightweight_non_planning",
+            inbound_subject="Check-in",
+            selected_model_name="gpt-5-nano",
+            profile_after={"primary_goal": "10k"},
+            missing_profile_fields=[],
+            plan_summary="Current plan - Goal: 10k.",
+            rule_engine_decision=None,
+            memory_context=_empty_memory_context(),
+            current_plan={
+                "weekly_skeleton": ["Tue easy 30", "Thu tempo"],
+                "plan_adjustments": ["hold volume steady"],
+                "session_guidance": ["Tue easy 30", "Thu tempo 20"],
+                "if_then_rules": ["If fatigue rises, downgrade to easy."],
+                "safety_note": "Monitor fatigue before intensity.",
+                "current_focus": "10k preparation",
+                "current_phase": "build",
+                "plan_version": 3,
+                "next_recommended_session": {
+                    "date": "2026-04-20",
+                    "type": "easy",
+                    "target": "30 minutes easy effort",
+                },
+            },
+            active_monitoring_rules=[
+                {"rule": "If fatigue rises, downgrade to easy.", "source": "current_plan.if_then_rules"}
+            ],
+        )
+
+        self.assertEqual(
+            brief.validated_plan["session_guidance"],
+            ["Tue easy 30", "Thu tempo 20"],
+        )
+        self.assertEqual(
+            brief.validated_plan["if_then_rules"],
+            ["If fatigue rises, downgrade to easy."],
+        )
+        self.assertEqual(
+            brief.validated_plan["safety_note"],
+            "Monitor fatigue before intensity.",
+        )
+        self.assertEqual(
+            brief.active_monitoring_rules,
+            [{"rule": "If fatigue rises, downgrade to easy.", "source": "current_plan.if_then_rules"}],
+        )
+
     def test_empty_memory_notes_with_continuity_still_available(self):
         brief = build_response_brief(
             athlete_id="ath_5",
@@ -309,7 +357,7 @@ class TestBuildResponseGenerationInput(unittest.TestCase):
         self.assertEqual(off_topic.validated_plan, {})
         self.assertEqual(off_topic.decision_context, {})
 
-    def test_lightweight_non_planning_omits_validated_plan_fields(self):
+    def test_lightweight_non_planning_includes_plan_summary_for_strategist_context(self):
         brief = build_response_brief(
             athlete_id="ath_7",
             reply_kind="lightweight_non_planning",
@@ -358,7 +406,9 @@ class TestBuildResponseGenerationInput(unittest.TestCase):
         )
 
         self.assertEqual(brief.reply_mode, "lightweight_non_planning")
-        self.assertEqual(brief.validated_plan, {})
+        # Check-in / question turns need plan context so the strategist can compare
+        # reported sessions or questions against the active plan.
+        self.assertEqual(brief.validated_plan, {"plan_summary": "Current plan - Goal: 10k."})
         self.assertEqual(brief.decision_context, {})
 
     def test_lightweight_non_planning_with_missing_injury_uses_targeted_followup(self):
@@ -375,7 +425,7 @@ class TestBuildResponseGenerationInput(unittest.TestCase):
         )
 
         self.assertEqual(brief.reply_mode, "lightweight_non_planning")
-        self.assertEqual(brief.validated_plan, {})
+        self.assertEqual(brief.validated_plan, {"plan_summary": "Current plan - Goal: 10k."})
         self.assertNotIn("missing_profile_fields", brief.decision_context)
         self.assertNotIn("clarification_needed", brief.decision_context)
         self.assertEqual(

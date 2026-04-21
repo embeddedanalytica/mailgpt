@@ -36,6 +36,7 @@ _REQUIRED_TOP_LEVEL_FIELDS = {
 }
 _OPTIONAL_TOP_LEVEL_FIELDS = {
     "continuity_context",
+    "active_monitoring_rules",
 }
 _ALLOWED_TOP_LEVEL_FIELDS = _REQUIRED_TOP_LEVEL_FIELDS | _OPTIONAL_TOP_LEVEL_FIELDS
 _ATHLETE_CONTEXT_FIELDS = {
@@ -67,6 +68,11 @@ _VALIDATED_PLAN_FIELDS = {
     "adjustments_or_priorities",
     "if_then_rules",
     "safety_note",
+    "current_focus",
+    "current_phase",
+    "plan_adjustments",
+    "plan_version",
+    "next_recommended_session",
 }
 _DELIVERY_CONTEXT_FIELDS = {
     "inbound_subject",
@@ -285,18 +291,82 @@ def _validate_validated_plan(payload: Dict[str, Any]) -> Dict[str, Any]:
             "validated_plan.weekly_skeleton",
             plan["weekly_skeleton"],
         )
-    for field_name in ("planner_rationale", "plan_summary", "safety_note"):
+    if "plan_adjustments" in plan:
+        normalized["plan_adjustments"] = _require_string_list(
+            "validated_plan.plan_adjustments",
+            plan["plan_adjustments"],
+        )
+    for field_name in (
+        "planner_rationale",
+        "plan_summary",
+        "safety_note",
+        "current_focus",
+        "current_phase",
+    ):
         if field_name in plan:
             normalized[field_name] = _require_string(
                 f"validated_plan.{field_name}",
                 plan[field_name],
             )
+    if "plan_version" in plan:
+        version_value = plan["plan_version"]
+        if not isinstance(version_value, int) or version_value < 1:
+            raise ResponseGenerationContractError(
+                "validated_plan.plan_version must be a positive integer"
+            )
+        normalized["plan_version"] = version_value
+    if "next_recommended_session" in plan:
+        nrs = plan["next_recommended_session"]
+        if not isinstance(nrs, dict):
+            raise ResponseGenerationContractError(
+                "validated_plan.next_recommended_session must be a dict"
+            )
+        normalized["next_recommended_session"] = dict(nrs)
     for field_name in ("session_guidance", "adjustments_or_priorities", "if_then_rules"):
         if field_name in plan:
             normalized[field_name] = _require_non_empty_string_list(
                 f"validated_plan.{field_name}",
                 plan[field_name],
             )
+    return normalized
+
+
+def _validate_active_monitoring_rules(value: Any) -> list[Dict[str, Any]]:
+    """Validate the optional active_monitoring_rules top-level brief field.
+
+    Each rule is a dict with at minimum a non-empty 'rule' string. Optional
+    fields: 'trigger' (str), 'action' (str), 'source' (str).
+    """
+    if not isinstance(value, list):
+        raise ResponseGenerationContractError("active_monitoring_rules must be a list")
+    normalized: list[Dict[str, Any]] = []
+    allowed = {"rule", "trigger", "action", "source"}
+    for idx, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise ResponseGenerationContractError(
+                f"active_monitoring_rules[{idx}] must be a dict"
+            )
+        extra = sorted(set(item.keys()) - allowed)
+        if extra:
+            raise ResponseGenerationContractError(
+                f"active_monitoring_rules[{idx}] has unknown fields: {', '.join(extra)}"
+            )
+        if "rule" not in item:
+            raise ResponseGenerationContractError(
+                f"active_monitoring_rules[{idx}] requires 'rule'"
+            )
+        entry: Dict[str, Any] = {
+            "rule": _require_non_empty_string(
+                f"active_monitoring_rules[{idx}].rule", item["rule"]
+            ),
+        }
+        for field_name in ("trigger", "action", "source"):
+            if field_name in item:
+                entry[field_name] = _require_string(
+                    f"active_monitoring_rules[{idx}].{field_name}",
+                    item[field_name],
+                )
+        normalized.append(entry)
     return normalized
 
 
@@ -493,6 +563,8 @@ def validate_response_brief(payload: Dict[str, Any]) -> None:
     _validate_validated_plan(payload["validated_plan"])
     _validate_delivery_context(payload["delivery_context"])
     _validate_memory_context(payload["memory_context"])
+    if "active_monitoring_rules" in payload:
+        _validate_active_monitoring_rules(payload["active_monitoring_rules"])
 
 
 def validate_response_payload(payload: Dict[str, Any]) -> None:
@@ -565,10 +637,14 @@ class ResponseBrief:
     delivery_context: Dict[str, Any]
     memory_context: Dict[str, Any]
     continuity_context: Optional[Dict[str, Any]] = None
+    active_monitoring_rules: Optional[list] = None
 
     @classmethod
     def from_dict(cls, payload: Dict[str, Any]) -> "ResponseBrief":
         validate_response_brief(payload)
+        monitoring = None
+        if "active_monitoring_rules" in payload:
+            monitoring = _validate_active_monitoring_rules(payload["active_monitoring_rules"])
         return cls(
             reply_mode=normalize_reply_mode(payload["reply_mode"]),
             athlete_context=_validate_athlete_context(payload["athlete_context"]),
@@ -577,6 +653,7 @@ class ResponseBrief:
             delivery_context=_validate_delivery_context(payload["delivery_context"]),
             memory_context=_validate_memory_context(payload["memory_context"]),
             continuity_context=payload.get("continuity_context"),
+            active_monitoring_rules=monitoring,
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -590,6 +667,8 @@ class ResponseBrief:
         }
         if self.continuity_context is not None:
             result["continuity_context"] = dict(self.continuity_context)
+        if self.active_monitoring_rules is not None:
+            result["active_monitoring_rules"] = [dict(r) for r in self.active_monitoring_rules]
         return result
 
 
