@@ -452,18 +452,25 @@ def _history_has_risk(brief: dict[str, Any]) -> bool:
 
 
 def _has_known_plan_structure(brief: dict[str, Any]) -> bool:
+    # Real plan_mutation requires an actual structured plan to mutate. We
+    # deliberately do NOT accept inbound tokens like "the planned run" as a proxy
+    # — those phrases appear in past-tense session reports ("instead of the
+    # planned easy run I did X") and trigger spurious mutation classification.
+    # If there is no validated_plan, there is nothing to mutate.
     validated_plan = brief.get("validated_plan")
-    if isinstance(validated_plan, dict) and validated_plan:
-        return True
-    inbound = _extract_inbound_body(brief)
-    return _contains_any(inbound, _PLAN_STRUCTURE_TOKENS)
+    return isinstance(validated_plan, dict) and bool(validated_plan)
 
 
 def _has_real_planning_ask(brief: dict[str, Any], blob: str) -> bool:
+    # Only explicit planning vocabulary in the inbound promotes a turn to "planning".
+    # We deliberately do NOT promote based on counts of generic prescription tokens
+    # (e.g. "tempo", "long run", "threshold") because those words appear in completed-
+    # session reports and check-ins, not just planning asks. Real plan_update intent
+    # is already produced upstream by the conversation_intelligence classifier
+    # (requested_action=plan_update) and routed via inbound_rule_router.
+    del blob  # retained in signature for callsite compatibility
     inbound = _extract_inbound_body(brief)
-    if _contains_any(inbound, _PLANNING_PHRASES):
-        return True
-    return _count_phrase_matches(blob, _PRESCRIPTION_PHRASES) >= 2
+    return _contains_any(inbound, _PLANNING_PHRASES)
 
 
 def _has_real_mutation_ask(brief: dict[str, Any]) -> bool:
@@ -511,11 +518,20 @@ def _derive_illness_strength(brief: dict[str, Any]) -> str:
 
 
 def _derive_travel_strength(brief: dict[str, Any]) -> str:
+    # Strict gating (Step 2 of strategist-prompt shrink):
+    # - "strong" only when the current inbound mentions travel/disruption.
+    # - "weak" from constraints_summary / open_loops fires only when the turn is
+    #   actually about planning or mutating the plan — otherwise stale travel
+    #   constraints kept in memory pull in irrelevant doctrine on every turn.
+    # - Otherwise "none".
     inbound = _extract_inbound_body(brief)
     if _contains_any(inbound, _TRAVEL_PHRASES):
         return "strong"
     supporting = f"{_extract_constraints_summary(brief)} {_extract_open_loops(brief)}".strip()
-    if _contains_any(supporting, _TRAVEL_PHRASES):
+    if not _contains_any(supporting, _TRAVEL_PHRASES):
+        return "none"
+    blob = _signal_blob(brief)
+    if _has_real_planning_ask(brief, blob) or _has_real_mutation_ask(brief):
         return "weak"
     return "none"
 
@@ -568,13 +584,21 @@ def _derive_plan_active_strength(brief: dict[str, Any]) -> str:
 def _derive_intensity_return_strength(
     brief: dict[str, Any], blob: str, setback_strength: str
 ) -> str:
+    # Strict gating (Step 2 of strategist-prompt shrink):
+    # Intensity vocabulary alone (e.g. "threshold", "tempo") is not a
+    # return-from-setback signal — it appears in normal session reports and
+    # plan-discussion language. Require either an explicit return/progression
+    # phrase ("bring back", "ramp back up") OR an active setback signal before
+    # any strength fires. The intensity_reintroduction doctrine is a
+    # safety_protocol for return-from-setback; loading it for healthy progression
+    # is noise.
     inbound = _extract_inbound_body(brief)
     has_intensity = _has_intensity_signals(blob)
     if not has_intensity:
         return "none"
     if _contains_any(inbound, _RETURN_PROGRESS_PHRASES) or setback_strength != "none":
         return "strong"
-    return "weak"
+    return "none"
 
 
 def _derive_prescription_strength(brief: dict[str, Any], blob: str) -> str:

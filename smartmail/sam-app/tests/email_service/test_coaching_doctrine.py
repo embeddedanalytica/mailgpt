@@ -193,10 +193,26 @@ class TestSelectDoctrineFiles(unittest.TestCase):
         self.assertIn("universal/travel_and_disruption.md", select_doctrine_files(brief))
 
     def test_intensity_signals(self):
+        # New contract (Step 2 of strategist-prompt shrink): intensity_reintroduction
+        # is a return-from-setback safety protocol. It loads when the inbound uses
+        # explicit return/progression language (_RETURN_PROGRESS_PHRASES) — bare
+        # vocabulary like "threshold work" alone is insufficient.
+        brief = _base_brief(
+            delivery_context={"inbound_body": "Ready to bring back threshold work next week."},
+        )
+        self.assertIn("universal/intensity_reintroduction.md", select_doctrine_files(brief))
+
+    def test_intensity_vocabulary_alone_does_not_load_doctrine(self):
+        # Counterpart to test_intensity_signals: intensity vocabulary in normal
+        # progression language (no return-phrase, no setback) does not load the
+        # return-from-setback doctrine. Guards against the original misfire where
+        # "threshold" alone pulled in 35 lines of irrelevant safety doctrine.
         brief = _base_brief(
             delivery_context={"inbound_body": "Ready to add threshold work again next week."},
         )
-        self.assertIn("universal/intensity_reintroduction.md", select_doctrine_files(brief))
+        self.assertNotIn(
+            "universal/intensity_reintroduction.md", select_doctrine_files(brief)
+        )
 
     def test_intensity_synonym_signals(self):
         brief = _base_brief(
@@ -224,13 +240,35 @@ class TestSelectDoctrineFiles(unittest.TestCase):
         )
         self.assertIn("universal/common_coaching_failures.md", select_doctrine_files(brief))
 
-    def test_prescription_signals_running_only(self):
+    def test_prescription_vocabulary_alone_does_not_load_planning_doctrine(self):
+        # New contract (Step 1 of strategist-prompt shrink): bare prescription
+        # vocabulary like "weekly volume" + "tempo" is not a planning ask. Without
+        # explicit _PLANNING_PHRASES vocabulary, the turn does not promote to
+        # "planning" purpose, and prescription-tier doctrine does not load.
+        # Real plan_update intent is produced upstream by the conversation_intelligence
+        # classifier (requested_action=plan_update), not re-derived here from word counts.
         brief = _base_brief(
             delivery_context={"inbound_body": "Can we bump weekly volume and add a tempo?"},
         )
-        self.assertIn("running/common_prescription_errors.md", select_doctrine_files(brief))
+        self.assertNotIn(
+            "running/common_prescription_errors.md", select_doctrine_files(brief)
+        )
+
+    def test_prescription_doctrine_loads_on_explicit_planning_vocabulary(self):
+        # When the inbound carries actual planning vocabulary, prescription-tier
+        # doctrine still loads (sport-gated to running).
+        brief = _base_brief(
+            delivery_context={
+                "inbound_body": "Can you map the week and bump weekly volume with a tempo?"
+            },
+        )
+        self.assertIn(
+            "running/common_prescription_errors.md", select_doctrine_files(brief)
+        )
         brief_no_sport = _base_brief(
-            delivery_context={"inbound_body": "Can we bump weekly volume and add a tempo?"},
+            delivery_context={
+                "inbound_body": "Can you map the week and bump weekly volume with a tempo?"
+            },
         )
         del brief_no_sport["athlete_context"]["primary_sport"]
         self.assertNotIn(
@@ -335,6 +373,70 @@ class TestTurnPurposeDerivation(unittest.TestCase):
         self.assertEqual(derive_turn_purpose(_base_brief()), "simple_acknowledgment")
 
 
+class TestCompletedSessionReportDoesNotPromoteToPlanning(unittest.TestCase):
+    """Regression: a past-tense session report containing prescription vocabulary
+    (e.g. 'threshold') must not be promoted to "planning" turn purpose, and must
+    not load the heavy planning/return-to-load doctrine bundle.
+
+    Root cause this guards: previously _has_real_planning_ask() returned True
+    when the blob hit >= 2 _PRESCRIPTION_PHRASES, which fired on bare vocabulary
+    in completed-session reports and bloated the strategist prompt.
+    """
+
+    DEBUG_INBOUND = (
+        "Instead of the planned easy run I did 50 min with 3 threshold blocks "
+        "because I felt good."
+    )
+
+    def _check_in_brief(self):
+        # Mirrors the debug fixture: base phase, controlled load progression,
+        # no setback history, no red-flag recovery markers.
+        return _base_brief(
+            decision_context={
+                "track": "main_build",
+                "phase": "base",
+                "risk_flag": "green",
+                "today_action": "do planned",
+                "clarification_needed": False,
+                "risk_recent_history": ["green", "green", "green"],
+                "weeks_in_coaching": 4,
+            },
+            delivery_context={"inbound_body": self.DEBUG_INBOUND},
+        )
+
+    def test_turn_purpose_is_not_planning(self):
+        purpose = derive_turn_purpose(self._check_in_brief())
+        self.assertIn(purpose, {"simple_acknowledgment", "lightweight_answer"})
+
+    def test_heavy_doctrine_does_not_load(self):
+        files = select_doctrine_files(self._check_in_brief())
+        self.assertNotIn("universal/intensity_reintroduction.md", files)
+        self.assertNotIn("universal/travel_and_disruption.md", files)
+        self.assertNotIn("universal/common_coaching_failures.md", files)
+        self.assertNotIn("running/common_prescription_errors.md", files)
+
+    def test_setback_context_still_loads_safety_doctrine(self):
+        # Counter-fixture: same inbound, but with active risk signals + setback
+        # history. The new gate must NOT swallow legitimate safety-doctrine loads.
+        brief = _base_brief(
+            decision_context={
+                "track": "main_build",
+                "phase": "base",
+                "risk_flag": "yellow",
+                "today_action": "adjust",
+                "clarification_needed": False,
+                "risk_recent_history": ["yellow", "yellow", "green"],
+                "weeks_in_coaching": 4,
+            },
+            delivery_context={"inbound_body": self.DEBUG_INBOUND},
+        )
+        purpose = derive_turn_purpose(brief)
+        self.assertIn(purpose, {"setback_management", "return_to_load"})
+        files = select_doctrine_files(brief)
+        self.assertIn("universal/return_from_setback.md", files)
+        self.assertIn("universal/intensity_reintroduction.md", files)
+
+
 class TestSituationTagDerivation(unittest.TestCase):
 
     def test_tags_include_strengths(self):
@@ -360,17 +462,29 @@ class TestSituationTagDerivation(unittest.TestCase):
         )
         self.assertEqual(derive_situation_tags(brief)["setback"], "weak")
 
-    def test_travel_in_constraints_is_weak(self):
-        brief = _base_brief(
-            athlete_context={
-                "goal_summary": "Half marathon",
-                "experience_level": "intermediate",
-                "structure_preference": "flexibility",
-                "primary_sport": "running",
-                "constraints_summary": "Travel to Boston with hotel gym only",
-            },
+    def test_travel_in_constraints_only_fires_when_planning(self):
+        # New contract (Step 2 of strategist-prompt shrink): travel sitting in
+        # constraints/open_loops is stale context, not a current signal. It
+        # promotes to "weak" only when the current turn is actually about
+        # planning or mutating the plan — otherwise stale travel constraints
+        # would pull in irrelevant doctrine on every turn.
+        athlete = {
+            "goal_summary": "Half marathon",
+            "experience_level": "intermediate",
+            "structure_preference": "flexibility",
+            "primary_sport": "running",
+            "constraints_summary": "Travel to Boston with hotel gym only",
+        }
+        # No planning ask in inbound → travel does not fire.
+        ack_brief = _base_brief(athlete_context=dict(athlete))
+        self.assertNotIn("travel", derive_situation_tags(ack_brief))
+
+        # Explicit planning vocabulary in inbound → travel fires as weak.
+        planning_brief = _base_brief(
+            athlete_context=dict(athlete),
+            delivery_context={"inbound_body": "Can you plan the week around that?"},
         )
-        self.assertEqual(derive_situation_tags(brief)["travel"], "weak")
+        self.assertEqual(derive_situation_tags(planning_brief)["travel"], "weak")
 
     def test_prescription_tag_is_strong_for_week_build(self):
         brief = _base_brief(
