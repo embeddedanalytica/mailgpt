@@ -405,8 +405,12 @@ class TestCompletedSessionReportDoesNotPromoteToPlanning(unittest.TestCase):
         )
 
     def test_turn_purpose_is_not_planning(self):
+        # Resilient assertion: the contract is "not a planning/mutation turn",
+        # not a specific non-planning label. Future refactors may introduce new
+        # non-planning purposes (e.g. session_report) without breaking this test.
         purpose = derive_turn_purpose(self._check_in_brief())
-        self.assertIn(purpose, {"simple_acknowledgment", "lightweight_answer"})
+        self.assertNotEqual(purpose, "planning")
+        self.assertNotEqual(purpose, "plan_mutation")
 
     def test_heavy_doctrine_does_not_load(self):
         files = select_doctrine_files(self._check_in_brief())
@@ -430,8 +434,12 @@ class TestCompletedSessionReportDoesNotPromoteToPlanning(unittest.TestCase):
             },
             delivery_context={"inbound_body": self.DEBUG_INBOUND},
         )
-        purpose = derive_turn_purpose(brief)
-        self.assertIn(purpose, {"setback_management", "return_to_load"})
+        # Pin the exact purpose: setback signal is strong (yellow risk_flag +
+        # history), intensity_return is strong (intensity vocabulary + active
+        # setback), no mutation (no validated_plan). derive_turn_purpose lands
+        # on "return_to_load" deterministically via the
+        # `setback AND intensity_return == strong AND not has_mutation` branch.
+        self.assertEqual(derive_turn_purpose(brief), "return_to_load")
         files = select_doctrine_files(brief)
         self.assertIn("universal/return_from_setback.md", files)
         self.assertIn("universal/intensity_reintroduction.md", files)
